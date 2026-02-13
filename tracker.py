@@ -73,7 +73,7 @@ def hours_to_hhmm(decimal_hours):
 class TimeTrackerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("znacTime v0.2")
+        self.title("znacTime v0.3")
         self.geometry("1250x720")
 
         self.current_year = tk.IntVar(value=datetime.now().year)
@@ -382,17 +382,44 @@ class TimeTrackerApp(tk.Tk):
         value = self.sheet.get_cell_data(r, c)
 
         if c in (2, 3, 4):
+            # Convert numeric inputs to HH:MM format
+            if value.isdigit():
+                if len(value) == 4:
+                    hh, mm = value[:2], value[2:]
+                elif len(value) == 3:
+                    hh, mm = '0' + value[0], value[1:]
+                elif len(value) == 2:
+                    hh, mm = '00', value
+                elif len(value) == 1:
+                    hh, mm = '00', '0' + value
+                else:
+                    # Invalid length, set to 00:00
+                    self.sheet.set_cell_data(r, c, "00:00")
+                    self.recalculate()
+                    return
+                
+                try:
+                    hh_int = int(hh)
+                    mm_int = int(mm)
+                    if 0 <= hh_int <= 23 and 0 <= mm_int <= 59:
+                        value = f"{hh_int:02d}:{mm_int:02d}"
+                    else:
+                        value = "00:00"
+                except ValueError:
+                    value = "00:00"
+            
             if not TIME_RE.match(value) and value != "00:00":
                 messagebox.showerror(
                     "Invalid time",
                     "Time must be HH:MM (00:00–23:59)"
                 )
                 self.sheet.set_cell_data(r, c, "00:00")
+            else:
+                self.sheet.set_cell_data(r, c, value)
 
         if c == 1:
             if value == "":
                 self.sheet.set_cell_data(r, c, "Normal day")
-
 
         self.recalculate()
 
