@@ -152,15 +152,7 @@ class TimeTrackerApp(tk.Tk):
 
         self.sheet.readonly_columns({0, 5, 6})
 
-        self.sheet.set_column_widths({
-            0: 120,
-            1: 150,
-            2: 80,
-            3: 80,
-            4: 100,
-            5: 100,
-            6: 140,
-        })
+        self.sheet.set_options(auto_resize_columns=150)
 
         for c in (2, 3, 4, 5, 6):
             self.sheet.align_columns(c, "center")
