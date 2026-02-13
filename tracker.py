@@ -73,7 +73,7 @@ def hours_to_hhmm(decimal_hours):
 class TimeTrackerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("znac Time Tracker")
+        self.title("znacTime v0.2")
         self.geometry("1250x720")
 
         self.current_year = tk.IntVar(value=datetime.now().year)
@@ -176,8 +176,11 @@ class TimeTrackerApp(tk.Tk):
     def month_number(self):
         return MONTHS.index(self.current_month_name.get()) + 1
 
-    def year_dir(self):
-        path = os.path.join(DATA_DIR, str(self.current_year.get()))
+    def year_dir(self, year=None):
+        if year is None:
+          year = self.current_year.get()
+
+        path = os.path.join(DATA_DIR, str(year))
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -187,7 +190,13 @@ class TimeTrackerApp(tk.Tk):
             f"{self.current_year.get()}_tmp_{self.month_number():02}.csv",
         )
 
-    def closed_flag_file(self):
+    def closed_flag_file(self, month=None):
+      if month is not None:
+        return os.path.join(
+            self.year_dir(),
+            f"closed_{month:02}.flag",
+        )
+      else:
         return os.path.join(
             self.year_dir(),
             f"closed_{self.month_number():02}.flag",
@@ -199,12 +208,55 @@ class TimeTrackerApp(tk.Tk):
             f"{self.current_year.get()}.csv",
         )
 
+    # ---------------- Carry Over ---------------- #
+
+    def get_carry_over(self) -> float:
+        """Get the monthly balance from the previous month."""
+        y = self.current_year.get()
+        m = self.month_number() - 1
+
+        if m == 0:
+            y -= 1
+            m = 12
+            
+        print(self.closed_flag_file())
+
+        # Check if previous month is closed
+        if not os.path.exists(self.closed_flag_file(self.month_number()-1) if self.month_number() > 1 else os.path.join(self.year_dir(self.current_year-1), f"closed_{m:02}.flag")):
+            return 0.0
+
+        # Build path to previous month's file
+        if self.month_number() > 1:
+            prev_file = os.path.join(
+                self.year_dir(),
+                f"{self.current_year.get()}_tmp_{m:02}.csv",
+            )
+        else:
+            prev_year_dir = os.path.join(DATA_DIR, str(y))
+            prev_file = os.path.join(
+                prev_year_dir,
+                f"{y}_tmp_{m:02}.csv",
+            )
+
+        if not os.path.exists(prev_file):
+            return 0.0
+
+        try:
+            with open(prev_file, newline="") as f:
+                rows = list(csv.reader(f))
+                # Get the last row's monthly balance (column 6)
+                return hhmm_to_hours(rows[-1][6]) if rows else 0.0
+        except Exception:
+            return 0.0
+
     # ---------------- Load / Save ---------------- #
 
     def load_month(self):
         self.month_closed = os.path.exists(self.closed_flag_file())
         self.sheet.readonly(self.month_closed)
         
+        self.carry_over = self.get_carry_over()
+        print(f"Carry over for {self.current_month_name.get()} {self.current_year.get()}: {self.carry_over:.2f} h")
         self.today_row_index = None
 
         days = calendar.monthrange(
@@ -265,7 +317,7 @@ class TimeTrackerApp(tk.Tk):
 
     def recalculate(self):
         self.sheet.dehighlight_all()
-        monthly_balance = 0.0
+        monthly_balance = self.carry_over
 
         for r, row in enumerate(self.sheet.get_sheet_data()):
             date, special, start, end, interruption, _, _ = row
@@ -368,14 +420,16 @@ class TimeTrackerApp(tk.Tk):
         messagebox.showinfo("Month closed", "Month successfully closed.")
 
     def collect_statistics(self):
-        total_ot = 0.0
-        for row in self.sheet.get_sheet_data():
-            if row[5]:
-                total_ot += float(row[5])
+        data = self.sheet.get_sheet_data()
+        if not data:
+            final_balance = 0.0
+        else:
+            final_balance = hhmm_to_hours(data[-1][6])
+        
         return {
             "year": self.current_year.get(),
             "month": self.current_month_name.get(),
-            "overtime": total_ot,
+            "overtime": final_balance,
         }
 
     def append_year_summary(self, stats):
