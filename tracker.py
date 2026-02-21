@@ -84,6 +84,7 @@ class TimeTrackerApp(tk.Tk):
         self.month_closed = False
         self.carry_over = 0.0
         self.today_row_index = None
+        self.autosave_enabled = True
 
         self._build_menu()
         self._build_header()
@@ -168,12 +169,13 @@ class TimeTrackerApp(tk.Tk):
     def month_number(self):
         return MONTHS.index(self.current_month_name.get()) + 1
 
-    def year_dir(self, year=None):
+    def year_dir(self, year=None, create=False):
         if year is None:
-          year = self.current_year.get()
+            year = self.current_year.get()
 
         path = os.path.join(DATA_DIR, str(year))
-        os.makedirs(path, exist_ok=True)
+        if create:
+            os.makedirs(path, exist_ok=True)
         return path
 
     def tmp_month_file(self):
@@ -244,6 +246,7 @@ class TimeTrackerApp(tk.Tk):
     # ---------------- Load / Save ---------------- #
 
     def load_month(self):
+        self.autosave_enabled = False
         self.month_closed = os.path.exists(self.closed_flag_file())
         self.sheet.readonly(self.month_closed)
         
@@ -294,10 +297,12 @@ class TimeTrackerApp(tk.Tk):
             ):
                 self.today_row_index = r
         self.recalculate()
+        self.autosave_enabled = True
 
     def save_tmp_month(self):
         if self.month_closed:
             return
+        self.year_dir(create=True)
         with open(self.tmp_month_file(), "w", newline="") as f:
             csv.writer(f).writerows(self.sheet.get_sheet_data())
 
@@ -365,7 +370,8 @@ class TimeTrackerApp(tk.Tk):
             # Apply the background color
             self.sheet.highlight_rows(r, bg=bg_color)
 
-        self.save_tmp_month()
+        if self.autosave_enabled:
+            self.save_tmp_month()
 
     # ---------------- Validation ---------------- #
 
@@ -432,6 +438,7 @@ class TimeTrackerApp(tk.Tk):
         self.append_year_summary(stats)
         self.export_pdf(stats)
 
+        self.year_dir(create=True)
         open(self.closed_flag_file(), "w").close()
         self.month_closed = True
         self.sheet.readonly(True)
@@ -452,6 +459,7 @@ class TimeTrackerApp(tk.Tk):
         }
 
     def append_year_summary(self, stats):
+        self.year_dir(create=True)
         file_exists = os.path.exists(self.year_summary_file())
         with open(self.year_summary_file(), "a", newline="") as f:
             writer = csv.writer(f)
