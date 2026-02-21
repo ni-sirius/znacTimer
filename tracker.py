@@ -29,6 +29,7 @@ COLORS = {
 }
 
 COLUMNS = [
+    "CW",
     "Date",
     "Special day",
     "Start",
@@ -73,8 +74,8 @@ def hours_to_hhmm(decimal_hours):
 class TimeTrackerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("znacTime v0.3")
-        self.geometry("1250x720")
+        self.title("znacTime v0.4")
+        self.geometry("1250x900")
 
         self.current_year = tk.IntVar(value=datetime.now().year)
         self.current_month_name = tk.StringVar(
@@ -88,6 +89,9 @@ class TimeTrackerApp(tk.Tk):
         self.autosave_enabled = True
         self.carry_over_text = tk.StringVar(value="Carry over from last month: 00:00")
         self.current_overtime_text = tk.StringVar(value="Current overtime: 00:00")
+        self.calendar_week_text = tk.StringVar(
+            value="Calendar week 00, Calendar weeks this month 00-00, Calendar weeks this year 00"
+        )
 
         self._build_menu()
         self._build_header()
@@ -142,6 +146,10 @@ class TimeTrackerApp(tk.Tk):
             frame,
             textvariable=self.current_overtime_text,
         ).pack(side="left", padx=(0, 5))
+        ttk.Label(
+            frame,
+            textvariable=self.calendar_week_text,
+        ).pack(side="left", padx=(10, 5))
 
     def _build_table(self):
         container = ttk.Frame(self, padding=(15, 0, 10, 10))
@@ -166,11 +174,11 @@ class TimeTrackerApp(tk.Tk):
             "redo",
         ))
 
-        self.sheet.readonly_columns({0, 5, 6})
+        self.sheet.readonly_columns({0, 1, 6, 7})
 
         self.sheet.set_options(auto_resize_columns=150)
 
-        for c in (2, 3, 4, 5, 6):
+        for c in (0, 3, 4, 5, 6, 7):
             self.sheet.align_columns(c, "center")
 
         self.sheet.extra_bindings([
@@ -183,6 +191,40 @@ class TimeTrackerApp(tk.Tk):
 
     def month_number(self):
         return MONTHS.index(self.current_month_name.get()) + 1
+
+    def calendar_week_tag(self, date_str):
+        date = datetime.strptime(date_str, "%d.%m.%Y")
+        return f"CW-{date.isocalendar().week}"
+
+    def normalized_csv_row(self, row):
+        row_data = list(row)
+        if row_data and row_data[0].startswith("CW-"):
+            row_data = row_data[1:]
+        normalized = list(row_data[:7])
+        while len(normalized) < 7:
+            normalized.append("")
+        return normalized
+
+    def build_calendar_week_text(self):
+        selected_year = self.current_year.get()
+        selected_month = self.month_number()
+        today = datetime.today()
+        current_week = today.isocalendar().week
+
+        days_in_month = calendar.monthrange(selected_year, selected_month)[1]
+        month_weeks = [
+            datetime(selected_year, selected_month, d).isocalendar().week
+            for d in range(1, days_in_month + 1)
+        ]
+        month_week_start = month_weeks[0]
+        month_week_end = month_weeks[-1]
+
+        weeks_in_year = datetime(selected_year, 12, 28).isocalendar().week
+        return (
+            f"Calendar week {current_week}, "
+            f"Calendar weeks this month {month_week_start}-{month_week_end}, "
+            f"Calendar weeks this year {weeks_in_year}"
+        )
 
     def year_dir(self, year=None, create=False):
         if year is None:
@@ -227,11 +269,13 @@ class TimeTrackerApp(tk.Tk):
         if m == 0:
             y -= 1
             m = 12
-            
-        print(self.closed_flag_file())
 
         # Check if previous month is closed
-        if not os.path.exists(self.closed_flag_file(self.month_number()-1) if self.month_number() > 1 else os.path.join(self.year_dir(self.current_year-1), f"closed_{m:02}.flag")):
+        if not os.path.exists(
+            self.closed_flag_file(self.month_number() - 1)
+            if self.month_number() > 1
+            else os.path.join(self.year_dir(y), f"closed_{m:02}.flag")
+        ):
             return 0.0
 
         # Build path to previous month's file
@@ -269,6 +313,7 @@ class TimeTrackerApp(tk.Tk):
         self.carry_over_text.set(
             f"Carry over from last month: {hours_to_hhmm(self.carry_over)}"
         )
+        self.calendar_week_text.set(self.build_calendar_week_text())
         self.today_row_index = None
 
         days = calendar.monthrange(
@@ -282,7 +327,12 @@ class TimeTrackerApp(tk.Tk):
 
         if os.path.exists(self.tmp_month_file()):
             with open(self.tmp_month_file(), newline="") as f:
-                data = list(csv.reader(f))
+                for row in csv.reader(f):
+                    csv_row = self.normalized_csv_row(row)
+                    data.append([
+                        self.calendar_week_tag(csv_row[0]),
+                        *csv_row,
+                    ])
         else:
             for d in range(1, days + 1):
                 date = datetime(
@@ -290,8 +340,9 @@ class TimeTrackerApp(tk.Tk):
                     self.month_number(),
                     d,
                 )
-                    
+                
                 data.append([
+                    f"CW-{date.isocalendar().week}",
                     date.strftime("%d.%m.%Y"),
                     "Normal day",
                     "00:00",
@@ -305,7 +356,7 @@ class TimeTrackerApp(tk.Tk):
         
         # Calculate today_row_index in any case
         for r, row in enumerate(data):
-            date_str = row[0]
+            date_str = row[1]
             date = datetime.strptime(date_str, "%d.%m.%Y")
             if (
                 date.year == today.year
@@ -321,7 +372,9 @@ class TimeTrackerApp(tk.Tk):
             return
         self.year_dir(create=True)
         with open(self.tmp_month_file(), "w", newline="") as f:
-            csv.writer(f).writerows(self.sheet.get_sheet_data())
+            writer = csv.writer(f)
+            for row in self.sheet.get_sheet_data():
+                writer.writerow(row[1:])
 
     # ---------------- Logic ---------------- #
 
@@ -334,7 +387,7 @@ class TimeTrackerApp(tk.Tk):
         monthly_balance = self.carry_over
 
         for r, row in enumerate(self.sheet.get_sheet_data()):
-            date, special, start, end, interruption, _, _ = row
+            _, date, special, start, end, interruption, _, _ = row
             daily_ot = 0.0
             bg_color = None
             is_today = r == self.today_row_index
@@ -342,7 +395,7 @@ class TimeTrackerApp(tk.Tk):
             # --- Weekend auto marking ---
             if self.is_weekend(date):
                 if special.lower() in ("", "normal day"):
-                    self.sheet.set_cell_data(r, 1, "Weekend")
+                    self.sheet.set_cell_data(r, 2, "Weekend")
                 bg_color = COLORS["weekend_today"] if is_today else COLORS["weekend"]
  
 
@@ -381,8 +434,9 @@ class TimeTrackerApp(tk.Tk):
             monthly_balance_str = hours_to_hhmm(monthly_balance)
 
             # Set the cell data using the formatted strings
-            self.sheet.set_cell_data(r, 5, daily_ot_str)
-            self.sheet.set_cell_data(r, 6, monthly_balance_str)
+            self.sheet.set_cell_data(r, 0, self.calendar_week_tag(date))
+            self.sheet.set_cell_data(r, 6, daily_ot_str)
+            self.sheet.set_cell_data(r, 7, monthly_balance_str)
             
             # Apply the background color
             self.sheet.highlight_rows(r, bg=bg_color)
@@ -400,7 +454,7 @@ class TimeTrackerApp(tk.Tk):
         r, c = event["row"], event["column"]
         value = self.sheet.get_cell_data(r, c)
 
-        if c in (2, 3, 4):
+        if c in (3, 4, 5):
             # Convert numeric inputs to HH:MM format
             if value.isdigit():
                 if len(value) == 4:
@@ -436,7 +490,7 @@ class TimeTrackerApp(tk.Tk):
             else:
                 self.sheet.set_cell_data(r, c, value)
 
-        if c == 1:
+        if c == 2:
             if value == "":
                 self.sheet.set_cell_data(r, c, "Normal day")
 
@@ -471,7 +525,7 @@ class TimeTrackerApp(tk.Tk):
         if not data:
             final_balance = 0.0
         else:
-            final_balance = hhmm_to_hours(data[-1][6])
+            final_balance = hhmm_to_hours(data[-1][7])
         
         return {
             "year": self.current_year.get(),
