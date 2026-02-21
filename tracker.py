@@ -83,8 +83,11 @@ class TimeTrackerApp(tk.Tk):
         self.day_duration = tk.DoubleVar(value=DEFAULT_DAY_HOURS)
         self.month_closed = False
         self.carry_over = 0.0
+        self.current_overtime = 0.0
         self.today_row_index = None
         self.autosave_enabled = True
+        self.carry_over_text = tk.StringVar(value="Carry over from last month: 00:00")
+        self.current_overtime_text = tk.StringVar(value="Current overtime: 00:00")
 
         self._build_menu()
         self._build_header()
@@ -109,14 +112,17 @@ class TimeTrackerApp(tk.Tk):
         frame.pack(fill="x", padx=15, pady=8)
 
         ttk.Label(frame, text="Year").pack(side="left")
-        year_box = ttk.Combobox(
+        year_box = ttk.Spinbox(
             frame,
             textvariable=self.current_year,
-            values=list(range(2000, 2101)),
+            from_=2000,
+            to=2100,
             width=6,
+            command=self.load_month,
         )
         year_box.pack(side="left", padx=5)
-        year_box.bind("<<ComboboxSelected>>", lambda e: self.load_month())
+        year_box.bind("<Return>", lambda e: self.load_month())
+        year_box.bind("<FocusOut>", lambda e: self.load_month())
 
         ttk.Label(frame, text="Month").pack(side="left", padx=(15, 0))
         month_box = ttk.Combobox(
@@ -127,6 +133,15 @@ class TimeTrackerApp(tk.Tk):
         )
         month_box.pack(side="left", padx=5)
         month_box.bind("<<ComboboxSelected>>", lambda e: self.load_month())
+
+        ttk.Label(
+            frame,
+            textvariable=self.carry_over_text,
+        ).pack(side="left", padx=(20, 10))
+        ttk.Label(
+            frame,
+            textvariable=self.current_overtime_text,
+        ).pack(side="left", padx=(0, 5))
 
     def _build_table(self):
         container = ttk.Frame(self, padding=(15, 0, 10, 10))
@@ -251,7 +266,9 @@ class TimeTrackerApp(tk.Tk):
         self.sheet.readonly(self.month_closed)
         
         self.carry_over = self.get_carry_over()
-        print(f"Carry over for {self.current_month_name.get()} {self.current_year.get()}: {self.carry_over:.2f} h")
+        self.carry_over_text.set(
+            f"Carry over from last month: {hours_to_hhmm(self.carry_over)}"
+        )
         self.today_row_index = None
 
         days = calendar.monthrange(
@@ -372,6 +389,10 @@ class TimeTrackerApp(tk.Tk):
 
         if self.autosave_enabled:
             self.save_tmp_month()
+        self.current_overtime = monthly_balance
+        self.current_overtime_text.set(
+            f"Current overtime: {hours_to_hhmm(self.current_overtime)}"
+        )
 
     # ---------------- Validation ---------------- #
 
