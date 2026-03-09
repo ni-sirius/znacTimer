@@ -92,6 +92,12 @@ class TimeTrackerApp(tk.Tk):
         self.calendar_week_text = tk.StringVar(
             value="Calendar week 00, Calendar weeks this month 00-00, Calendar weeks this year 00"
         )
+        self.mutable_bindings = (
+            "edit_cell",
+            "paste",
+            "undo",
+            "redo",
+        )
 
         self._build_menu()
         self._build_header()
@@ -186,6 +192,23 @@ class TimeTrackerApp(tk.Tk):
         ])
 
         self.sheet.pack(fill="both", expand=True)
+
+    def _apply_edit_mode_for_month(self):
+        # Always keep calculated/static columns read-only.
+        self.sheet.readonly_columns({0, 1, 6, 7})
+
+        # Clear global read-only state first to avoid sticky locks on month switches.
+        self.sheet.readonly(False)
+
+        # Prefer binding-based locking for closed months.
+        if hasattr(self.sheet, "disable_bindings"):
+            if self.month_closed:
+                self.sheet.disable_bindings(self.mutable_bindings)
+            else:
+                self.sheet.enable_bindings(self.mutable_bindings)
+        else:
+            # Fallback for older tksheet versions.
+            self.sheet.readonly(self.month_closed)
 
     # ---------------- Paths ---------------- #
 
@@ -307,7 +330,6 @@ class TimeTrackerApp(tk.Tk):
     def load_month(self):
         self.autosave_enabled = False
         self.month_closed = os.path.exists(self.closed_flag_file())
-        self.sheet.readonly(self.month_closed)
         
         self.carry_over = self.get_carry_over()
         self.carry_over_text.set(
@@ -365,6 +387,7 @@ class TimeTrackerApp(tk.Tk):
             ):
                 self.today_row_index = r
         self.recalculate()
+        self._apply_edit_mode_for_month()
         self.autosave_enabled = True
 
     def save_tmp_month(self):
@@ -427,6 +450,10 @@ class TimeTrackerApp(tk.Tk):
                 except Exception:
                     bg_color = COLORS["missing_times_today"] if is_today else COLORS["missing_times"]
 
+            # Closed months are fully grayed out.
+            if self.month_closed:
+                bg_color = COLORS["special_day_today"] if is_today else COLORS["special_day"]
+
             monthly_balance += daily_ot
 
             # Convert the decimal hours back to HH:MM strings
@@ -451,6 +478,9 @@ class TimeTrackerApp(tk.Tk):
     # ---------------- Validation ---------------- #
 
     def on_cell_edit(self, event):
+        if self.month_closed:
+            return
+
         r, c = event["row"], event["column"]
         value = self.sheet.get_cell_data(r, c)
 
@@ -516,7 +546,7 @@ class TimeTrackerApp(tk.Tk):
         self.year_dir(create=True)
         open(self.closed_flag_file(), "w").close()
         self.month_closed = True
-        self.sheet.readonly(True)
+        self._apply_edit_mode_for_month()
 
         messagebox.showinfo("Month closed", "Month successfully closed.")
 
