@@ -190,8 +190,16 @@ class TimeTrackerApp(tk.Tk):
         self.sheet.extra_bindings([
             ("end_edit_cell", self.on_cell_edit),
         ])
+        self.sheet.bind_key_text_editor("<FocusIn>", self.on_text_editor_focus_in)
 
         self.sheet.pack(fill="both", expand=True)
+
+    def on_text_editor_focus_in(self, event):
+        widget = event.widget
+        # Select existing value so typing replaces it immediately.
+        widget.tag_add("sel", "1.0", "end-1c")
+        widget.mark_set("insert", "end-1c")
+        widget.see("insert")
 
     def _apply_edit_mode_for_month(self):
         # Always keep calculated/static columns read-only.
