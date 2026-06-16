@@ -2,20 +2,15 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
 import calendar
-import csv
 import os
 
 from tksheet import Sheet
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from znactime.config import DATA_DIR, DEFAULT_DAY_HOURS, VERSION
+from znactime.config import DEFAULT_DAY_HOURS, VERSION
 from znactime.core.calculator import recalculate as recalculate_entries
-from znactime.core.calendar_utils import (
-    build_calendar_week_text,
-    calendar_week_tag,
-)
+from znactime.core.calendar_utils import build_calendar_week_text
 from znactime.core.models import DayEntry, MonthStats
 from znactime.core.time_utils import TIME_RE, hhmm_to_hours, hours_to_hhmm
+from znactime.storage import csv_store, paths
 
 MONTHS = list(calendar.month_name)[1:]
 
@@ -198,81 +193,23 @@ class TimeTrackerApp(tk.Tk):
             # Fallback for older tksheet versions.
             self.sheet.readonly(self.month_closed)
 
-    # ---------------- Paths ---------------- #
-
     def month_number(self):
         return MONTHS.index(self.current_month_name.get()) + 1
-
-    def normalized_csv_row(self, row):
-        row_data = list(row)
-        if row_data and row_data[0].startswith("CW-"):
-            row_data = row_data[1:]
-        normalized = list(row_data[:7])
-        while len(normalized) < 7:
-            normalized.append("")
-        return normalized
-
-    def year_dir(self, year=None, create=False):
-        if year is None:
-            year = self.current_year.get()
-
-        path = os.path.join(DATA_DIR, str(year))
-        if create:
-            os.makedirs(path, exist_ok=True)
-        return path
-
-    def tmp_month_file(self):
-        return os.path.join(
-            self.year_dir(),
-            f"{self.current_year.get()}_tmp_{self.month_number():02}.csv",
-        )
-
-    def closed_flag_file(self, month=None):
-        if month is not None:
-            return os.path.join(
-                self.year_dir(),
-                f"closed_{month:02}.flag",
-            )
-        else:
-            return os.path.join(
-                self.year_dir(),
-                f"closed_{self.month_number():02}.flag",
-            )
-
-    def year_summary_file(self):
-        return os.path.join(
-            self.year_dir(),
-            f"{self.current_year.get()}.csv",
-        )
 
     # ---------------- Carry Over ---------------- #
 
     def get_carry_over(self) -> float:
         """Get the monthly balance from the previous month."""
-        y, m = self.current_year.get(), self.month_number() - 1
-        if m == 0:
-            y, m = y - 1, 12
-
-        flag = os.path.join(self.year_dir(y), f"closed_{m:02}.flag")
-        if not os.path.exists(flag):
-            return 0.0
-
-        prev_file = os.path.join(self.year_dir(y), f"{y}_tmp_{m:02}.csv")
-        if not os.path.exists(prev_file):
-            return 0.0
-
-        try:
-            with open(prev_file, newline="") as f:
-                rows = list(csv.reader(f))
-                return hhmm_to_hours(rows[-1][6]) if rows else 0.0
-        except Exception:
-            return 0.0
+        return csv_store.get_carry_over(self.current_year.get(), self.month_number())
 
     # ---------------- Load / Save ---------------- #
 
     def load_month(self):
         self.autosave_enabled = False
-        self.month_closed = os.path.exists(self.closed_flag_file())
+        self.month_closed = csv_store.is_month_closed(
+            self.current_year.get(),
+            self.month_number(),
+        )
 
         self.carry_over = self.get_carry_over()
         self.carry_over_text.set(f"Carry over: {hours_to_hhmm(self.carry_over)}")
@@ -284,40 +221,20 @@ class TimeTrackerApp(tk.Tk):
             )
         )
 
-        days = calendar.monthrange(self.current_year.get(), self.month_number())[1]
-
-        data = []
-
-        if os.path.exists(self.tmp_month_file()):
-            with open(self.tmp_month_file(), newline="") as f:
-                for row in csv.reader(f):
-                    csv_row = self.normalized_csv_row(row)
-                    data.append(
-                        [
-                            calendar_week_tag(csv_row[0]),
-                            *csv_row,
-                        ]
-                    )
-        else:
-            for d in range(1, days + 1):
-                date = datetime(
-                    self.current_year.get(),
-                    self.month_number(),
-                    d,
-                )
-
-                data.append(
-                    [
-                        f"CW-{date.isocalendar().week}",
-                        date.strftime("%d.%m.%Y"),
-                        "Normal day",
-                        "00:00",
-                        "00:00",
-                        "00:00",
-                        "",
-                        "",
-                    ]
-                )
+        entries = csv_store.load_month(self.current_year.get(), self.month_number())
+        data = [
+            [
+                entry.cw,
+                entry.date,
+                entry.special,
+                entry.start,
+                entry.end,
+                entry.interruption,
+                entry.daily_ot,
+                entry.monthly_balance,
+            ]
+            for entry in entries
+        ]
 
         self.sheet.set_sheet_data(data, reset_col_positions=True)
 
@@ -328,17 +245,16 @@ class TimeTrackerApp(tk.Tk):
     def save_tmp_month(self):
         if self.month_closed:
             return
-        self.year_dir(create=True)
-        with open(self.tmp_month_file(), "w", newline="") as f:
-            writer = csv.writer(f)
-            for row in self.sheet.get_sheet_data():
-                writer.writerow(row[1:])
+        csv_store.save_month(
+            self.current_year.get(),
+            self.month_number(),
+            self._entries_from_sheet(),
+        )
 
     # ---------------- Logic ---------------- #
 
-    def recalculate(self):
-        self.sheet.dehighlight_all()
-        entries = [
+    def _entries_from_sheet(self):
+        return [
             DayEntry(
                 cw=row[0],
                 date=row[1],
@@ -351,8 +267,11 @@ class TimeTrackerApp(tk.Tk):
             )
             for row in self.sheet.get_sheet_data()
         ]
+
+    def recalculate(self):
+        self.sheet.dehighlight_all()
         calculated_entries = recalculate_entries(
-            entries,
+            self._entries_from_sheet(),
             carry_over=self.carry_over,
             day_hours=self.day_duration.get(),
             today=datetime.today().date(),
@@ -440,9 +359,7 @@ class TimeTrackerApp(tk.Tk):
         self.append_year_summary(stats)
         self.export_pdf(stats)
 
-        self.year_dir(create=True)
-        with open(self.closed_flag_file(), "w"):
-            pass
+        csv_store.mark_month_closed(self.current_year.get(), self.month_number())
         self.month_closed = True
         self._apply_edit_mode_for_month()
         self.recalculate()
@@ -463,30 +380,16 @@ class TimeTrackerApp(tk.Tk):
         )
 
     def append_year_summary(self, stats):
-        self.year_dir(create=True)
-        file_exists = os.path.exists(self.year_summary_file())
-        with open(self.year_summary_file(), "a", newline="") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow(["Year", "Month", "Overtime"])
-            writer.writerow(
-                [
-                    stats.year,
-                    stats.month,
-                    f"{stats.overtime:.2f}",
-                ]
-            )
+        csv_store.append_year_summary(stats)
 
     def export_pdf(self, stats):
+        from znactime.storage import pdf_export
+
         pdf_name = os.path.join(
-            self.year_dir(), f"{stats.year}_{stats.month}.pdf"
+            paths.year_dir(stats.year, create=True),
+            f"{stats.year}_{stats.month}.pdf",
         )
-        c = canvas.Canvas(pdf_name, pagesize=A4)
-        c.drawString(50, 800, "Monthly Time Report")
-        c.drawString(50, 770, f"Year: {stats.year}")
-        c.drawString(50, 750, f"Month: {stats.month}")
-        c.drawString(50, 730, f"Overtime: {stats.overtime:.2f} h")
-        c.save()
+        pdf_export.export_pdf(stats, pdf_name)
 
 
 if __name__ == "__main__":
