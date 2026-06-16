@@ -1,34 +1,23 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from datetime import datetime, timedelta
+from datetime import datetime
 import calendar
 import csv
 import os
-import re
 
 from tksheet import Sheet
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-
-VERSION = "0.4.1"
-
-DATA_DIR = "data"
-DEFAULT_DAY_HOURS = 8.0
-TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+from znactime.config import DATA_DIR, DEFAULT_DAY_HOURS, VERSION
+from znactime.core.calculator import recalculate as recalculate_entries
+from znactime.core.calendar_utils import (
+    build_calendar_week_text,
+    calendar_week_tag,
+)
+from znactime.core.models import DayEntry, MonthStats
+from znactime.core.time_utils import TIME_RE, hhmm_to_hours, hours_to_hhmm
 
 MONTHS = list(calendar.month_name)[1:]
-
-# Color configuration
-COLORS = {
-    "weekend": "#e6ecff",
-    "weekend_today": "#80b3ff",
-    "special_day": "#dddddd",
-    "special_day_today": "#999999",
-    "missing_times": "#ffcccc",
-    "missing_times_today": "#ff9999",
-    "valid_day": "#ccffcc",
-    "valid_day_today": "#99ff99",
-}
 
 COLUMNS = [
     "CW",
@@ -40,38 +29,6 @@ COLUMNS = [
     "Daily OT",
     "Monthly balance",
 ]
-
-
-def hhmm_to_hours(hhmm_str):
-    if not hhmm_str or ":" not in hhmm_str:
-        return 0.0
-    try:
-        is_negative = hhmm_str.strip().startswith("-")
-        clean_str = hhmm_str.replace("-", "")
-        hours_str, minutes_str = clean_str.split(":", 1)
-        decimal_hours = int(hours_str) + int(minutes_str) / 60
-        return -decimal_hours if is_negative else decimal_hours
-    except (ValueError, AttributeError):
-        return 0.0
-
-
-def hours_to_hhmm(decimal_hours):
-    # Handle negative balances by formatting the absolute value and adding a sign
-    is_negative = decimal_hours < 0
-    abs_hours = abs(decimal_hours)
-
-    hours = int(abs_hours)
-    minutes = round((abs_hours - hours) * 60)
-
-    # Handle edge case where rounding minutes results in 60
-    if minutes == 60:
-        hours += 1
-        minutes = 0
-
-    formatted_time = f"{hours:02d}:{minutes:02d}"
-    return f"-{formatted_time}" if is_negative else formatted_time
-
-
 class TimeTrackerApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -86,7 +43,6 @@ class TimeTrackerApp(tk.Tk):
         self.month_closed = False
         self.carry_over = 0.0
         self.current_overtime = 0.0
-        self.today_row_index = None
         self.autosave_enabled = True
         self.carry_over_text = tk.StringVar(value="Carry over: 00:00")
         self.current_overtime_text = tk.StringVar(value="Overtime: 00:00")
@@ -247,10 +203,6 @@ class TimeTrackerApp(tk.Tk):
     def month_number(self):
         return MONTHS.index(self.current_month_name.get()) + 1
 
-    def calendar_week_tag(self, date_str):
-        date = datetime.strptime(date_str, "%d.%m.%Y")
-        return f"CW-{date.isocalendar().week}"
-
     def normalized_csv_row(self, row):
         row_data = list(row)
         if row_data and row_data[0].startswith("CW-"):
@@ -259,27 +211,6 @@ class TimeTrackerApp(tk.Tk):
         while len(normalized) < 7:
             normalized.append("")
         return normalized
-
-    def build_calendar_week_text(self):
-        selected_year = self.current_year.get()
-        selected_month = self.month_number()
-        today = datetime.today()
-        current_week = today.isocalendar().week
-
-        days_in_month = calendar.monthrange(selected_year, selected_month)[1]
-        month_weeks = [
-            datetime(selected_year, selected_month, d).isocalendar().week
-            for d in range(1, days_in_month + 1)
-        ]
-        month_week_start = month_weeks[0]
-        month_week_end = month_weeks[-1]
-
-        weeks_in_year = datetime(selected_year, 12, 28).isocalendar().week
-        return (
-            f"Calendar week {current_week}, "
-            f"This month {month_week_start}-{month_week_end}, "
-            f"This year {weeks_in_year}"
-        )
 
     def year_dir(self, year=None, create=False):
         if year is None:
@@ -345,12 +276,15 @@ class TimeTrackerApp(tk.Tk):
 
         self.carry_over = self.get_carry_over()
         self.carry_over_text.set(f"Carry over: {hours_to_hhmm(self.carry_over)}")
-        self.calendar_week_text.set(self.build_calendar_week_text())
-        self.today_row_index = None
+        self.calendar_week_text.set(
+            build_calendar_week_text(
+                self.current_year.get(),
+                self.month_number(),
+                today=datetime.today().date(),
+            )
+        )
 
         days = calendar.monthrange(self.current_year.get(), self.month_number())[1]
-
-        today = datetime.today()
 
         data = []
 
@@ -360,7 +294,7 @@ class TimeTrackerApp(tk.Tk):
                     csv_row = self.normalized_csv_row(row)
                     data.append(
                         [
-                            self.calendar_week_tag(csv_row[0]),
+                            calendar_week_tag(csv_row[0]),
                             *csv_row,
                         ]
                     )
@@ -387,16 +321,6 @@ class TimeTrackerApp(tk.Tk):
 
         self.sheet.set_sheet_data(data, reset_col_positions=True)
 
-        # Calculate today_row_index in any case
-        for r, row in enumerate(data):
-            date_str = row[1]
-            date = datetime.strptime(date_str, "%d.%m.%Y")
-            if (
-                date.year == today.year
-                and date.month == today.month
-                and date.day == today.day
-            ):
-                self.today_row_index = r
         self.recalculate()
         self._apply_edit_mode_for_month()
         self.autosave_enabled = True
@@ -412,88 +336,42 @@ class TimeTrackerApp(tk.Tk):
 
     # ---------------- Logic ---------------- #
 
-    def is_weekend(self, date_str):
-        d = datetime.strptime(date_str, "%d.%m.%Y")
-        return d.weekday() >= 5
-
     def recalculate(self):
         self.sheet.dehighlight_all()
-        monthly_balance = self.carry_over
+        entries = [
+            DayEntry(
+                cw=row[0],
+                date=row[1],
+                special=row[2],
+                start=row[3],
+                end=row[4],
+                interruption=row[5],
+                daily_ot=row[6],
+                monthly_balance=row[7],
+            )
+            for row in self.sheet.get_sheet_data()
+        ]
+        calculated_entries = recalculate_entries(
+            entries,
+            carry_over=self.carry_over,
+            day_hours=self.day_duration.get(),
+            today=datetime.today().date(),
+            month_closed=self.month_closed,
+        )
 
-        for r, row in enumerate(self.sheet.get_sheet_data()):
-            _, date, special, start, end, interruption, _, _ = row
-            daily_ot = 0.0
-            bg_color = None
-            is_today = r == self.today_row_index
-
-            # --- Weekend auto marking ---
-            if self.is_weekend(date):
-                if special.lower() in ("", "normal day"):
-                    self.sheet.set_cell_data(r, 2, "Weekend")
-                bg_color = COLORS["weekend_today"] if is_today else COLORS["weekend"]
-
-            # --- Special days ---
-            elif special and special.lower() != "normal day":
-                bg_color = (
-                    COLORS["special_day_today"] if is_today else COLORS["special_day"]
-                )
-
-            # --- Missing times ---
-            elif start == "00:00" or end == "00:00":
-                bg_color = (
-                    COLORS["missing_times_today"]
-                    if is_today
-                    else COLORS["missing_times"]
-                )
-
-            else:
-
-                try:
-                    t1 = datetime.strptime(start, "%H:%M")
-                    t2 = datetime.strptime(end, "%H:%M")
-
-                    if t2 <= t1:
-                        raise ValueError("End must be after start")
-
-                    interruption_h = hhmm_to_hours(interruption)
-                    worked = (t2 - t1).total_seconds() / 3600 - interruption_h
-
-                    daily_ot = worked - self.day_duration.get()
-
-                    bg_color = (
-                        COLORS["valid_day_today"] if is_today else COLORS["valid_day"]
-                    )
-
-                except Exception:
-                    bg_color = (
-                        COLORS["missing_times_today"]
-                        if is_today
-                        else COLORS["missing_times"]
-                    )
-
-            # Closed months are fully grayed out.
-            if self.month_closed:
-                bg_color = (
-                    COLORS["special_day_today"] if is_today else COLORS["special_day"]
-                )
-
-            monthly_balance += daily_ot
-
-            # Convert the decimal hours back to HH:MM strings
-            daily_ot_str = hours_to_hhmm(daily_ot)
-            monthly_balance_str = hours_to_hhmm(monthly_balance)
-
-            # Set the cell data using the formatted strings
-            self.sheet.set_cell_data(r, 0, self.calendar_week_tag(date))
-            self.sheet.set_cell_data(r, 6, daily_ot_str)
-            self.sheet.set_cell_data(r, 7, monthly_balance_str)
-
-            # Apply the background color
-            self.sheet.highlight_rows(r, bg=bg_color)
+        for r, entry in enumerate(calculated_entries):
+            self.sheet.set_cell_data(r, 0, entry.cw)
+            self.sheet.set_cell_data(r, 2, entry.special)
+            self.sheet.set_cell_data(r, 6, entry.daily_ot)
+            self.sheet.set_cell_data(r, 7, entry.monthly_balance)
+            self.sheet.highlight_rows(r, bg=entry.row_color)
 
         if self.autosave_enabled:
             self.save_tmp_month()
-        self.current_overtime = monthly_balance
+        if calculated_entries:
+            self.current_overtime = hhmm_to_hours(calculated_entries[-1].monthly_balance)
+        else:
+            self.current_overtime = self.carry_over
         self.current_overtime_text.set(
             f"Overtime: {hours_to_hhmm(self.current_overtime)}"
         )
@@ -578,11 +456,11 @@ class TimeTrackerApp(tk.Tk):
         else:
             final_balance = hhmm_to_hours(data[-1][7])
 
-        return {
-            "year": self.current_year.get(),
-            "month": self.current_month_name.get(),
-            "overtime": final_balance,
-        }
+        return MonthStats(
+            year=self.current_year.get(),
+            month=self.current_month_name.get(),
+            overtime=final_balance,
+        )
 
     def append_year_summary(self, stats):
         self.year_dir(create=True)
@@ -593,21 +471,21 @@ class TimeTrackerApp(tk.Tk):
                 writer.writerow(["Year", "Month", "Overtime"])
             writer.writerow(
                 [
-                    stats["year"],
-                    stats["month"],
-                    f"{stats['overtime']:.2f}",
+                    stats.year,
+                    stats.month,
+                    f"{stats.overtime:.2f}",
                 ]
             )
 
     def export_pdf(self, stats):
         pdf_name = os.path.join(
-            self.year_dir(), f"{stats['year']}_{stats['month']}.pdf"
+            self.year_dir(), f"{stats.year}_{stats.month}.pdf"
         )
         c = canvas.Canvas(pdf_name, pagesize=A4)
         c.drawString(50, 800, "Monthly Time Report")
-        c.drawString(50, 770, f"Year: {stats['year']}")
-        c.drawString(50, 750, f"Month: {stats['month']}")
-        c.drawString(50, 730, f"Overtime: {stats['overtime']:.2f} h")
+        c.drawString(50, 770, f"Year: {stats.year}")
+        c.drawString(50, 750, f"Month: {stats.month}")
+        c.drawString(50, 730, f"Overtime: {stats.overtime:.2f} h")
         c.save()
 
 
