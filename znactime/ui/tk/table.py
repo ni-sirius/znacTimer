@@ -6,7 +6,7 @@ from tksheet import Sheet
 
 from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.core.models import DayEntry
-from znactime.core.time_utils import TIME_RE, hhmm_to_hours
+from znactime.core.time_utils import coerce_time_input, hhmm_to_hours
 from znactime.storage import csv_store
 from znactime.ui.constants import COLUMNS
 
@@ -174,7 +174,7 @@ class SheetFrame(ttk.Frame):
         value = self.sheet.get_cell_data(row, column)
 
         if column in (3, 4, 5):
-            value = self._normalize_time_edit(value)
+            value = coerce_time_input(value)
             if value is None:
                 messagebox.showerror("Invalid time", "Time must be HH:MM (00:00-23:59)")
                 self.sheet.set_cell_data(row, column, "00:00")
@@ -185,34 +185,6 @@ class SheetFrame(ttk.Frame):
             self.sheet.set_cell_data(row, column, "Normal day")
 
         self.recalculate()
-
-    def _normalize_time_edit(self, value):
-        if value.isdigit():
-            if len(value) == 4:
-                hours, minutes = value[:2], value[2:]
-            elif len(value) == 3:
-                hours, minutes = "0" + value[0], value[1:]
-            elif len(value) == 2:
-                hours, minutes = "00", value
-            elif len(value) == 1:
-                hours, minutes = "00", "0" + value
-            else:
-                return "00:00"
-
-            try:
-                hour_value = int(hours)
-                minute_value = int(minutes)
-            except ValueError:
-                return "00:00"
-
-            if 0 <= hour_value <= 23 and 0 <= minute_value <= 59:
-                value = f"{hour_value:02d}:{minute_value:02d}"
-            else:
-                value = "00:00"
-
-        if not TIME_RE.match(value):
-            return None
-        return value
 
     def _apply_edit_mode_for_month(self):
         self.sheet.readonly_columns({0, 1, 6, 7})

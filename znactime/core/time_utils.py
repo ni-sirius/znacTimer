@@ -4,6 +4,37 @@ import re
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
+def coerce_time_input(value):
+    value = str(value).strip()
+
+    if value.isdigit():
+        if len(value) == 4:
+            hours, minutes = value[:2], value[2:]
+        elif len(value) == 3:
+            hours, minutes = "0" + value[0], value[1:]
+        elif len(value) == 2:
+            hours, minutes = "00", value
+        elif len(value) == 1:
+            hours, minutes = "00", "0" + value
+        else:
+            return "00:00"
+
+        try:
+            hour_value = int(hours)
+            minute_value = int(minutes)
+        except ValueError:
+            return "00:00"
+
+        if 0 <= hour_value <= 23 and 0 <= minute_value <= 59:
+            value = f"{hour_value:02d}:{minute_value:02d}"
+        else:
+            value = "00:00"
+
+    if not TIME_RE.match(value):
+        return None
+    return value
+
+
 def hhmm_to_hours(hhmm_str):
     if not hhmm_str or ":" not in hhmm_str:
         return 0.0

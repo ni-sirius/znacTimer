@@ -1,5 +1,15 @@
-from znactime.ui.tk.app import TimeTrackerApp
+import sys
+
+from znactime.ui.qt import QApplication
+from znactime.ui.qt.app import TimeTrackerApp
+
+
+def main():
+    app = QApplication(sys.argv)
+    window = TimeTrackerApp()
+    window.show()
+    return app.exec()
 
 
 if __name__ == "__main__":
-    TimeTrackerApp().mainloop()
+    sys.exit(main())
