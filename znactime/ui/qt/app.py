@@ -9,7 +9,9 @@ from znactime.storage import csv_store, paths
 from znactime.ui.qt import QMainWindow, QMessageBox, QVBoxLayout, QWidget
 from znactime.ui.qt.header import HeaderWidget
 from znactime.ui.qt.menu import MenuBar
+from znactime.ui.qt.settings import AppearanceDialog
 from znactime.ui.qt.table import TableWidget
+from znactime.ui.qt.theme import ThemeController
 
 
 class TimeTrackerApp(QMainWindow):
@@ -21,8 +23,14 @@ class TimeTrackerApp(QMainWindow):
         self.month_closed = False
         self.carry_over = 0.0
         self.current_overtime = 0.0
+        self.theme_controller = ThemeController()
+        self.theme_controller.themeChanged.connect(self.on_theme_changed)
 
-        self.menu = MenuBar(self, close_month_command=self.close_month)
+        self.menu = MenuBar(
+            self,
+            close_month_command=self.close_month,
+            appearance_command=self.open_appearance_settings,
+        )
         self.setMenuBar(self.menu)
 
         self.header = HeaderWidget(self)
@@ -42,6 +50,13 @@ class TimeTrackerApp(QMainWindow):
         self.setCentralWidget(central_widget)
 
         self.load_month()
+
+    def open_appearance_settings(self):
+        dialog = AppearanceDialog(self, self.theme_controller)
+        dialog.exec()
+
+    def on_theme_changed(self, _mode):
+        self.table.refresh_theme()
 
     def set_current_overtime(self, overtime):
         self.current_overtime = overtime

@@ -11,7 +11,7 @@ class DayEntry:
     interruption: str
     daily_ot: str = ""
     monthly_balance: str = ""
-    row_color: str = ""
+    row_color: str = ""  # semantic row color key, mapped by the UI
 
 
 @dataclass

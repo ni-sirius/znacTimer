@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from znactime.core.calculator import ROW_COLORS, recalculate
+from znactime.core.calculator import ROW_COLOR_KEYS, recalculate
 from znactime.core.models import DayEntry
 
 
@@ -23,7 +23,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].cw, "CW-25")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLORS["valid_day_today"])
+        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["valid_day_today"])
 
     def test_recalculate_accumulates_carry_over_across_valid_days(self):
         entries = [
@@ -69,7 +69,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].special, "Weekend")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "00:00")
-        self.assertEqual(result[0].row_color, ROW_COLORS["weekend"])
+        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["weekend"])
 
     def test_recalculate_special_day_has_no_daily_overtime(self):
         entries = [
@@ -87,7 +87,7 @@ class CalculatorTest(unittest.TestCase):
 
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLORS["special_day"])
+        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["special_day"])
 
     def test_recalculate_missing_times_have_no_daily_overtime(self):
         entries = [
@@ -105,7 +105,7 @@ class CalculatorTest(unittest.TestCase):
 
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLORS["missing_times"])
+        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
 
     def test_recalculate_returns_new_entries(self):
         entry = DayEntry(

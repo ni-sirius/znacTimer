@@ -8,7 +8,7 @@ from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import coerce_time_input, hhmm_to_hours
 from znactime.storage import csv_store
-from znactime.ui.constants import COLUMNS
+from znactime.ui.constants import COLUMNS, row_color_hex
 
 
 class SheetFrame(ttk.Frame):
@@ -125,7 +125,7 @@ class SheetFrame(ttk.Frame):
             self.sheet.set_cell_data(row_index, 2, entry.special)
             self.sheet.set_cell_data(row_index, 6, entry.daily_ot)
             self.sheet.set_cell_data(row_index, 7, entry.monthly_balance)
-            self.sheet.highlight_rows(row_index, bg=entry.row_color)
+            self.sheet.highlight_rows(row_index, bg=row_color_hex(entry.row_color))
 
         if autosave:
             self.save_month()

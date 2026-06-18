@@ -5,8 +5,16 @@ from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import coerce_time_input, hhmm_to_hours
 from znactime.storage import csv_store
-from znactime.ui.constants import COLUMNS
-from znactime.ui.qt import QAbstractTableModel, QColor, QModelIndex, QMessageBox, Qt, pyqtSignal
+from znactime.ui.constants import COLUMNS, row_color_hex
+from znactime.ui.qt import (
+    QAbstractTableModel,
+    QApplication,
+    QColor,
+    QModelIndex,
+    QMessageBox,
+    Qt,
+    pyqtSignal,
+)
 
 
 ENTRY_FIELDS = (
@@ -24,6 +32,14 @@ TIME_COLUMNS = {3, 4, 5}
 CENTERED_COLUMNS = {0, 3, 4, 5, 6, 7}
 
 
+def _is_dark_theme():
+    app = QApplication.instance()
+    if app is None:
+        return False
+    window_color = app.palette().color(app.palette().ColorRole.Window)
+    return window_color.lightness() < 128
+
+
 class MonthTableModel(QAbstractTableModel):
     overtimeChanged = pyqtSignal(float)
 
@@ -35,6 +51,7 @@ class MonthTableModel(QAbstractTableModel):
         self.carry_over = 0.0
         self.day_hours = 8.0
         self.month_closed = False
+        self._editing_cells = set()
 
     def set_context(self, year, month, carry_over, day_hours, month_closed):
         self.year = year
@@ -51,6 +68,35 @@ class MonthTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._entries = list(entries)
         self.endResetModel()
+
+    def refresh_theme(self):
+        if not self._entries:
+            return
+        top_left = self.index(0, 0)
+        bottom_right = self.index(len(self._entries) - 1, len(COLUMNS) - 1)
+        self.dataChanged.emit(
+            top_left,
+            bottom_right,
+            [
+                Qt.ItemDataRole.BackgroundRole,
+                Qt.ItemDataRole.ForegroundRole,
+            ],
+        )
+
+    def set_cell_editing(self, index, editing):
+        if not index.isValid():
+            return
+
+        cell = (index.row(), index.column())
+        if editing:
+            self._editing_cells.add(cell)
+        else:
+            self._editing_cells.discard(cell)
+        self.dataChanged.emit(
+            index,
+            index,
+            [Qt.ItemDataRole.ForegroundRole],
+        )
 
     def entries(self):
         return list(self._entries)
@@ -85,7 +131,13 @@ class MonthTableModel(QAbstractTableModel):
             return getattr(entry, ENTRY_FIELDS[column])
 
         if role == Qt.ItemDataRole.BackgroundRole and entry.row_color:
-            return QColor(entry.row_color)
+            color = row_color_hex(entry.row_color, dark=_is_dark_theme())
+            return QColor(color) if color else None
+
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if (index.row(), index.column()) in self._editing_cells:
+                return QColor("#8b8d91" if _is_dark_theme() else "#7a7f87")
+            return QColor("#f1f3f4" if _is_dark_theme() else "#202124")
 
         if role == Qt.ItemDataRole.TextAlignmentRole and column in CENTERED_COLUMNS:
             return Qt.AlignmentFlag.AlignCenter

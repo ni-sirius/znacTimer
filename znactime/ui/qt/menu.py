@@ -2,7 +2,7 @@ from znactime.ui.qt import QAction, QApplication, QMenuBar
 
 
 class MenuBar(QMenuBar):
-    def __init__(self, parent, close_month_command):
+    def __init__(self, parent, close_month_command, appearance_command):
         super().__init__(parent)
         month_menu = self.addMenu("Month")
 
@@ -14,6 +14,11 @@ class MenuBar(QMenuBar):
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(QApplication.quit)
         month_menu.addAction(exit_action)
+
+        settings_menu = self.addMenu("Settings")
+        appearance_action = QAction("Appearance", self)
+        appearance_action.triggered.connect(appearance_command)
+        settings_menu.addAction(appearance_action)
 
     def set_month_closed(self, month_closed):
         self.close_month_action.setEnabled(not month_closed)

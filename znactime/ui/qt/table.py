@@ -7,6 +7,7 @@ from znactime.ui.qt import (
     QHeaderView,
     QLineEdit,
     QKeySequence,
+    QPalette,
     QStyledItemDelegate,
     QTableView,
     QVBoxLayout,
@@ -20,6 +21,37 @@ UNDO_REDO_SUPPORTED = False
 
 
 class CurrentTimeDelegate(QStyledItemDelegate):
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        if isinstance(editor, QLineEdit):
+            index.model().set_cell_editing(index, True)
+            editor.destroyed.connect(
+                lambda _object=None, model=index.model(), row=index.row(),
+                column=index.column(): self._finish_editing(model, row, column)
+            )
+            palette = QApplication.palette()
+            text = palette.color(QPalette.ColorRole.Text).name()
+            highlight = palette.color(QPalette.ColorRole.Highlight).name()
+            highlighted_text = palette.color(
+                QPalette.ColorRole.HighlightedText
+            ).name()
+            editor.setAutoFillBackground(False)
+            editor.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            editor.setFrame(False)
+            editor.setStyleSheet(
+                "QLineEdit {"
+                "background-color: transparent;"
+                f"color: {text};"
+                f"selection-background-color: {highlight};"
+                f"selection-color: {highlighted_text};"
+                "padding: 0 4px;"
+                "}"
+            )
+        return editor
+
+    def _finish_editing(self, model, row, column):
+        model.set_cell_editing(model.index(row, column), False)
+
     def setEditorData(self, editor, index):
         if (
             index.column() in (3, 4)
@@ -108,6 +140,9 @@ class TableWidget(QWidget):
 
     def set_entries(self, entries):
         self.model.set_entries(entries)
+
+    def refresh_theme(self):
+        self.model.refresh_theme()
 
     def set_month_closed(self, month_closed):
         self.model.set_month_closed(month_closed)

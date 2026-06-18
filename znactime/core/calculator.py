@@ -6,15 +6,15 @@ from znactime.core.models import DayEntry
 from znactime.core.time_utils import hhmm_to_hours, hours_to_hhmm
 
 
-ROW_COLORS = {
-    "weekend": "#e6ecff",
-    "weekend_today": "#80b3ff",
-    "special_day": "#dddddd",
-    "special_day_today": "#999999",
-    "missing_times": "#ffcccc",
-    "missing_times_today": "#ff9999",
-    "valid_day": "#ccffcc",
-    "valid_day_today": "#99ff99",
+ROW_COLOR_KEYS = {
+    "weekend": "weekend",
+    "weekend_today": "weekend_today",
+    "special_day": "special_day",
+    "special_day_today": "special_day_today",
+    "missing_times": "missing_times",
+    "missing_times_today": "missing_times_today",
+    "valid_day": "valid_day",
+    "valid_day_today": "valid_day_today",
 }
 
 
@@ -56,21 +56,21 @@ def recalculate(
             if special.lower() in ("", "normal day"):
                 special = "Weekend"
             row_color = (
-                ROW_COLORS["weekend_today"]
+                ROW_COLOR_KEYS["weekend_today"]
                 if entry_is_today
-                else ROW_COLORS["weekend"]
+                else ROW_COLOR_KEYS["weekend"]
             )
         elif special and special.lower() != "normal day":
             row_color = (
-                ROW_COLORS["special_day_today"]
+                ROW_COLOR_KEYS["special_day_today"]
                 if entry_is_today
-                else ROW_COLORS["special_day"]
+                else ROW_COLOR_KEYS["special_day"]
             )
         elif entry.start == "00:00" or entry.end == "00:00":
             row_color = (
-                ROW_COLORS["missing_times_today"]
+                ROW_COLOR_KEYS["missing_times_today"]
                 if entry_is_today
-                else ROW_COLORS["missing_times"]
+                else ROW_COLOR_KEYS["missing_times"]
             )
         else:
             try:
@@ -81,22 +81,22 @@ def recalculate(
                 )
                 daily_ot = worked - day_hours
                 row_color = (
-                    ROW_COLORS["valid_day_today"]
+                    ROW_COLOR_KEYS["valid_day_today"]
                     if entry_is_today
-                    else ROW_COLORS["valid_day"]
+                    else ROW_COLOR_KEYS["valid_day"]
                 )
             except Exception:
                 row_color = (
-                    ROW_COLORS["missing_times_today"]
+                    ROW_COLOR_KEYS["missing_times_today"]
                     if entry_is_today
-                    else ROW_COLORS["missing_times"]
+                    else ROW_COLOR_KEYS["missing_times"]
                 )
 
         if month_closed:
             row_color = (
-                ROW_COLORS["special_day_today"]
+                ROW_COLOR_KEYS["special_day_today"]
                 if entry_is_today
-                else ROW_COLORS["special_day"]
+                else ROW_COLOR_KEYS["special_day"]
             )
 
         monthly_balance += daily_ot
