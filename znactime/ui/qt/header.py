@@ -1,9 +1,9 @@
 from znactime.ui.constants import MONTHS
-from znactime.ui.qt import QComboBox, QHBoxLayout, QLabel, QSpinBox, QWidget, pyqtSignal
+from znactime.ui.qt import QComboBox, QHBoxLayout, QLabel, QSpinBox, Signal, QWidget
 
 
 class HeaderWidget(QWidget):
-    selectionChanged = pyqtSignal()
+    selectionChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,8 +33,12 @@ class HeaderWidget(QWidget):
         layout.addWidget(self.overtime_label)
         layout.addWidget(self.calendar_week_label, stretch=1)
 
-        self.year_box.valueChanged.connect(self.selectionChanged.emit)
-        self.month_box.currentIndexChanged.connect(self.selectionChanged.emit)
+        self.year_box.valueChanged.connect(
+            lambda _value: self.selectionChanged.emit()
+        )
+        self.month_box.currentIndexChanged.connect(
+            lambda _index: self.selectionChanged.emit()
+        )
 
     def set_year(self, year):
         self.year_box.setValue(year)

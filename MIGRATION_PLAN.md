@@ -284,6 +284,72 @@ Keep `ui/tk/` until every box is checked; only then remove it (or keep both behi
 
 ---
 
+## Phase 5 — Switch to LGPL binding (PyQt6 → PySide6)
+
+> **Prerequisite:** Phase 4 complete and verified. All imports already funnelled through
+> `ui/qt/__init__.py` as required by Phase 4.0.
+
+**Why:** PyQt6 is GPL, which requires the application to be GPL-licensed as well. PySide6
+is the official Qt binding released under LGPL, allowing proprietary or permissively-licensed
+distribution without that constraint.
+
+### 5.1 — Swap the dependency
+
+```bash
+pip uninstall PyQt6 PyQt6-Qt6 PyQt6-sip
+pip install PySide6
+```
+
+Update `requirements.txt` / `pyproject.toml` accordingly.
+
+### 5.2 — Update the binding shim in `ui/qt/__init__.py`
+
+This is the single file that all other `ui/qt/` modules must import Qt from. Replace:
+
+```python
+# before
+from PyQt6.QtWidgets import *
+from PyQt6.QtCore import Qt, pyqtSignal as Signal, QAbstractTableModel, ...
+from PyQt6.QtGui import QColor, ...
+```
+
+with:
+
+```python
+# after
+from PySide6.QtWidgets import *
+from PySide6.QtCore import Qt, Signal, QAbstractTableModel, ...
+from PySide6.QtGui import QColor, ...
+```
+
+Key name differences to handle here:
+- `pyqtSignal` → `Signal` (already aliased above, so no other files change)
+- `pyqtSlot` → `Slot`
+- `exec_()` was removed in PyQt6 and PySide6 both use `exec()` — no change needed if Phase 4 used `exec()`.
+- `QAction` moved: in PyQt6 it is in `QtGui`; in PySide6 it is in `QtWidgets` — adjust the import.
+
+### 5.3 — Update `ui/qt/app.py` entry-point snippet
+
+```python
+# znactime/__main__.py
+import sys
+from PySide6.QtWidgets import QApplication
+from znactime.ui.qt.app import TimeTrackerApp
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = TimeTrackerApp()
+    window.show()
+    sys.exit(app.exec())
+```
+
+### 5.4 — Verify
+
+Run the full Phase 4.7 feature-parity checklist again. No behavioral changes are expected;
+this step is purely a binding swap.
+
+---
+
 ## Responsibility Split for Multiple Devs
 
 | Layer | Owns | Can change without breaking |

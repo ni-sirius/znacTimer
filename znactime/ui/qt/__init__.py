@@ -4,7 +4,8 @@ _QT_NAMES = {
     "QObject",
     "QSettings",
     "Qt",
-    "pyqtSignal",
+    "Signal",
+    "Slot",
     "QAction",
     "QColor",
     "QKeySequence",
@@ -35,16 +36,17 @@ _QT_NAMES = {
 }
 
 try:
-    from PyQt6.QtCore import (
+    from PySide6.QtCore import (
         QAbstractTableModel,
         QModelIndex,
         QObject,
         QSettings,
+        Signal,
+        Slot,
         Qt,
-        pyqtSignal,
     )
-    from PyQt6.QtGui import QAction, QColor, QKeySequence, QPalette
-    from PyQt6.QtWidgets import (
+    from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette
+    from PySide6.QtWidgets import (
         QApplication,
         QAbstractItemView,
         QButtonGroup,
@@ -70,7 +72,7 @@ try:
         QWidget,
     )
 except ModuleNotFoundError as error:
-    if error.name != "PyQt6":
+    if error.name != "PySide6":
         raise
     _PYQT_IMPORT_ERROR = error
 
@@ -78,7 +80,7 @@ except ModuleNotFoundError as error:
         if name not in _QT_NAMES:
             raise AttributeError(name)
         raise ModuleNotFoundError(
-            "PyQt6 is required for the Qt UI. Install dependencies with "
+            "PySide6 is required for the Qt UI. Install dependencies with "
             "`pip install -r requirements.txt`."
         ) from _PYQT_IMPORT_ERROR
 

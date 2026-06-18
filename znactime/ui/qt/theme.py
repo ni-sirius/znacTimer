@@ -4,8 +4,8 @@ from znactime.ui.qt import (
     QObject,
     QPalette,
     QSettings,
+    Signal,
     Qt,
-    pyqtSignal,
 )
 
 
@@ -17,7 +17,7 @@ VALID_THEMES = {SYSTEM_THEME, LIGHT_THEME, DARK_THEME}
 
 
 class ThemeController(QObject):
-    themeChanged = pyqtSignal(str)
+    themeChanged = Signal(str)
 
     def __init__(self, app=None, settings=None):
         super().__init__()

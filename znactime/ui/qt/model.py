@@ -12,8 +12,8 @@ from znactime.ui.qt import (
     QColor,
     QModelIndex,
     QMessageBox,
+    Signal,
     Qt,
-    pyqtSignal,
 )
 
 
@@ -41,7 +41,7 @@ def _is_dark_theme():
 
 
 class MonthTableModel(QAbstractTableModel):
-    overtimeChanged = pyqtSignal(float)
+    overtimeChanged = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
