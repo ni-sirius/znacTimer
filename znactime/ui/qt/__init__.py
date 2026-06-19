@@ -3,6 +3,8 @@ _QT_NAMES = {
     "QModelIndex",
     "QObject",
     "QSettings",
+    "QSize",
+    "QTimer",
     "Qt",
     "Signal",
     "Slot",
@@ -41,8 +43,10 @@ try:
         QModelIndex,
         QObject,
         QSettings,
+        QSize,
         Signal,
         Slot,
+        QTimer,
         Qt,
     )
     from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette

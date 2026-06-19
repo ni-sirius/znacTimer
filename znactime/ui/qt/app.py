@@ -23,6 +23,7 @@ class TimeTrackerApp(QMainWindow):
         self.month_closed = False
         self.carry_over = 0.0
         self.current_overtime = 0.0
+        self._initial_size_fitted = False
         self.theme_controller = ThemeController()
         self.theme_controller.themeChanged.connect(self.on_theme_changed)
 
@@ -41,15 +42,43 @@ class TimeTrackerApp(QMainWindow):
 
         self.table = TableWidget(self)
         self.table.overtimeChanged.connect(self.set_current_overtime)
+        self.table.contentHeightChanged.connect(self.fit_initial_window_height)
 
         central_widget = QWidget(self)
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.header)
-        layout.addWidget(self.table, stretch=1)
+        layout.addWidget(self.table)
+        layout.addStretch(1)
         self.setCentralWidget(central_widget)
 
         self.load_month()
+
+    def fit_initial_window_height(self, table_content_height):
+        if self._initial_size_fitted:
+            return
+
+        screen = self.screen()
+        if screen is None:
+            return
+
+        frame_height = max(
+            0,
+            self.frameGeometry().height() - self.geometry().height(),
+        )
+        content_height = (
+            self.menuBar().sizeHint().height()
+            + self.header.sizeHint().height()
+            + table_content_height
+            + frame_height
+        )
+        target_height = min(
+            content_height,
+            screen.availableGeometry().height(),
+        )
+
+        self._initial_size_fitted = True
+        self.resize(self.width(), target_height)
 
     def open_appearance_settings(self):
         dialog = AppearanceDialog(self, self.theme_controller)
