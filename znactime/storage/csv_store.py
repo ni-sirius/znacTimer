@@ -9,6 +9,21 @@ from znactime.core.time_utils import hhmm_to_hours
 from znactime.storage import paths
 
 
+CSV_SCHEMA_VERSION = 2
+CSV_VERSION_MARKER = "#znacTime-csv"
+
+
+def _version_row():
+    return [CSV_VERSION_MARKER, str(CSV_SCHEMA_VERSION)]
+
+
+def _data_rows(rows):
+    rows = list(rows)
+    if rows and rows[0][:1] == [CSV_VERSION_MARKER]:
+        return rows[1:]
+    return rows
+
+
 def _normalized_csv_row(row):
     row_data = list(row)
     if row_data and row_data[0].startswith("CW-"):
@@ -72,13 +87,14 @@ def load_month(year, month, data_dir=None) -> list[DayEntry]:
         return _default_entries(year, month)
 
     with open(month_file, newline="") as f:
-        return [_entry_from_csv_row(row) for row in csv.reader(f)]
+        return [_entry_from_csv_row(row) for row in _data_rows(csv.reader(f))]
 
 
 def save_month(year, month, entries: list[DayEntry], data_dir=None):
     paths.year_dir(year, create=True, data_dir=data_dir)
     with open(paths.tmp_month_file(year, month, data_dir=data_dir), "w", newline="") as f:
         writer = csv.writer(f)
+        writer.writerow(_version_row())
         for entry in entries:
             writer.writerow(_entry_to_csv_row(entry))
 
@@ -111,6 +127,7 @@ def get_carry_over(year, month, data_dir=None) -> float:
     except OSError:
         return 0.0
 
+    rows = _data_rows(rows)
     if not rows:
         return 0.0
 

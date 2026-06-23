@@ -3,17 +3,27 @@ from datetime import date
 
 from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.core.models import DayEntry
-from znactime.core.time_utils import coerce_time_input, hhmm_to_hours
+from znactime.core.time_utils import (
+    coerce_interruption_input,
+    coerce_time_input,
+    hhmm_to_hours,
+    parse_interruption_input,
+)
 from znactime.storage import csv_store
 from znactime.ui.constants import COLUMNS, row_color_hex
 from znactime.ui.qt import (
     QAbstractTableModel,
     QApplication,
+    QCheckBox,
     QColor,
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
     QModelIndex,
     QMessageBox,
     Signal,
     Qt,
+    QVBoxLayout,
 )
 
 
@@ -28,7 +38,7 @@ ENTRY_FIELDS = (
     "monthly_balance",
 )
 EDITABLE_COLUMNS = {2, 3, 4, 5}
-TIME_COLUMNS = {3, 4, 5}
+TIME_COLUMNS = {3, 4}
 CENTERED_COLUMNS = {0, 3, 4, 5, 6, 7}
 
 
@@ -38,6 +48,58 @@ def _is_dark_theme():
         return False
     window_color = app.palette().color(app.palette().ColorRole.Window)
     return window_color.lightness() < 128
+
+
+class InterruptionBoundaryDialog(QDialog):
+    def __init__(
+        self,
+        current_start,
+        current_end,
+        proposed_start=None,
+        proposed_end=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Interruption outside workday")
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel(
+                "The interruption periods extend outside the current workday.",
+                self,
+            )
+        )
+
+        self.start_checkbox = None
+        if proposed_start is not None:
+            self.start_checkbox = QCheckBox(
+                f"Override start {current_start} with {proposed_start}?",
+                self,
+            )
+            layout.addWidget(self.start_checkbox)
+
+        self.end_checkbox = None
+        if proposed_end is not None:
+            self.end_checkbox = QCheckBox(
+                f"Override end {current_end} with {proposed_end}?",
+                self,
+            )
+            layout.addWidget(self.end_checkbox)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_overrides(self):
+        return (
+            self.start_checkbox is not None and self.start_checkbox.isChecked(),
+            self.end_checkbox is not None and self.end_checkbox.isChecked(),
+        )
 
 
 class MonthTableModel(QAbstractTableModel):
@@ -100,6 +162,24 @@ class MonthTableModel(QAbstractTableModel):
 
     def entries(self):
         return list(self._entries)
+
+    def entry_for_date(self, date_text):
+        return next(
+            (entry for entry in self._entries if entry.date == date_text),
+            None,
+        )
+
+    def update_entry_for_date(self, date_text, **changes):
+        if self.month_closed:
+            return False
+
+        for row, entry in enumerate(self._entries):
+            if entry.date != date_text:
+                continue
+            self._entries[row] = replace(entry, **changes)
+            self.recalculate(autosave=True)
+            return True
+        return False
 
     def rowCount(self, parent=QModelIndex()):
         if parent.isValid():
@@ -187,6 +267,56 @@ class MonthTableModel(QAbstractTableModel):
                     "Time must be HH:MM (00:00-23:59)",
                 )
                 return False
+        elif column == 5:
+            parsed_interruption = parse_interruption_input(value)
+            if parsed_interruption is None:
+                QMessageBox.warning(
+                    None,
+                    "Invalid interruption",
+                    "Use HH:MM or periods such as "
+                    "12:30-13:00;14:00-16:42. Periods may not overlap.",
+                )
+                return False
+
+            value = coerce_interruption_input(value)
+            entry = self._entries[index.row()]
+            proposed_start = None
+            proposed_end = None
+            if (
+                parsed_interruption.earliest_start is not None
+                and parsed_interruption.earliest_start < entry.start
+            ):
+                proposed_start = parsed_interruption.earliest_start
+            if (
+                parsed_interruption.latest_end is not None
+                and parsed_interruption.latest_end > entry.end
+            ):
+                proposed_end = parsed_interruption.latest_end
+
+            if proposed_start is not None or proposed_end is not None:
+                dialog = InterruptionBoundaryDialog(
+                    current_start=entry.start,
+                    current_end=entry.end,
+                    proposed_start=proposed_start,
+                    proposed_end=proposed_end,
+                )
+                if dialog.exec() != QDialog.DialogCode.Accepted:
+                    return False
+
+                override_start, override_end = dialog.selected_overrides()
+                if proposed_start is not None and not override_start:
+                    return False
+                if proposed_end is not None and not override_end:
+                    return False
+
+                updates = {"interruption": value}
+                if override_start:
+                    updates["start"] = proposed_start
+                if override_end:
+                    updates["end"] = proposed_end
+                self._entries[index.row()] = replace(entry, **updates)
+                self.recalculate(autosave=True)
+                return True
 
         if column == 2 and value == "":
             value = "Normal day"

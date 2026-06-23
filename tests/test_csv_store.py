@@ -38,6 +38,7 @@ class CsvStoreTest(unittest.TestCase):
         self.assertEqual(
             rows,
             [
+                ["#znacTime-csv", "2"],
                 [
                     "17.06.2024",
                     "Normal day",
@@ -54,6 +55,27 @@ class CsvStoreTest(unittest.TestCase):
             csv_store.load_month(2024, 6, data_dir=self.data_dir),
             entries,
         )
+
+    def test_load_month_supports_legacy_unversioned_csv(self):
+        month_file = paths.tmp_month_file(2024, 6, data_dir=self.data_dir)
+        paths.year_dir(2024, create=True, data_dir=self.data_dir)
+        with open(month_file, "w", newline="") as f:
+            csv.writer(f).writerow(
+                [
+                    "17.06.2024",
+                    "Normal day",
+                    "08:00",
+                    "17:00",
+                    "01:00",
+                    "00:00",
+                    "01:30",
+                ]
+            )
+
+        entries = csv_store.load_month(2024, 6, data_dir=self.data_dir)
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].interruption, "01:00")
 
     def test_load_month_returns_default_entries_when_file_missing(self):
         entries = csv_store.load_month(2024, 2, data_dir=self.data_dir)

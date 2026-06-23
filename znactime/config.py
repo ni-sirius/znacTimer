@@ -1,3 +1,3 @@
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 DATA_DIR = "data"
 DEFAULT_DAY_HOURS = 8.0

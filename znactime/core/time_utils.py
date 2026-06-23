@@ -1,7 +1,19 @@
 import re
+from dataclasses import dataclass
+from datetime import datetime
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+INTERRUPTION_SEPARATOR = ";"
+PERIOD_SEPARATOR = "-"
+
+
+@dataclass(frozen=True)
+class InterruptionValue:
+    normalized: str
+    hours: float
+    earliest_start: str | None = None
+    latest_end: str | None = None
 
 
 def coerce_time_input(value):
@@ -33,6 +45,89 @@ def coerce_time_input(value):
     if not TIME_RE.match(value):
         return None
     return value
+
+
+def _minutes_from_hhmm(value):
+    parsed = datetime.strptime(value, "%H:%M")
+    return parsed.hour * 60 + parsed.minute
+
+
+def parse_interruption_input(value):
+    value = str(value).strip()
+    if not value:
+        value = "00:00"
+
+    if PERIOD_SEPARATOR not in value:
+        normalized = coerce_time_input(value)
+        if normalized is None:
+            return None
+        return InterruptionValue(
+            normalized=normalized,
+            hours=hhmm_to_hours(normalized),
+        )
+
+    periods = []
+    for raw_period in value.split(INTERRUPTION_SEPARATOR):
+        raw_period = raw_period.strip()
+        if raw_period.count(PERIOD_SEPARATOR) != 1:
+            return None
+
+        raw_start, raw_end = raw_period.split(PERIOD_SEPARATOR)
+        start = coerce_time_input(raw_start.strip())
+        end = coerce_time_input(raw_end.strip())
+        if start is None or end is None:
+            return None
+
+        start_minutes = _minutes_from_hhmm(start)
+        end_minutes = _minutes_from_hhmm(end)
+        if end_minutes <= start_minutes:
+            return None
+        periods.append((start_minutes, end_minutes, start, end))
+
+    periods.sort(key=lambda period: period[0])
+    for previous, current in zip(periods, periods[1:]):
+        if current[0] < previous[1]:
+            return None
+
+    total_minutes = sum(end - start for start, end, _start, _end in periods)
+    return InterruptionValue(
+        normalized=INTERRUPTION_SEPARATOR.join(
+            f"{start}-{end}" for _start_minutes, _end_minutes, start, end in periods
+        ),
+        hours=total_minutes / 60,
+        earliest_start=periods[0][2],
+        latest_end=periods[-1][3],
+    )
+
+
+def coerce_interruption_input(value):
+    parsed = parse_interruption_input(value)
+    return None if parsed is None else parsed.normalized
+
+
+def interruption_hours(value):
+    parsed = parse_interruption_input(value)
+    if parsed is None:
+        raise ValueError("Invalid interruption value")
+    return parsed.hours
+
+
+def append_interruption_period(value, start, end):
+    period = f"{start}-{end}"
+    existing = str(value).strip()
+    if existing in ("", "00:00"):
+        combined = period
+    elif PERIOD_SEPARATOR in existing:
+        combined = f"{existing}{INTERRUPTION_SEPARATOR}{period}"
+    else:
+        raise ValueError(
+            "A duration interruption must be replaced before periods can be added"
+        )
+
+    parsed = parse_interruption_input(combined)
+    if parsed is None:
+        raise ValueError("The interruption period is invalid or overlaps")
+    return parsed.normalized
 
 
 def hhmm_to_hours(hhmm_str):

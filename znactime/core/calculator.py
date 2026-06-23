@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from znactime.core.calendar_utils import calendar_week_tag, is_weekend
 from znactime.core.models import DayEntry
-from znactime.core.time_utils import hhmm_to_hours, hours_to_hhmm
+from znactime.core.time_utils import hours_to_hhmm, interruption_hours
 
 
 ROW_COLOR_KEYS = {
@@ -32,7 +32,7 @@ def _calculate_worked_hours(start, end, interruption):
     if end_time <= start_time:
         raise ValueError("End must be after start")
 
-    interruption_h = hhmm_to_hours(interruption)
+    interruption_h = interruption_hours(interruption)
     return (end_time - start_time).total_seconds() / 3600 - interruption_h
 
 

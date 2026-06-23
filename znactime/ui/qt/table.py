@@ -437,18 +437,25 @@ class MonthTableView(QTableView):
 
 class TableWidget(QWidget):
     contentHeightChanged = Signal(int)
+    entriesChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setMinimumHeight(0)
         self._content_height = 0
         self.model = MonthTableModel(self)
         self.view = MonthTableView(self)
+        self.view.setMinimumHeight(0)
         self.view.setModel(self.model)
         self.view.setItemDelegate(CurrentTimeDelegate(self.view))
         self.view.verticalHeader().setVisible(False)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.view.contentHeightChanged.connect(self._update_content_height)
+        self.model.dataChanged.connect(
+            lambda *_args: self.entriesChanged.emit()
+        )
+        self.model.modelReset.connect(self.entriesChanged.emit)
         self.shadow = QGraphicsDropShadowEffect(self.view)
         self.shadow.setBlurRadius(24)
         self.shadow.setOffset(0, 5)
@@ -504,6 +511,12 @@ class TableWidget(QWidget):
 
     def final_balance_hours(self):
         return self.model.final_balance_hours()
+
+    def entry_for_date(self, date_text):
+        return self.model.entry_for_date(date_text)
+
+    def update_entry_for_date(self, date_text, **changes):
+        return self.model.update_entry_for_date(date_text, **changes)
 
     @property
     def overtimeChanged(self):

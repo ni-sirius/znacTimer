@@ -52,6 +52,23 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[1].daily_ot, "00:00")
         self.assertEqual(result[1].monthly_balance, "02:00")
 
+    def test_recalculate_subtracts_multiple_interruption_periods(self):
+        entries = [
+            DayEntry(
+                cw="",
+                date="17.06.2024",
+                special="Normal day",
+                start="08:00",
+                end="18:00",
+                interruption="12:30-13:00;14:00-15:30",
+            )
+        ]
+
+        result = recalculate(entries, 0.0, 8.0, date(2024, 6, 18), False)
+
+        self.assertEqual(result[0].daily_ot, "00:00")
+        self.assertEqual(result[0].monthly_balance, "00:00")
+
     def test_recalculate_weekend_auto_marks_special(self):
         entries = [
             DayEntry(
