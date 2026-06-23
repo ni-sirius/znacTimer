@@ -1,6 +1,7 @@
 from znactime.ui.qt import (
     QApplication,
     QColor,
+    QFont,
     QObject,
     QPalette,
     QSettings,
@@ -28,6 +29,7 @@ class ThemeController(QObject):
         )
         self.system_palette = QPalette(self.app.palette())
         self.system_color_scheme = self.app.styleHints().colorScheme()
+        self.app.setFont(QFont("Segoe UI Variable Text", 10))
         saved_mode = self.settings.value(THEME_SETTING_KEY, SYSTEM_THEME, type=str)
         self.mode = saved_mode if saved_mode in VALID_THEMES else SYSTEM_THEME
         self.set_mode(self.mode, persist=False)

@@ -3,13 +3,24 @@ from datetime import date, datetime
 from znactime.ui.constants import COLUMNS
 from znactime.ui.qt import (
     QAbstractItemView,
+    QAbstractAnimation,
     QApplication,
+    QBrush,
+    QColor,
+    QGraphicsDropShadowEffect,
     QHeaderView,
     QLineEdit,
     QKeySequence,
+    QPainterPath,
     QPalette,
+    QPropertyAnimation,
+    QEasingCurve,
+    QRectF,
+    QRegion,
     QSize,
+    QStyle,
     QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableView,
     QTimer,
     QVBoxLayout,
@@ -23,10 +34,66 @@ from znactime.ui.qt.model import EDITABLE_COLUMNS, MonthTableModel
 UNDO_REDO_SUPPORTED = False
 COLUMN_WEIGHTS = (1, 2, 2, 1, 1, 1, 1, 1)
 MIN_COMPACT_COLUMN_WIDTH = 72
-MAX_COMPACT_ROW_HEIGHT = 28
+ROW_HEIGHT_SCALE = 1.5
+MAX_COMPACT_ROW_HEIGHT = 42
+TABLE_CORNER_RADIUS = 10
+
+
+def _is_dark_theme():
+    window_color = QApplication.palette().color(QPalette.ColorRole.Window)
+    return window_color.lightness() < 128
 
 
 class CurrentTimeDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        background = index.data(Qt.ItemDataRole.BackgroundRole)
+        if background is not None:
+            divider_color = "#555b66" if _is_dark_theme() else "#b8bcc4"
+            pixel_ratio = painter.device().devicePixelRatioF()
+            separator_height = 1.0 / max(1.0, pixel_ratio)
+            cell_rect = QRectF(option.rect)
+            expanded_rect = QRectF(
+                cell_rect.x() - 1.0,
+                cell_rect.y(),
+                cell_rect.width() + 2.0,
+                cell_rect.height(),
+            )
+            painter.fillRect(
+                QRectF(
+                    expanded_rect.x(),
+                    expanded_rect.y(),
+                    expanded_rect.width(),
+                    max(0.0, expanded_rect.height() - separator_height),
+                ),
+                background,
+            )
+            painter.fillRect(
+                QRectF(
+                    expanded_rect.x(),
+                    expanded_rect.bottom() - separator_height,
+                    expanded_rect.width(),
+                    separator_height,
+                ),
+                QColor(divider_color),
+            )
+
+        style_option = QStyleOptionViewItem(option)
+        self.initStyleOption(style_option, index)
+        style_option.backgroundBrush = QBrush(Qt.BrushStyle.NoBrush)
+        if not index.flags() & Qt.ItemFlag.ItemIsEditable:
+            style_option.state &= ~(
+                QStyle.StateFlag.State_MouseOver
+                | QStyle.StateFlag.State_Selected
+                | QStyle.StateFlag.State_HasFocus
+            )
+        style = style_option.widget.style() if style_option.widget else QApplication.style()
+        style.drawControl(
+            QStyle.ControlElement.CE_ItemViewItem,
+            style_option,
+            painter,
+            style_option.widget,
+        )
+
     def createEditor(self, parent, option, index):
         editor = super().createEditor(parent, option, index)
         if isinstance(editor, QLineEdit):
@@ -41,12 +108,19 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             highlighted_text = palette.color(
                 QPalette.ColorRole.HighlightedText
             ).name()
-            editor.setAutoFillBackground(False)
-            editor.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            background = index.data(Qt.ItemDataRole.BackgroundRole)
+            if background is None:
+                background = palette.color(QPalette.ColorRole.Base)
+            background_color = background.name()
+
+            editor.setAutoFillBackground(True)
+            editor.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
             editor.setFrame(False)
+            if index.column() in (3, 4, 5):
+                editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
             editor.setStyleSheet(
                 "QLineEdit {"
-                "background-color: transparent;"
+                f"background-color: {background_color};"
                 f"color: {text};"
                 f"selection-background-color: {highlight};"
                 f"selection-color: {highlighted_text};"
@@ -78,16 +152,165 @@ class MonthTableView(QTableView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setShowGrid(False)
+        self.setAlternatingRowColors(False)
+        self.setCornerButtonEnabled(False)
+        self.setWordWrap(False)
+        self.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.verticalScrollBar().setSingleStep(4)
+        self._scroll_target = 0
+        self._scroll_animation = QPropertyAnimation(
+            self.verticalScrollBar(),
+            b"value",
+            self,
+        )
+        self._scroll_animation.setDuration(150)
+        self._scroll_animation.setEasingCurve(
+            QEasingCurve.Type.OutCubic
+        )
         self.horizontalHeader().setMinimumSectionSize(
             MIN_COMPACT_COLUMN_WIDTH
         )
         self.verticalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Fixed
         )
+        self.apply_modern_style()
+
+    def apply_modern_style(self):
+        if _is_dark_theme():
+            table_background = "#1f2228"
+            border = "#353a44"
+            header_background = "#343944"
+            header_text = "#eef0f4"
+            scrollbar_track = "#252932"
+            scrollbar_handle = "#555c69"
+            scrollbar_hover = "#686f7d"
+        else:
+            table_background = "#ffffff"
+            border = "#e3e6eb"
+            header_background = "#C5C8CC"
+            header_text = "#262934"
+            scrollbar_track = "#eef0f3"
+            scrollbar_handle = "#c2c6ce"
+            scrollbar_hover = "#aeb3bd"
+
+        self.setStyleSheet(
+            "QTableView {"
+            f"background-color: {table_background};"
+            f"border: 1px solid {border};"
+            "border-radius: 10px;"
+            "padding: 0;"
+            "outline: 0;"
+            "}"
+            "QHeaderView::section {"
+            f"background-color: {header_background};"
+            f"color: {header_text};"
+            f"border: 0 solid {border};"
+            f"border-bottom: 1px solid {border};"
+            "padding: 7px 8px;"
+            "}"
+            "QHeaderView::section:first {"
+            "border-top-left-radius: 9px;"
+            "}"
+            "QHeaderView::section:last {"
+            "border-top-right-radius: 9px;"
+            "}"
+            "QScrollBar:vertical {"
+            f"background-color: {scrollbar_track};"
+            "border: none;"
+            "width: 10px;"
+            "margin: 0;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            f"background-color: {scrollbar_handle};"
+            "border: none;"
+            "border-radius: 5px;"
+            "min-height: 28px;"
+            "margin: 2px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            f"background-color: {scrollbar_hover};"
+            "}"
+            "QScrollBar::add-line:vertical,"
+            "QScrollBar::sub-line:vertical {"
+            "height: 0;"
+            "border: none;"
+            "background: transparent;"
+            "}"
+            "QScrollBar::add-page:vertical,"
+            "QScrollBar::sub-page:vertical {"
+            "background: transparent;"
+            "}"
+            "QAbstractScrollArea::corner {"
+            f"background-color: {scrollbar_track};"
+            "border: none;"
+            "}"
+        )
+        self._apply_rounded_mask()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._apply_rounded_mask()
         self.update_table_geometry()
+
+    def wheelEvent(self, event):
+        if not event.pixelDelta().isNull():
+            scrollbar = self.verticalScrollBar()
+            if self._scroll_animation.state() != QAbstractAnimation.State.Running:
+                self._scroll_target = scrollbar.value()
+
+            self._scroll_target = max(
+                scrollbar.minimum(),
+                min(
+                    scrollbar.maximum(),
+                    self._scroll_target - event.pixelDelta().y(),
+                ),
+            )
+
+            self._scroll_animation.stop()
+            self._scroll_animation.setDuration(70)
+            self._scroll_animation.setStartValue(scrollbar.value())
+            self._scroll_animation.setEndValue(self._scroll_target)
+            self._scroll_animation.start()
+            event.accept()
+            return
+
+        delta = event.angleDelta().y()
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+
+        scrollbar = self.verticalScrollBar()
+        if self._scroll_animation.state() != QAbstractAnimation.State.Running:
+            self._scroll_target = scrollbar.value()
+
+        distance = round((delta / 120) * 48)
+        self._scroll_target = max(
+            scrollbar.minimum(),
+            min(scrollbar.maximum(), self._scroll_target - distance),
+        )
+
+        self._scroll_animation.stop()
+        self._scroll_animation.setDuration(150)
+        self._scroll_animation.setStartValue(scrollbar.value())
+        self._scroll_animation.setEndValue(self._scroll_target)
+        self._scroll_animation.start()
+        event.accept()
+
+    def _apply_rounded_mask(self):
+        if self.width() <= 0 or self.height() <= 0:
+            return
+
+        path = QPainterPath()
+        path.addRoundedRect(
+            QRectF(self.rect()),
+            TABLE_CORNER_RADIUS,
+            TABLE_CORNER_RADIUS,
+        )
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     def update_table_geometry(self):
         self._resize_columns_to_viewport()
@@ -132,7 +355,9 @@ class MonthTableView(QTableView):
     def _resize_rows_to_viewport(self):
         model = self.model()
         row_count = 0 if model is None else model.rowCount()
-        font_safe_height = self.fontMetrics().height() + 6
+        font_safe_height = round(
+            (self.fontMetrics().height() + 6) * ROW_HEIGHT_SCALE
+        )
         self.verticalHeader().setMinimumSectionSize(font_safe_height)
 
         if row_count == 0:
@@ -149,7 +374,7 @@ class MonthTableView(QTableView):
         return row_height * row_count <= available_height
 
     def _resize_columns_to_viewport(self):
-        available_width = max(0, self.viewport().width() - 2)
+        available_width = max(0, self.viewport().width())
         weight_total = sum(COLUMN_WEIGHTS)
         unit_width = max(
             MIN_COMPACT_COLUMN_WIDTH,
@@ -224,14 +449,25 @@ class TableWidget(QWidget):
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.view.contentHeightChanged.connect(self._update_content_height)
+        self.shadow = QGraphicsDropShadowEffect(self.view)
+        self.shadow.setBlurRadius(24)
+        self.shadow.setOffset(0, 5)
+        self.view.setGraphicsEffect(self.shadow)
+        self._apply_shadow_theme()
 
         header = self.view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 0, 10, 10)
+        layout.setContentsMargins(8, 6, 8, 12)
         layout.addWidget(self.view)
+
+    def _apply_shadow_theme(self):
+        if _is_dark_theme():
+            self.shadow.setColor(QColor(0, 0, 0, 135))
+        else:
+            self.shadow.setColor(QColor(63, 49, 91, 55))
 
     def _update_content_height(self, view_height):
         layout = self.layout()
@@ -257,6 +493,8 @@ class TableWidget(QWidget):
 
     def refresh_theme(self):
         self.model.refresh_theme()
+        self.view.apply_modern_style()
+        self._apply_shadow_theme()
 
     def set_month_closed(self, month_closed):
         self.model.set_month_closed(month_closed)

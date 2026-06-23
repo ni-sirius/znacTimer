@@ -6,10 +6,20 @@ from znactime.core.calendar_utils import build_calendar_week_text
 from znactime.core.models import MonthStats
 from znactime.core.time_utils import hours_to_hhmm
 from znactime.storage import csv_store, paths
-from znactime.ui.qt import QMainWindow, QMessageBox, QVBoxLayout, QWidget
+from znactime.ui.qt import (
+    QApplication,
+    QMainWindow,
+    QMessageBox,
+    QPalette,
+    QVBoxLayout,
+    QWidget,
+)
 from znactime.ui.qt.header import HeaderWidget
 from znactime.ui.qt.menu import MenuBar
-from znactime.ui.qt.settings import AppearanceDialog
+from znactime.ui.qt.settings import (
+    AppearanceDialog,
+    load_startup_window_settings,
+)
 from znactime.ui.qt.table import TableWidget
 from znactime.ui.qt.theme import ThemeController
 
@@ -18,7 +28,6 @@ class TimeTrackerApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"znacTime v{VERSION}")
-        self.resize(1250, 900)
 
         self.month_closed = False
         self.carry_over = 0.0
@@ -26,6 +35,14 @@ class TimeTrackerApp(QMainWindow):
         self._initial_size_fitted = False
         self.theme_controller = ThemeController()
         self.theme_controller.themeChanged.connect(self.on_theme_changed)
+        (
+            self.fit_startup_height,
+            initial_width,
+            initial_height,
+        ) = load_startup_window_settings(
+            self.theme_controller.settings
+        )
+        self.resize(initial_width, initial_height)
 
         self.menu = MenuBar(
             self,
@@ -45,17 +62,20 @@ class TimeTrackerApp(QMainWindow):
         self.table.contentHeightChanged.connect(self.fit_initial_window_height)
 
         central_widget = QWidget(self)
+        central_widget.setObjectName("appBackground")
         layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(10)
         layout.addWidget(self.header)
         layout.addWidget(self.table)
         layout.addStretch(1)
         self.setCentralWidget(central_widget)
+        self.apply_shell_theme()
 
         self.load_month()
 
     def fit_initial_window_height(self, table_content_height):
-        if self._initial_size_fitted:
+        if self._initial_size_fitted or not self.fit_startup_height:
             return
 
         screen = self.screen()
@@ -66,10 +86,15 @@ class TimeTrackerApp(QMainWindow):
             0,
             self.frameGeometry().height() - self.geometry().height(),
         )
+        layout = self.centralWidget().layout()
+        margins = layout.contentsMargins()
         content_height = (
             self.menuBar().sizeHint().height()
             + self.header.sizeHint().height()
             + table_content_height
+            + margins.top()
+            + margins.bottom()
+            + layout.spacing()
             + frame_height
         )
         target_height = min(
@@ -85,7 +110,22 @@ class TimeTrackerApp(QMainWindow):
         dialog.exec()
 
     def on_theme_changed(self, _mode):
+        self.apply_shell_theme()
+        self.menu.apply_theme()
+        self.header.apply_theme()
         self.table.refresh_theme()
+
+    def apply_shell_theme(self):
+        dark = (
+            QApplication.palette().color(QPalette.ColorRole.Window).lightness()
+            < 128
+        )
+        background = "#19171f" if dark else "#f1edf8"
+        self.setStyleSheet(
+            "QWidget#appBackground {"
+            f"background-color: {background};"
+            "}"
+        )
 
     def set_current_overtime(self, overtime):
         self.current_overtime = overtime

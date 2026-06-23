@@ -15,25 +15,25 @@ COLUMNS = [
 ]
 
 LIGHT_ROW_COLORS = {
-    "weekend": "#e6ecff",
-    "weekend_today": "#80b3ff",
-    "special_day": "#dddddd",
-    "special_day_today": "#999999",
-    "missing_times": "#ffcccc",
-    "missing_times_today": "#ff9999",
-    "valid_day": "#ccffcc",
-    "valid_day_today": "#99ff99",
+    "weekend": "#e1edff",
+    "weekend_today": "#bcd6ff",
+    "special_day": "#eee6fa",
+    "special_day_today": "#d5c4f0",
+    "missing_times": "#fde4e9",
+    "missing_times_today": "#f8c4ce",
+    "valid_day": "#e0f5e8",
+    "valid_day_today": "#bce8cc",
 }
 
 DARK_ROW_COLORS = {
-    "weekend": "#26324f",
-    "weekend_today": "#315b96",
-    "special_day": "#3a3a3a",
-    "special_day_today": "#555555",
-    "missing_times": "#5a2528",
-    "missing_times_today": "#79363a",
-    "valid_day": "#244a32",
-    "valid_day_today": "#326b45",
+    "weekend": "#2b3d5b",
+    "weekend_today": "#3a5d8d",
+    "special_day": "#3d3150",
+    "special_day_today": "#594477",
+    "missing_times": "#512e3a",
+    "missing_times_today": "#743b4b",
+    "valid_day": "#2a4938",
+    "valid_day_today": "#396b4e",
 }
 
 COLORS = LIGHT_ROW_COLORS
