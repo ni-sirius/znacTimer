@@ -112,12 +112,17 @@ class MonthTableModel(QAbstractTableModel):
         return len(COLUMNS)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if (
-            orientation == Qt.Orientation.Horizontal
-            and role == Qt.ItemDataRole.DisplayRole
-            and 0 <= section < len(COLUMNS)
-        ):
+        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(COLUMNS):
+            return None
+
+        if role == Qt.ItemDataRole.DisplayRole:
             return COLUMNS[section]
+
+        if role == Qt.ItemDataRole.FontRole:
+            font = QApplication.font()
+            font.setBold(True)
+            return font
+
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -126,6 +131,7 @@ class MonthTableModel(QAbstractTableModel):
 
         entry = self._entries[index.row()]
         column = index.column()
+        is_editable = not self.month_closed and column in EDITABLE_COLUMNS
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return getattr(entry, ENTRY_FIELDS[column])
@@ -137,7 +143,14 @@ class MonthTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole:
             if (index.row(), index.column()) in self._editing_cells:
                 return QColor("#8b8d91" if _is_dark_theme() else "#7a7f87")
+            if not is_editable:
+                return QColor("#bdc1c6" if _is_dark_theme() else "#5f6368")
             return QColor("#f1f3f4" if _is_dark_theme() else "#202124")
+
+        if role == Qt.ItemDataRole.FontRole and not is_editable:
+            font = QApplication.font()
+            font.setBold(True)
+            return font
 
         if role == Qt.ItemDataRole.TextAlignmentRole and column in CENTERED_COLUMNS:
             return Qt.AlignmentFlag.AlignCenter
