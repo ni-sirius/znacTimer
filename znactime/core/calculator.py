@@ -66,12 +66,16 @@ def recalculate(
                 if entry_is_today
                 else ROW_COLOR_KEYS["special_day"]
             )
-        elif entry.start == "00:00" or entry.end == "00:00":
-            row_color = (
-                ROW_COLOR_KEYS["missing_times_today"]
-                if entry_is_today
-                else ROW_COLOR_KEYS["missing_times"]
-            )
+
+        if entry.start == "00:00" or entry.end == "00:00":
+            if row_color:
+                daily_ot = 0.0
+            else:
+                row_color = (
+                    ROW_COLOR_KEYS["missing_times_today"]
+                    if entry_is_today
+                    else ROW_COLOR_KEYS["missing_times"]
+                )
         else:
             try:
                 worked = _calculate_worked_hours(
@@ -80,11 +84,12 @@ def recalculate(
                     entry.interruption,
                 )
                 daily_ot = worked - day_hours
-                row_color = (
-                    ROW_COLOR_KEYS["valid_day_today"]
-                    if entry_is_today
-                    else ROW_COLOR_KEYS["valid_day"]
-                )
+                if not row_color:
+                    row_color = (
+                        ROW_COLOR_KEYS["valid_day_today"]
+                        if entry_is_today
+                        else ROW_COLOR_KEYS["valid_day"]
+                    )
             except Exception:
                 row_color = (
                     ROW_COLOR_KEYS["missing_times_today"]
