@@ -10,7 +10,11 @@ from znactime.core.time_utils import (
     parse_interruption_input,
 )
 from znactime.storage import csv_store
-from znactime.ui.constants import COLUMNS, row_color_hex
+from znactime.ui.constants import (
+    COLUMNS,
+    current_row_accent_hex,
+    overtime_text_color_hex,
+)
 from znactime.ui.qt import (
     QAbstractTableModel,
     QApplication,
@@ -40,6 +44,9 @@ ENTRY_FIELDS = (
 EDITABLE_COLUMNS = {2, 3, 4, 5}
 TIME_COLUMNS = {3, 4}
 CENTERED_COLUMNS = {0, 3, 4, 5, 6, 7}
+BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
+CURRENT_ROW_ROLE = Qt.ItemDataRole.UserRole + 2
+BADGE_COLUMNS = {2, 3, 4, 5}
 
 
 def _is_dark_theme():
@@ -140,8 +147,8 @@ class MonthTableModel(QAbstractTableModel):
             top_left,
             bottom_right,
             [
-                Qt.ItemDataRole.BackgroundRole,
                 Qt.ItemDataRole.ForegroundRole,
+                CURRENT_ROW_ROLE,
             ],
         )
 
@@ -216,13 +223,20 @@ class MonthTableModel(QAbstractTableModel):
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return getattr(entry, ENTRY_FIELDS[column])
 
-        if role == Qt.ItemDataRole.BackgroundRole and entry.row_color:
-            color = row_color_hex(entry.row_color, dark=_is_dark_theme())
-            return QColor(color) if color else None
+        is_current_row = entry.row_color.endswith("_today")
 
         if role == Qt.ItemDataRole.ForegroundRole:
             if (index.row(), index.column()) in self._editing_cells:
                 return QColor("#8b8d91" if _is_dark_theme() else "#7a7f87")
+            if is_current_row and column in (0, 1):
+                return QColor(current_row_accent_hex(dark=_is_dark_theme()))
+            if column in (6, 7):
+                overtime_color = overtime_text_color_hex(
+                    getattr(entry, ENTRY_FIELDS[column]),
+                    dark=_is_dark_theme(),
+                )
+                if overtime_color:
+                    return QColor(overtime_color)
             if not is_editable:
                 return QColor("#bdc1c6" if _is_dark_theme() else "#5f6368")
             return QColor("#f1f3f4" if _is_dark_theme() else "#202124")
@@ -235,7 +249,38 @@ class MonthTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole and column in CENTERED_COLUMNS:
             return Qt.AlignmentFlag.AlignCenter
 
+        if role == BADGE_ROLE and column in BADGE_COLUMNS:
+            return self._badge_data(entry, column)
+
+        if role == CURRENT_ROW_ROLE:
+            return is_current_row
+
         return None
+
+    def _badge_data(self, entry, column):
+        if column == 2:
+            return {
+                "texts": [entry.special or "Normal day"],
+                "state": entry.row_color or "empty",
+                "full_width": True,
+            }
+
+        if column == 5:
+            value = entry.interruption or "00:00"
+            texts = [part.strip() for part in value.split(";") if part.strip()]
+            if not texts:
+                texts = ["00:00"]
+            active = value not in ("", "00:00")
+            return {
+                "texts": texts,
+                "state": "info" if active else "empty",
+            }
+
+        value = getattr(entry, ENTRY_FIELDS[column]) or "00:00"
+        return {
+            "texts": [value],
+            "state": "success" if value != "00:00" else "empty",
+        }
 
     def flags(self, index):
         if not index.isValid():

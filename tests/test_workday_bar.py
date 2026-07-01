@@ -116,6 +116,35 @@ class WorkdayBarTest(unittest.TestCase):
         self.assertTrue(changed)
         self.assertTrue(changes)
 
+    def test_interruption_edit_recalculates_row_height_for_multiple_periods(self):
+        table = TableWidget()
+        table.resize(760, 220)
+        table.show()
+        table.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="08:00",
+                    end="17:00",
+                    interruption="00:00",
+                )
+            ]
+        )
+        self.app.processEvents()
+        initial_height = table.view.rowHeight(0)
+
+        changed = table.model.setData(
+            table.model.index(0, 5),
+            "12:30-13:00;14:00-14:30",
+            Qt.ItemDataRole.EditRole,
+        )
+        self.app.processEvents()
+
+        self.assertTrue(changed)
+        self.assertGreater(table.view.rowHeight(0), initial_height)
+
 
 if __name__ == "__main__":
     unittest.main()

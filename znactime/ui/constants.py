@@ -38,6 +38,19 @@ DARK_ROW_COLORS = {
 
 COLORS = LIGHT_ROW_COLORS
 
+LIGHT_CURRENT_ROW_ACCENT = "#6941c6"
+DARK_CURRENT_ROW_ACCENT = "#c58af9"
+
+LIGHT_OVERTIME_TEXT_COLORS = {
+    "positive": "#18864b",
+    "negative": "#c23b4d",
+}
+
+DARK_OVERTIME_TEXT_COLORS = {
+    "positive": "#78d99c",
+    "negative": "#ff8796",
+}
+
 
 def row_color_hex(row_color, dark=False):
     if not row_color:
@@ -47,3 +60,22 @@ def row_color_hex(row_color, dark=False):
 
     palette = DARK_ROW_COLORS if dark else LIGHT_ROW_COLORS
     return palette.get(row_color, "")
+
+
+def current_row_accent_hex(dark=False):
+    return DARK_CURRENT_ROW_ACCENT if dark else LIGHT_CURRENT_ROW_ACCENT
+
+
+def overtime_text_color_hex(value, dark=False):
+    try:
+        if str(value).strip().startswith("-"):
+            state = "negative"
+        elif str(value).strip() not in ("", "00:00"):
+            state = "positive"
+        else:
+            return ""
+    except (AttributeError, TypeError):
+        return ""
+
+    palette = DARK_OVERTIME_TEXT_COLORS if dark else LIGHT_OVERTIME_TEXT_COLORS
+    return palette[state]
