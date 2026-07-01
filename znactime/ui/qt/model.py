@@ -46,6 +46,7 @@ TIME_COLUMNS = {3, 4}
 CENTERED_COLUMNS = {0, 3, 4, 5, 6, 7}
 BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
 CURRENT_ROW_ROLE = Qt.ItemDataRole.UserRole + 2
+CELL_EDITING_ROLE = Qt.ItemDataRole.UserRole + 3
 BADGE_COLUMNS = {2, 3, 4, 5}
 
 
@@ -164,7 +165,11 @@ class MonthTableModel(QAbstractTableModel):
         self.dataChanged.emit(
             index,
             index,
-            [Qt.ItemDataRole.ForegroundRole],
+            [
+                Qt.ItemDataRole.ForegroundRole,
+                BADGE_ROLE,
+                CELL_EDITING_ROLE,
+            ],
         )
 
     def entries(self):
@@ -249,6 +254,9 @@ class MonthTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole and column in CENTERED_COLUMNS:
             return Qt.AlignmentFlag.AlignCenter
 
+        if role == CELL_EDITING_ROLE:
+            return (index.row(), index.column()) in self._editing_cells
+
         if role == BADGE_ROLE and column in BADGE_COLUMNS:
             return self._badge_data(entry, column)
 
@@ -267,12 +275,41 @@ class MonthTableModel(QAbstractTableModel):
 
         if column == 5:
             value = entry.interruption or "00:00"
-            texts = [part.strip() for part in value.split(";") if part.strip()]
-            if not texts:
-                texts = ["00:00"]
+            has_periods = "-" in value
+            texts = []
+            items = []
+            if has_periods:
+                texts = [part.strip() for part in value.split(";") if part.strip()]
+                items = [
+                    {
+                        "text": text,
+                        "state": "info",
+                        "target": {"action": "edit", "period_index": position},
+                    }
+                    for position, text in enumerate(texts)
+                ]
+            elif value not in ("", "00:00"):
+                texts = [value]
+                items = [
+                    {
+                        "text": value,
+                        "state": "info",
+                        "target": {"action": "replace", "period_index": 0},
+                    }
+                ]
+
             active = value not in ("", "00:00")
+            items.append(
+                {
+                    "text": "+",
+                    "state": "empty",
+                    "target": {"action": "add", "period_index": None},
+                }
+            )
             return {
-                "texts": texts,
+                "kind": "interruption",
+                "texts": texts if texts else ["+"],
+                "items": items,
                 "state": "info" if active else "empty",
             }
 

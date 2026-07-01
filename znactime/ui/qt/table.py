@@ -1,14 +1,20 @@
 from datetime import date, datetime
 
+from znactime.core.time_utils import parse_interruption_input
 from znactime.ui.constants import COLUMNS, current_row_accent_hex, row_color_hex
 from znactime.ui.qt import (
+    QAbstractItemDelegate,
     QAbstractItemView,
     QAbstractAnimation,
     QApplication,
     QBrush,
     QColor,
+    QEvent,
+    QFontMetrics,
     QGraphicsDropShadowEffect,
     QHeaderView,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
     QKeySequence,
     QPainterPath,
@@ -30,6 +36,7 @@ from znactime.ui.qt import (
 )
 from znactime.ui.qt.model import (
     BADGE_ROLE,
+    CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
     EDITABLE_COLUMNS,
     MonthTableModel,
@@ -46,6 +53,7 @@ BADGE_HORIZONTAL_PADDING = 8
 BADGE_VERTICAL_PADDING = 4
 BADGE_GAP = 4
 BADGE_CORNER_RADIUS = 6
+INTERRUPTION_COLUMN = 5
 
 
 def _is_dark_theme():
@@ -53,9 +61,288 @@ def _is_dark_theme():
     return window_color.lightness() < 128
 
 
+def _period_parts(value):
+    value = str(value).strip()
+    if "-" not in value:
+        return []
+    return [part.strip() for part in value.split(";") if part.strip()]
+
+
+def _interruption_badge_rows(width, font, badge):
+    metrics = QFontMetrics(font)
+    items = badge.get("items") or []
+    if not items:
+        return []
+
+    max_width = max(12, width - 10)
+    sized_items = []
+    for item in items:
+        text = str(item.get("text", ""))
+        minimum = 28 if text == "+" else 44
+        item_width = max(
+            minimum,
+            metrics.horizontalAdvance(text) + BADGE_HORIZONTAL_PADDING * 2,
+        )
+        sized_items.append((item_width, item))
+
+    plus_item = None
+    plus_width = 0
+    if sized_items and sized_items[-1][1].get("text") == "+":
+        plus_width, plus_item = sized_items[-1]
+        sized_items = sized_items[:-1]
+
+    rows = []
+    current = []
+    current_width = 0
+    for position, (item_width, item) in enumerate(sized_items):
+        is_last_period = position == len(sized_items) - 1
+        reserve_for_plus = (
+            plus_width + BADGE_GAP
+            if plus_item is not None and is_last_period
+            else 0
+        )
+        gap = BADGE_GAP if current else 0
+        if current and current_width + gap + item_width + reserve_for_plus > max_width:
+            rows.append(current)
+            current = [(item_width, item)]
+            current_width = item_width
+        else:
+            current.append((item_width, item))
+            current_width += gap + item_width
+
+    if plus_item is not None:
+        if not current:
+            current = [(plus_width, plus_item)]
+        else:
+            plus_gap = BADGE_GAP if current else 0
+            if current_width + plus_gap + plus_width > max_width and len(current) > 1:
+                last_period = current.pop()
+                rows.append(current)
+                current = [last_period, (plus_width, plus_item)]
+            else:
+                current.append((plus_width, plus_item))
+
+    if current:
+        rows.append(current)
+    return rows
+
+
+def _interruption_badge_rects(cell_rect, font, badge):
+    metrics = QFontMetrics(font)
+    badge_height = metrics.height() + BADGE_VERTICAL_PADDING * 2
+    rows = _interruption_badge_rows(cell_rect.width(), font, badge)
+    if not rows:
+        return []
+
+    total_height = (
+        len(rows) * badge_height
+        + max(0, len(rows) - 1) * BADGE_GAP
+    )
+    y = cell_rect.y() + (cell_rect.height() - total_height) / 2
+    rects = []
+    for row in rows:
+        row_width = (
+            sum(width for width, _item in row)
+            + max(0, len(row) - 1) * BADGE_GAP
+        )
+        x = cell_rect.x() + (cell_rect.width() - row_width) / 2
+        for item_width, item in row:
+            rect = QRectF(x, y, item_width, badge_height)
+            rects.append((rect, item))
+            x += item_width + BADGE_GAP
+        y += badge_height + BADGE_GAP
+    return rects
+
+
+class IntervalEditor(QWidget):
+    commitRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.original_value = "00:00"
+        self.target = {"action": "add", "period_index": None}
+        self._commit_requested = False
+        self._destroyed = False
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.destroyed.connect(self._mark_destroyed)
+
+        self.start_edit = QLineEdit(self)
+        self.start_edit.setPlaceholderText("Start")
+        self.end_edit = QLineEdit(self)
+        self.end_edit.setPlaceholderText("End")
+        for editor in (self.start_edit, self.end_edit):
+            editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            editor.returnPressed.connect(self.request_commit)
+            editor.editingFinished.connect(self._commit_if_focus_left)
+            editor.installEventFilter(self)
+
+        separator = QLabel("-", self)
+        separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self.start_edit)
+        layout.addWidget(separator)
+        layout.addWidget(self.end_edit)
+        self._apply_style()
+
+    def _apply_style(self):
+        if _is_dark_theme():
+            background = "#263f66"
+            text = "#d9e7ff"
+            border = "#c58af9"
+            separator = "#b8d4ff"
+        else:
+            background = "#e0edff"
+            text = "#1f4f8f"
+            border = "#6941c6"
+            separator = "#225ea8"
+
+        self.setStyleSheet(
+            "QLineEdit {"
+            f"background-color: {background};"
+            f"color: {text};"
+            f"border: 1px solid {border};"
+            f"border-radius: {BADGE_CORNER_RADIUS}px;"
+            f"selection-background-color: {border};"
+            "selection-color: white;"
+            "font-weight: 600;"
+            "padding: 0 6px;"
+            "}"
+            "QLabel {"
+            f"color: {separator};"
+            "font-weight: 700;"
+            "}"
+        )
+
+    def set_value(self, value, target):
+        self.original_value = str(value or "00:00").strip() or "00:00"
+        self.target = target or {"action": "add", "period_index": None}
+        period = self._period_for_target()
+        if period and "-" in period:
+            start, end = period.split("-", 1)
+            self.start_edit.setText(start)
+            self.end_edit.setText(end)
+            self.start_edit.selectAll()
+        else:
+            self.start_edit.clear()
+            self.end_edit.clear()
+            self.start_edit.setFocus()
+
+    def _period_for_target(self):
+        periods = _period_parts(self.original_value)
+        period_index = self.target.get("period_index")
+        if (
+            self.target.get("action") == "edit"
+            and period_index is not None
+            and 0 <= period_index < len(periods)
+        ):
+            return periods[period_index]
+        if self.target.get("action") == "replace" and "-" not in self.original_value:
+            return ""
+        return ""
+
+    def resolved_value(self):
+        start = self.start_edit.text().strip()
+        end = self.end_edit.text().strip()
+        new_period = f"{start}-{end}"
+        if parse_interruption_input(new_period) is None:
+            return None
+
+        periods = _period_parts(self.original_value)
+        action = self.target.get("action")
+        period_index = self.target.get("period_index")
+        if action == "edit" and period_index is not None:
+            if not 0 <= period_index < len(periods):
+                return None
+            periods[period_index] = new_period
+            candidate = ";".join(periods)
+        elif action in {"add", "replace"}:
+            if periods and action == "add":
+                candidate = ";".join([*periods, new_period])
+            else:
+                candidate = new_period
+        else:
+            candidate = new_period
+
+        parsed = parse_interruption_input(candidate)
+        return None if parsed is None else parsed.normalized
+
+    def focus_start(self):
+        self.start_edit.setFocus()
+        self.start_edit.selectAll()
+
+    def eventFilter(self, watched, event):
+        if (
+            watched in (self.start_edit, self.end_edit)
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+        ):
+            reverse = (
+                event.key() == Qt.Key.Key_Backtab
+                or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            )
+            self._switch_time_field(reverse=reverse)
+            return True
+
+        return super().eventFilter(watched, event)
+
+    def _switch_time_field(self, reverse=False):
+        focus_widget = QApplication.focusWidget()
+        if reverse:
+            next_editor = (
+                self.start_edit
+                if focus_widget is self.end_edit
+                else self.end_edit
+            )
+        else:
+            next_editor = (
+                self.end_edit
+                if focus_widget is self.start_edit
+                else self.start_edit
+            )
+        next_editor.setFocus()
+        next_editor.selectAll()
+
+    def request_commit(self):
+        if self._destroyed or self._commit_requested:
+            return
+        self._commit_requested = True
+        try:
+            self.commitRequested.emit()
+        except RuntimeError:
+            pass
+
+    def _mark_destroyed(self, *_args):
+        self._destroyed = True
+
+    def _commit_if_focus_left(self):
+        if self._destroyed:
+            return
+        QTimer.singleShot(0, self._emit_commit_if_focus_left)
+
+    def _emit_commit_if_focus_left(self):
+        if self._destroyed:
+            return
+        try:
+            focus_widget = QApplication.focusWidget()
+            if focus_widget is self or self.isAncestorOf(focus_widget):
+                return
+        except RuntimeError:
+            return
+        self.request_commit()
+
+
 class CurrentTimeDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._interruption_targets = {}
+
     def paint(self, painter, option, index):
         self._paint_cell_background(painter, option, index)
+        if index.data(CELL_EDITING_ROLE):
+            return
 
         style_option = QStyleOptionViewItem(option)
         self.initStyleOption(style_option, index)
@@ -68,6 +355,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             )
         badge = index.data(BADGE_ROLE)
         if badge:
+            if badge.get("kind") == "interruption":
+                self._paint_interruption_badges(painter, style_option, badge)
+                return
             self._paint_badges(painter, style_option, badge)
             return
 
@@ -237,7 +527,78 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             }
         return palette.get(state, palette["empty"])
 
+    def _paint_interruption_badges(self, painter, option, badge):
+        painter.save()
+        font = option.font
+        font.setBold(True)
+        painter.setFont(font)
+
+        for rect, item in _interruption_badge_rects(
+            option.rect,
+            font,
+            badge,
+        ):
+            colors = self._badge_colors(item.get("state", "empty"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(colors["fill"])
+            painter.drawRoundedRect(
+                rect,
+                BADGE_CORNER_RADIUS,
+                BADGE_CORNER_RADIUS,
+            )
+            painter.setPen(colors["text"])
+            text_rect = rect.adjusted(
+                BADGE_HORIZONTAL_PADDING,
+                0,
+                -BADGE_HORIZONTAL_PADDING,
+                0,
+            )
+            text = str(item.get("text", ""))
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                text,
+            )
+
+        painter.restore()
+
+    def _interruption_badge_rects(self, cell_rect, font, badge):
+        return _interruption_badge_rects(cell_rect, font, badge)
+
+    def set_interruption_edit_target(self, index, target):
+        self._interruption_targets[self._target_key(index)] = target
+
+    def interruption_target_at(self, index, cell_rect, position):
+        badge = index.data(BADGE_ROLE) or {}
+        for rect, item in self._interruption_badge_rects(
+            cell_rect,
+            QApplication.font(),
+            badge,
+        ):
+            if rect.contains(position):
+                return item.get("target")
+
+        items = badge.get("items") or []
+        if not items:
+            return {"action": "add", "period_index": None}
+        return items[0].get("target")
+
+    def _target_key(self, index):
+        return (id(index.model()), index.row(), index.column())
+
     def createEditor(self, parent, option, index):
+        if index.column() == INTERRUPTION_COLUMN:
+            editor = IntervalEditor(parent)
+            index.model().set_cell_editing(index, True)
+            editor.destroyed.connect(
+                lambda _object=None, model=index.model(), row=index.row(),
+                column=index.column(): self._finish_editing(model, row, column)
+            )
+            editor.commitRequested.connect(
+                lambda editor=editor: self._commit_interval_editor(editor)
+            )
+            return editor
+
         editor = super().createEditor(parent, option, index)
         if isinstance(editor, QLineEdit):
             index.model().set_cell_editing(index, True)
@@ -271,6 +632,10 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         return editor
 
     def updateEditorGeometry(self, editor, option, index):
+        if isinstance(editor, IntervalEditor):
+            editor.setGeometry(option.rect.adjusted(5, 4, -5, -4))
+            return
+
         if not isinstance(editor, QLineEdit):
             super().updateEditorGeometry(editor, option, index)
             return
@@ -301,6 +666,16 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             pass
 
     def setEditorData(self, editor, index):
+        if isinstance(editor, IntervalEditor):
+            target = self._interruption_targets.pop(
+                self._target_key(index),
+                {"action": "add", "period_index": None},
+            )
+            value = index.model().data(index, Qt.ItemDataRole.EditRole)
+            editor.set_value(value, target)
+            QTimer.singleShot(0, editor.focus_start)
+            return
+
         if (
             index.column() in (3, 4)
             and index.model().data(index, Qt.ItemDataRole.EditRole) == "00:00"
@@ -313,6 +688,27 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         super().setEditorData(editor, index)
         if isinstance(editor, QLineEdit):
             editor.selectAll()
+
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, IntervalEditor):
+            value = editor.resolved_value()
+            if value is not None:
+                model.setData(index, value, Qt.ItemDataRole.EditRole)
+            return
+
+        super().setModelData(editor, model, index)
+
+    def _commit_interval_editor(self, editor):
+        if getattr(editor, "_destroyed", False):
+            return
+        try:
+            self.commitData.emit(editor)
+            self.closeEditor.emit(
+                editor,
+                QAbstractItemDelegate.EndEditHint.NoHint,
+            )
+        except RuntimeError:
+            pass
 
 
 class MonthTableView(QTableView):
@@ -558,7 +954,14 @@ class MonthTableView(QTableView):
         line_count = 1
         interruption_index = model.index(row, 5)
         badge = interruption_index.data(BADGE_ROLE)
-        if badge:
+        if badge and badge.get("kind") == "interruption":
+            rows = _interruption_badge_rows(
+                self.columnWidth(5),
+                self.font(),
+                badge,
+            )
+            line_count = max(1, len(rows))
+        elif badge:
             line_count = max(1, len(badge.get("texts") or []))
 
         badge_height = (
@@ -595,6 +998,28 @@ class MonthTableView(QTableView):
             self.paste_selection()
             return
         super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        index = self.indexAt(event.pos())
+        if (
+            index.isValid()
+            and index.column() == INTERRUPTION_COLUMN
+            and index.flags() & Qt.ItemFlag.ItemIsEditable
+        ):
+            delegate = self.itemDelegate(index)
+            if hasattr(delegate, "interruption_target_at"):
+                target = delegate.interruption_target_at(
+                    index,
+                    self.visualRect(index),
+                    event.pos(),
+                )
+                delegate.set_interruption_edit_target(index, target)
+            self.setCurrentIndex(index)
+            self.edit(index)
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
 
     def copy_selection(self):
         indexes = self.selectedIndexes()
@@ -683,11 +1108,17 @@ class TableWidget(QWidget):
 
     def _handle_model_data_changed(self, *_args):
         self.entriesChanged.emit()
-        QTimer.singleShot(0, self.view.update_table_geometry)
+        QTimer.singleShot(0, self._update_view_geometry)
 
     def _handle_model_reset(self):
         self.entriesChanged.emit()
-        QTimer.singleShot(0, self.view.update_table_geometry)
+        QTimer.singleShot(0, self._update_view_geometry)
+
+    def _update_view_geometry(self):
+        try:
+            self.view.update_table_geometry()
+        except RuntimeError:
+            pass
 
     def sizeHint(self):
         hint = super().sizeHint()
@@ -700,7 +1131,7 @@ class TableWidget(QWidget):
 
     def set_entries(self, entries):
         self.model.set_entries(entries)
-        QTimer.singleShot(0, self.view.update_table_geometry)
+        QTimer.singleShot(0, self._update_view_geometry)
 
     def refresh_theme(self):
         self.model.refresh_theme()

@@ -1,7 +1,9 @@
 _QT_NAMES = {
     "QAbstractTableModel",
     "QAbstractAnimation",
+    "QAbstractItemDelegate",
     "QEasingCurve",
+    "QEvent",
     "QModelIndex",
     "QObject",
     "QRectF",
@@ -16,6 +18,7 @@ _QT_NAMES = {
     "QAction",
     "QColor",
     "QFont",
+    "QFontMetrics",
     "QKeySequence",
     "QApplication",
     "QAbstractItemView",
@@ -55,6 +58,7 @@ try:
         QAbstractTableModel,
         QAbstractAnimation,
         QEasingCurve,
+        QEvent,
         QModelIndex,
         QObject,
         QPropertyAnimation,
@@ -71,6 +75,7 @@ try:
         QBrush,
         QColor,
         QFont,
+        QFontMetrics,
         QKeySequence,
         QPainterPath,
         QPalette,
@@ -78,6 +83,7 @@ try:
     )
     from PySide6.QtWidgets import (
         QApplication,
+        QAbstractItemDelegate,
         QAbstractItemView,
         QButtonGroup,
         QCheckBox,

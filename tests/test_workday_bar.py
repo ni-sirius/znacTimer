@@ -116,7 +116,7 @@ class WorkdayBarTest(unittest.TestCase):
         self.assertTrue(changed)
         self.assertTrue(changes)
 
-    def test_interruption_edit_recalculates_row_height_for_multiple_periods(self):
+    def test_interruption_badges_keep_single_line_row_height(self):
         table = TableWidget()
         table.resize(760, 220)
         table.show()
@@ -138,6 +138,35 @@ class WorkdayBarTest(unittest.TestCase):
         changed = table.model.setData(
             table.model.index(0, 5),
             "12:30-13:00;14:00-14:30",
+            Qt.ItemDataRole.EditRole,
+        )
+        self.app.processEvents()
+
+        self.assertTrue(changed)
+        self.assertEqual(table.view.rowHeight(0), initial_height)
+
+    def test_interruption_badges_expand_row_height_when_wrapped(self):
+        table = TableWidget()
+        table.resize(760, 220)
+        table.show()
+        table.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="08:00",
+                    end="17:00",
+                    interruption="00:00",
+                )
+            ]
+        )
+        self.app.processEvents()
+        initial_height = table.view.rowHeight(0)
+
+        changed = table.model.setData(
+            table.model.index(0, 5),
+            "08:10-08:20;09:10-09:20;10:10-10:20",
             Qt.ItemDataRole.EditRole,
         )
         self.app.processEvents()

@@ -6,7 +6,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from znactime.core.models import DayEntry
 from znactime.ui.qt import QApplication, QDialog, Qt
-from znactime.ui.qt.model import BADGE_ROLE, CURRENT_ROW_ROLE, MonthTableModel
+from znactime.ui.qt.model import (
+    BADGE_ROLE,
+    CELL_EDITING_ROLE,
+    CURRENT_ROW_ROLE,
+    MonthTableModel,
+)
+from znactime.ui.qt.table import IntervalEditor, _interruption_badge_rows
 
 
 class QtModelInterruptionTest(unittest.TestCase):
@@ -68,6 +74,128 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(badge["state"], "info")
         self.assertIsNone(model.index(0, 6).data(BADGE_ROLE))
         self.assertIsNone(model.index(0, 7).data(BADGE_ROLE))
+
+    def test_empty_interruption_badge_shows_add_action(self):
+        model = MonthTableModel()
+        model.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="08:00",
+                    end="17:00",
+                    interruption="00:00",
+                )
+            ]
+        )
+
+        badge = model.index(0, 5).data(BADGE_ROLE)
+
+        self.assertEqual(badge["texts"], ["+"])
+        self.assertEqual(badge["items"][0]["text"], "+")
+        self.assertEqual(badge["items"][0]["target"]["action"], "add")
+
+    def test_existing_interruption_badge_keeps_plus_action_near_periods(self):
+        model = self.make_model()
+        model.setData(
+            model.index(0, 5),
+            "12:30-13:00;14:00-14:30",
+            Qt.ItemDataRole.EditRole,
+        )
+
+        badge = model.index(0, 5).data(BADGE_ROLE)
+
+        self.assertEqual(
+            [item["text"] for item in badge["items"]],
+            ["12:30-13:00", "14:00-14:30", "+"],
+        )
+        self.assertEqual(badge["items"][0]["target"]["action"], "edit")
+        self.assertEqual(badge["items"][2]["target"]["action"], "add")
+
+    def test_interruption_badges_wrap_as_complete_items(self):
+        model = self.make_model()
+        model.setData(
+            model.index(0, 5),
+            "08:10-08:20;09:10-09:20;10:10-10:20",
+            Qt.ItemDataRole.EditRole,
+        )
+
+        badge = model.index(0, 5).data(BADGE_ROLE)
+        rows = _interruption_badge_rows(144, QApplication.font(), badge)
+
+        self.assertGreater(len(rows), 1)
+        self.assertEqual(rows[-1][-1][1]["text"], "+")
+        self.assertEqual(rows[-1][-2][1]["text"], "10:10-10:20")
+
+    def test_interruption_badges_are_hidden_while_cell_is_edited(self):
+        model = self.make_model()
+        index = model.index(0, 5)
+
+        self.assertFalse(index.data(CELL_EDITING_ROLE))
+
+        model.set_cell_editing(index, True)
+
+        self.assertTrue(index.data(CELL_EDITING_ROLE))
+
+        model.set_cell_editing(index, False)
+
+        self.assertFalse(index.data(CELL_EDITING_ROLE))
+
+    def test_interval_editor_adds_edits_and_rejects_invalid_periods(self):
+        editor = IntervalEditor()
+        editor.set_value("12:30-13:00", {"action": "add", "period_index": None})
+        editor.start_edit.setText("14:00")
+        editor.end_edit.setText("14:30")
+
+        self.assertEqual(editor.resolved_value(), "12:30-13:00;14:00-14:30")
+
+        editor.set_value(
+            "12:30-13:00;14:00-14:30",
+            {"action": "edit", "period_index": 1},
+        )
+        editor.start_edit.setText("14:15")
+        editor.end_edit.setText("14:45")
+
+        self.assertEqual(editor.resolved_value(), "12:30-13:00;14:15-14:45")
+
+        editor.end_edit.setText("14:00")
+
+        self.assertIsNone(editor.resolved_value())
+
+    def test_interval_editor_tab_switches_between_time_fields(self):
+        editor = IntervalEditor()
+        editor.show()
+        editor.focus_start()
+        self.app.processEvents()
+
+        editor._switch_time_field()
+        self.app.processEvents()
+
+        self.assertIs(QApplication.focusWidget(), editor.end_edit)
+
+        editor._switch_time_field(reverse=True)
+        self.app.processEvents()
+
+        self.assertIs(QApplication.focusWidget(), editor.start_edit)
+
+    def test_interval_editor_commit_request_is_idempotent(self):
+        editor = IntervalEditor()
+        commits = []
+        editor.commitRequested.connect(lambda: commits.append(True))
+
+        editor.request_commit()
+        editor.request_commit()
+
+        self.assertEqual(commits, [True])
+
+    def test_interval_editor_ignores_delayed_focus_check_after_destroy(self):
+        editor = IntervalEditor()
+        editor._mark_destroyed()
+
+        editor._emit_commit_if_focus_left()
+
+        self.assertTrue(editor._destroyed)
 
     def test_special_day_column_uses_full_width_status_badge(self):
         model = MonthTableModel()
