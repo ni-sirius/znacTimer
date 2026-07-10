@@ -5,14 +5,19 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from znactime.core.models import DayEntry
-from znactime.ui.qt import QApplication, QDialog, Qt
+from znactime.ui.qt import QApplication, QDialog, QRectF, Qt
 from znactime.ui.qt.model import (
     BADGE_ROLE,
     CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
     MonthTableModel,
 )
-from znactime.ui.qt.table import IntervalEditor, _interruption_badge_rows
+from znactime.ui.qt.table import (
+    CurrentTimeDelegate,
+    IntervalEditor,
+    _badge_rects,
+    _interruption_badge_rows,
+)
 
 
 class QtModelInterruptionTest(unittest.TestCase):
@@ -218,6 +223,59 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(badge["texts"], ["Normal day"])
         self.assertEqual(badge["state"], "valid_day_today")
         self.assertTrue(badge["full_width"])
+
+    def test_time_badge_hover_targets_badge_rect_only(self):
+        model = self.make_model()
+        delegate = CurrentTimeDelegate()
+        index = model.index(0, 3)
+        cell_rect = QRectF(0, 0, 120, 40)
+        badge = index.data(BADGE_ROLE)
+        badge_rect = _badge_rects(cell_rect, QApplication.font(), badge)[0][0]
+
+        changed = delegate.set_hovered_badge(
+            index,
+            cell_rect,
+            badge_rect.center(),
+            QApplication.font(),
+        )
+
+        self.assertTrue(changed)
+        self.assertTrue(delegate._is_badge_hovered(index, "badge", 0))
+
+        delegate.set_hovered_badge(
+            index,
+            cell_rect,
+            cell_rect.topLeft(),
+            QApplication.font(),
+        )
+
+        self.assertFalse(delegate._is_badge_hovered(index, "badge", 0))
+
+    def test_interruption_hover_targets_individual_badges(self):
+        model = self.make_model()
+        model.setData(
+            model.index(0, 5),
+            "12:30-13:00;14:00-14:30",
+            Qt.ItemDataRole.EditRole,
+        )
+        delegate = CurrentTimeDelegate()
+        index = model.index(0, 5)
+        cell_rect = QRectF(0, 0, 260, 40)
+        rects = delegate._interruption_badge_rects(
+            cell_rect,
+            QApplication.font(),
+            index.data(BADGE_ROLE),
+        )
+
+        delegate.set_hovered_badge(
+            index,
+            cell_rect,
+            rects[1][0].center(),
+            QApplication.font(),
+        )
+
+        self.assertFalse(delegate._is_badge_hovered(index, "interruption", 0))
+        self.assertTrue(delegate._is_badge_hovered(index, "interruption", 1))
 
     def test_overtime_columns_use_sign_based_text_colors(self):
         model = MonthTableModel()

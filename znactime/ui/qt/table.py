@@ -154,6 +154,41 @@ def _interruption_badge_rects(cell_rect, font, badge):
     return rects
 
 
+def _badge_rects(cell_rect, font, badge):
+    texts = badge.get("texts") or []
+    full_width = badge.get("full_width", False)
+    if not texts:
+        return []
+
+    metrics = QFontMetrics(font)
+    badge_height = metrics.height() + BADGE_VERTICAL_PADDING * 2
+    if full_width:
+        total_height = max(metrics.height() + 2, cell_rect.height() - 8)
+        badge_height = total_height
+        texts = texts[:1]
+    else:
+        total_height = (
+            len(texts) * badge_height
+            + max(0, len(texts) - 1) * BADGE_GAP
+        )
+    y = cell_rect.y() + (cell_rect.height() - total_height) / 2
+    max_width = max(12, cell_rect.width() - 10)
+
+    rects = []
+    for position, text in enumerate(texts):
+        text = str(text)
+        text_width = metrics.horizontalAdvance(text)
+        if full_width:
+            width = max_width
+        else:
+            desired_width = text_width + BADGE_HORIZONTAL_PADDING * 2
+            width = min(max_width, desired_width)
+        x = cell_rect.x() + (cell_rect.width() - width) / 2
+        rects.append((QRectF(x, y, width, badge_height), position, text))
+        y += badge_height + BADGE_GAP
+    return rects
+
+
 class IntervalEditor(QWidget):
     commitRequested = Signal()
 
@@ -338,6 +373,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._interruption_targets = {}
+        self._hovered_badge = None
 
     def paint(self, painter, option, index):
         self._paint_cell_background(painter, option, index)
@@ -356,9 +392,14 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         badge = index.data(BADGE_ROLE)
         if badge:
             if badge.get("kind") == "interruption":
-                self._paint_interruption_badges(painter, style_option, badge)
+                self._paint_interruption_badges(
+                    painter,
+                    style_option,
+                    index,
+                    badge,
+                )
                 return
-            self._paint_badges(painter, style_option, badge)
+            self._paint_badges(painter, style_option, index, badge)
             return
 
         style = style_option.widget.style() if style_option.widget else QApplication.style()
@@ -420,11 +461,10 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 divider_color,
             )
 
-    def _paint_badges(self, painter, option, badge):
-        texts = badge.get("texts") or [option.text]
+    def _paint_badges(self, painter, option, index, badge):
+        if not badge.get("texts"):
+            badge = {**badge, "texts": [option.text]}
         state = badge.get("state", "empty")
-        colors = self._badge_colors(state)
-        full_width = badge.get("full_width", False)
 
         painter.save()
         font = option.font
@@ -432,30 +472,13 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         painter.setFont(font)
         metrics = painter.fontMetrics()
 
-        badge_height = metrics.height() + BADGE_VERTICAL_PADDING * 2
-        if full_width:
-            total_height = max(metrics.height() + 2, option.rect.height() - 8)
-            badge_height = total_height
-            texts = texts[:1]
-        else:
-            total_height = (
-                len(texts) * badge_height
-                + max(0, len(texts) - 1) * BADGE_GAP
-            )
-        y = option.rect.y() + (option.rect.height() - total_height) / 2
-        max_width = max(12, option.rect.width() - 10)
-
         painter.setPen(Qt.PenStyle.NoPen)
-        for text in texts:
-            text = str(text)
+        for rect, position, text in _badge_rects(option.rect, font, badge):
+            colors = self._badge_colors(
+                state,
+                hovered=self._is_badge_hovered(index, "badge", position),
+            )
             text_width = metrics.horizontalAdvance(text)
-            if full_width:
-                width = max_width
-            else:
-                desired_width = text_width + BADGE_HORIZONTAL_PADDING * 2
-                width = min(max_width, desired_width)
-            x = option.rect.x() + (option.rect.width() - width) / 2
-            rect = QRectF(x, y, width, badge_height)
             painter.setBrush(colors["fill"])
             painter.drawRoundedRect(
                 rect,
@@ -484,11 +507,17 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 displayed_text,
             )
             painter.setPen(Qt.PenStyle.NoPen)
-            y += badge_height + BADGE_GAP
 
         painter.restore()
 
-    def _badge_colors(self, state):
+    def _badge_colors(self, state, hovered=False):
+        if hovered:
+            accent = current_row_accent_hex(dark=_is_dark_theme())
+            return {
+                "fill": QColor(accent),
+                "text": QColor("#202124" if _is_dark_theme() else "#ffffff"),
+            }
+
         if _is_dark_theme():
             palette = {
                 "success": {
@@ -514,7 +543,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                     "fill": QColor("#e0edff"),
                     "text": QColor("#225ea8"),
                 },
-            "empty": {
+                "empty": {
                     "fill": QColor("#f0f2f5"),
                     "text": QColor("#68717d"),
                 },
@@ -527,18 +556,21 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             }
         return palette.get(state, palette["empty"])
 
-    def _paint_interruption_badges(self, painter, option, badge):
+    def _paint_interruption_badges(self, painter, option, index, badge):
         painter.save()
         font = option.font
         font.setBold(True)
         painter.setFont(font)
 
-        for rect, item in _interruption_badge_rects(
+        for position, (rect, item) in enumerate(_interruption_badge_rects(
             option.rect,
             font,
             badge,
-        ):
-            colors = self._badge_colors(item.get("state", "empty"))
+        )):
+            colors = self._badge_colors(
+                item.get("state", "empty"),
+                hovered=self._is_badge_hovered(index, "interruption", position),
+            )
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(colors["fill"])
             painter.drawRoundedRect(
@@ -564,6 +596,51 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
     def _interruption_badge_rects(self, cell_rect, font, badge):
         return _interruption_badge_rects(cell_rect, font, badge)
+
+    def badge_hover_at(self, index, cell_rect, position, font):
+        badge = index.data(BADGE_ROLE) or {}
+        if not badge:
+            return None
+
+        if badge.get("kind") == "interruption":
+            for item_position, (rect, _item) in enumerate(
+                self._interruption_badge_rects(cell_rect, font, badge)
+            ):
+                if rect.contains(position):
+                    return self._badge_key(index, "interruption", item_position)
+            return None
+
+        for rect, badge_position, _text in _badge_rects(cell_rect, font, badge):
+            if rect.contains(position):
+                return self._badge_key(index, "badge", badge_position)
+        return None
+
+    def set_hovered_badge(self, index, cell_rect, position, font):
+        hovered_badge = None
+        if index.isValid() and not index.data(CELL_EDITING_ROLE):
+            hovered_badge = self.badge_hover_at(index, cell_rect, position, font)
+
+        if hovered_badge == self._hovered_badge:
+            return ()
+
+        changed = tuple(
+            key for key in (self._hovered_badge, hovered_badge) if key is not None
+        )
+        self._hovered_badge = hovered_badge
+        return changed
+
+    def clear_hovered_badge(self):
+        if self._hovered_badge is None:
+            return ()
+        changed = (self._hovered_badge,)
+        self._hovered_badge = None
+        return changed
+
+    def _is_badge_hovered(self, index, kind, position):
+        return self._hovered_badge == self._badge_key(index, kind, position)
+
+    def _badge_key(self, index, kind, position):
+        return (id(index.model()), index.row(), index.column(), kind, position)
 
     def set_interruption_edit_target(self, index, target):
         self._interruption_targets[self._target_key(index)] = target
@@ -717,6 +794,8 @@ class MonthTableView(QTableView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self.setShowGrid(False)
         self.setAlternatingRowColors(False)
         self.setCornerButtonEnabled(False)
@@ -999,6 +1078,10 @@ class MonthTableView(QTableView):
             return
         super().keyPressEvent(event)
 
+    def mouseMoveEvent(self, event):
+        self._update_hovered_badge(event.pos())
+        super().mouseMoveEvent(event)
+
     def mousePressEvent(self, event):
         index = self.indexAt(event.pos())
         if (
@@ -1020,6 +1103,54 @@ class MonthTableView(QTableView):
             return
 
         super().mousePressEvent(event)
+
+    def leaveEvent(self, event):
+        self._clear_hovered_badge()
+        super().leaveEvent(event)
+
+    def viewportEvent(self, event):
+        if event.type() == QEvent.Type.Leave:
+            self._clear_hovered_badge()
+        return super().viewportEvent(event)
+
+    def _update_hovered_badge(self, position):
+        index = self.indexAt(position)
+        delegate = (
+            self.itemDelegate(index)
+            if index.isValid()
+            else self.itemDelegate()
+        )
+        if not hasattr(delegate, "set_hovered_badge"):
+            return
+
+        if index.isValid():
+            changed = delegate.set_hovered_badge(
+                index,
+                self.visualRect(index),
+                position,
+                self.font(),
+            )
+        else:
+            changed = delegate.clear_hovered_badge()
+        self._update_badge_keys(changed)
+
+    def _clear_hovered_badge(self):
+        delegate = self.itemDelegate()
+        if not hasattr(delegate, "clear_hovered_badge"):
+            return
+        self._update_badge_keys(delegate.clear_hovered_badge())
+
+    def _update_badge_keys(self, badge_keys):
+        model = self.model()
+        if model is None:
+            return
+
+        for key in badge_keys:
+            if key[0] != id(model):
+                continue
+            index = model.index(key[1], key[2])
+            if index.isValid():
+                self.viewport().update(self.visualRect(index))
 
     def copy_selection(self):
         indexes = self.selectedIndexes()
