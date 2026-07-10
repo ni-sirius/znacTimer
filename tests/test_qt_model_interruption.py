@@ -15,6 +15,7 @@ from znactime.ui.qt.model import (
 from znactime.ui.qt.table import (
     CurrentTimeDelegate,
     IntervalEditor,
+    MonthTableView,
     _badge_rects,
     _interruption_badge_rows,
 )
@@ -40,6 +41,35 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
         return model
+
+    def test_only_interruption_starts_custom_edit_path(self):
+        class RecordingTableView(MonthTableView):
+            def __init__(self):
+                super().__init__()
+                self.edited_indexes = []
+
+            def edit(self, index):
+                self.edited_indexes.append((index.row(), index.column()))
+                return True
+
+        model = self.make_model()
+        view = RecordingTableView()
+        view.setModel(model)
+        view.setItemDelegate(CurrentTimeDelegate(view))
+
+        self.assertFalse(
+            view._start_interruption_edit(
+                model.index(0, 3),
+                view.visualRect(model.index(0, 3)).center(),
+            )
+        )
+        self.assertTrue(
+            view._start_interruption_edit(
+                model.index(0, 5),
+                view.visualRect(model.index(0, 5)).center(),
+            )
+        )
+        self.assertEqual(view.edited_indexes, [(0, 5)])
 
     def test_periods_inside_workday_are_saved_without_override_dialog(self):
         model = self.make_model()

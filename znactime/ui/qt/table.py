@@ -1083,26 +1083,36 @@ class MonthTableView(QTableView):
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
         index = self.indexAt(event.pos())
-        if (
-            index.isValid()
-            and index.column() == INTERRUPTION_COLUMN
-            and index.flags() & Qt.ItemFlag.ItemIsEditable
-        ):
-            delegate = self.itemDelegate(index)
-            if hasattr(delegate, "interruption_target_at"):
-                target = delegate.interruption_target_at(
-                    index,
-                    self.visualRect(index),
-                    event.pos(),
-                )
-                delegate.set_interruption_edit_target(index, target)
-            self.setCurrentIndex(index)
-            self.edit(index)
+        if self._start_interruption_edit(index, event.pos()):
             event.accept()
             return
 
-        super().mousePressEvent(event)
+        super().mouseDoubleClickEvent(event)
+
+    def _start_interruption_edit(self, index, position):
+        if (
+            not index.isValid()
+            or index.column() != INTERRUPTION_COLUMN
+            or not index.flags() & Qt.ItemFlag.ItemIsEditable
+        ):
+            return False
+
+        delegate = self.itemDelegateForIndex(index)
+        if hasattr(delegate, "interruption_target_at"):
+            target = delegate.interruption_target_at(
+                index,
+                self.visualRect(index),
+                position,
+            )
+            delegate.set_interruption_edit_target(index, target)
+
+        self.setCurrentIndex(index)
+        self.edit(index)
+        return True
 
     def leaveEvent(self, event):
         self._clear_hovered_badge()
