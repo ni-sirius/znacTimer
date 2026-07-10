@@ -209,6 +209,16 @@ class HeaderWidget(QWidget):
     def set_month(self, month):
         self.month_box.setCurrentIndex(month - 1)
 
+    def set_period(self, year, month):
+        year_was_blocked = self.year_box.blockSignals(True)
+        month_was_blocked = self.month_box.blockSignals(True)
+        try:
+            self.set_year(year)
+            self.set_month(month)
+        finally:
+            self.year_box.blockSignals(year_was_blocked)
+            self.month_box.blockSignals(month_was_blocked)
+
     def year(self):
         return self.year_box.value()
 

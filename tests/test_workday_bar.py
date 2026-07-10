@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -88,6 +88,58 @@ class WorkdayBarTest(unittest.TestCase):
             "17.06.2024",
             end="08:00",
         )
+
+    def test_today_rollover_recalculates_current_month_and_stops_session(self):
+        now = datetime(2024, 6, 18, 0, 0)
+        fake_app = SimpleNamespace(
+            _current_date=date(2024, 6, 17),
+            _clear_active_session=Mock(),
+            header=SimpleNamespace(
+                year=Mock(return_value=2024),
+                month=Mock(return_value=6),
+                set_period=Mock(),
+                set_calendar_week_text=Mock(),
+            ),
+            table=SimpleNamespace(recalculate=Mock()),
+            refresh_workday_bar=Mock(),
+            load_month=Mock(),
+        )
+
+        TimeTrackerApp._check_today_rollover(fake_app, now)
+
+        self.assertEqual(fake_app._current_date, date(2024, 6, 18))
+        fake_app._clear_active_session.assert_called_once_with()
+        fake_app.header.set_period.assert_not_called()
+        fake_app.load_month.assert_not_called()
+        fake_app.table.recalculate.assert_called_once_with(
+            today=date(2024, 6, 18),
+            autosave=False,
+        )
+        fake_app.refresh_workday_bar.assert_called_once_with(now)
+
+    def test_today_rollover_switches_to_new_month(self):
+        now = datetime(2024, 7, 1, 0, 0)
+        fake_app = SimpleNamespace(
+            _current_date=date(2024, 6, 30),
+            _clear_active_session=Mock(),
+            header=SimpleNamespace(
+                year=Mock(return_value=2024),
+                month=Mock(return_value=6),
+                set_period=Mock(),
+            ),
+            table=SimpleNamespace(recalculate=Mock()),
+            refresh_workday_bar=Mock(),
+            load_month=Mock(),
+        )
+
+        TimeTrackerApp._check_today_rollover(fake_app, now)
+
+        self.assertEqual(fake_app._current_date, date(2024, 7, 1))
+        fake_app._clear_active_session.assert_called_once_with()
+        fake_app.header.set_period.assert_called_once_with(2024, 7)
+        fake_app.load_month.assert_called_once_with()
+        fake_app.table.recalculate.assert_not_called()
+        fake_app.refresh_workday_bar.assert_not_called()
 
     def test_table_edit_emits_entries_changed(self):
         table = TableWidget()

@@ -11,6 +11,7 @@ from znactime.ui.qt import (
     QMainWindow,
     QMessageBox,
     QPalette,
+    QTimer,
     QVBoxLayout,
     QWidget,
 )
@@ -60,6 +61,7 @@ class TimeTrackerApp(QMainWindow):
 
         self.header = HeaderWidget(self)
         now = datetime.now()
+        self._current_date = now.date()
         self.header.set_year(now.year)
         self.header.set_month(now.month)
         self.header.selectionChanged.connect(self.load_month)
@@ -85,6 +87,10 @@ class TimeTrackerApp(QMainWindow):
         self.apply_shell_theme()
 
         self.load_month()
+        self._today_rollover_timer = QTimer(self)
+        self._today_rollover_timer.setInterval(60 * 1000)
+        self._today_rollover_timer.timeout.connect(self._check_today_rollover)
+        self._today_rollover_timer.start()
 
     def fit_initial_window_height(self, table_content_height):
         if self._initial_size_fitted or not self.fit_startup_height:
@@ -144,6 +150,28 @@ class TimeTrackerApp(QMainWindow):
     def set_current_overtime(self, overtime):
         self.current_overtime = overtime
         self.header.set_overtime_text(f"Overtime: {hours_to_hhmm(overtime)}")
+
+    def _check_today_rollover(self, now=None):
+        if now is None:
+            now = datetime.now()
+
+        today = now.date()
+        if today == self._current_date:
+            return
+
+        self._current_date = today
+        self._clear_active_session()
+
+        if self.header.year() != now.year or self.header.month() != now.month:
+            self.header.set_period(now.year, now.month)
+            self.load_month()
+            return
+
+        self.header.set_calendar_week_text(
+            build_calendar_week_text(now.year, now.month, today=today)
+        )
+        self.table.recalculate(today=today, autosave=False)
+        self.refresh_workday_bar(now)
 
     def load_month(self):
         year = self.header.year()
