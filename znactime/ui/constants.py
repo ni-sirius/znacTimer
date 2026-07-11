@@ -11,7 +11,7 @@ COLUMNS = [
     "End",
     "Interruption",
     "Daily OT",
-    "Monthly balance",
+    "Monthly",
 ]
 
 LIGHT_ROW_COLORS = {

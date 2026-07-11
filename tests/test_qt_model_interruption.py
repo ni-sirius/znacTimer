@@ -71,6 +71,21 @@ class QtModelInterruptionTest(unittest.TestCase):
         )
         self.assertEqual(view.edited_indexes, [(0, 5)])
 
+    def test_compact_columns_share_width_and_special_day_is_double(self):
+        model = self.make_model()
+        view = MonthTableView()
+        view.resize(960, 240)
+        view.setModel(model)
+
+        view._resize_columns_to_viewport()
+
+        self.assertEqual(view.columnWidth(0), view.columnWidth(1))
+        self.assertEqual(view.columnWidth(0), view.columnWidth(3))
+        self.assertEqual(view.columnWidth(0), view.columnWidth(4))
+        self.assertEqual(view.columnWidth(0), view.columnWidth(6))
+        self.assertEqual(view.columnWidth(0), view.columnWidth(7))
+        self.assertEqual(view.columnWidth(2), view.columnWidth(0) * 2)
+
     def test_periods_inside_workday_are_saved_without_override_dialog(self):
         model = self.make_model()
 
@@ -101,7 +116,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         badge = model.index(0, 5).data(BADGE_ROLE)
 
         self.assertIn("Daily OT", headers)
-        self.assertEqual(headers[-1], "Monthly balance")
+        self.assertEqual(headers[-1], "Monthly")
         self.assertEqual(
             badge["texts"],
             ["12:30-13:00", "14:00-14:30"],
@@ -340,7 +355,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(balance_negative, negative)
         self.assertEqual(balance_neutral, neutral)
 
-    def test_current_date_row_uses_accent_text_and_separator_role(self):
+    def test_cw_and_date_columns_use_centered_normal_text(self):
         model = MonthTableModel()
         model.set_entries(
             [
@@ -360,9 +375,15 @@ class QtModelInterruptionTest(unittest.TestCase):
         other_cw_color = model.index(1, 0).data(
             Qt.ItemDataRole.ForegroundRole
         )
+        cw_alignment = model.index(0, 0).data(Qt.ItemDataRole.TextAlignmentRole)
+        date_alignment = model.index(0, 1).data(
+            Qt.ItemDataRole.TextAlignmentRole
+        )
 
         self.assertEqual(current_cw_color, current_date_color)
-        self.assertNotEqual(current_cw_color, other_cw_color)
+        self.assertEqual(current_cw_color, other_cw_color)
+        self.assertEqual(cw_alignment, Qt.AlignmentFlag.AlignCenter)
+        self.assertEqual(date_alignment, Qt.AlignmentFlag.AlignCenter)
         self.assertTrue(model.index(0, 0).data(CURRENT_ROW_ROLE))
         self.assertFalse(model.index(1, 0).data(CURRENT_ROW_ROLE))
         self.assertIsNone(

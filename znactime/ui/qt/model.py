@@ -12,7 +12,6 @@ from znactime.core.time_utils import (
 from znactime.storage import csv_store
 from znactime.ui.constants import (
     COLUMNS,
-    current_row_accent_hex,
     overtime_text_color_hex,
 )
 from znactime.ui.qt import (
@@ -43,7 +42,7 @@ ENTRY_FIELDS = (
 )
 EDITABLE_COLUMNS = {2, 3, 4, 5}
 TIME_COLUMNS = {3, 4}
-CENTERED_COLUMNS = {0, 3, 4, 5, 6, 7}
+CENTERED_COLUMNS = {0, 1, 3, 4, 5, 6, 7}
 BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
 CURRENT_ROW_ROLE = Qt.ItemDataRole.UserRole + 2
 CELL_EDITING_ROLE = Qt.ItemDataRole.UserRole + 3
@@ -233,8 +232,8 @@ class MonthTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole:
             if (index.row(), index.column()) in self._editing_cells:
                 return QColor("#8b8d91" if _is_dark_theme() else "#7a7f87")
-            if is_current_row and column in (0, 1):
-                return QColor(current_row_accent_hex(dark=_is_dark_theme()))
+            if column in (0, 1):
+                return QColor("#f1f3f4" if _is_dark_theme() else "#202124")
             if column in (6, 7):
                 overtime_color = overtime_text_color_hex(
                     getattr(entry, ENTRY_FIELDS[column]),

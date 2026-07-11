@@ -44,7 +44,7 @@ from znactime.ui.qt.model import (
 
 
 UNDO_REDO_SUPPORTED = False
-COLUMN_WEIGHTS = (1, 2, 2, 1, 1, 2, 1, 3)
+COLUMN_WEIGHTS = (1, 1, 2, 1, 1, 2, 1, 1)
 MIN_COMPACT_COLUMN_WIDTH = 72
 ROW_HEIGHT_SCALE = 1.5
 MAX_COMPACT_ROW_HEIGHT = 42
