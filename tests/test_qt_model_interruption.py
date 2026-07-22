@@ -162,6 +162,47 @@ class QtModelInterruptionTest(unittest.TestCase):
         )
         self.assertEqual(badge["items"][0]["target"]["action"], "edit")
         self.assertEqual(badge["items"][2]["target"]["action"], "add")
+        self.assertEqual(badge["total_pause_time"], "01:00")
+
+    def test_interruption_badge_tooltip_shows_total_pause_time(self):
+        model = self.make_model()
+        model.setData(
+            model.index(0, 5),
+            "11:00-11:30",
+            Qt.ItemDataRole.EditRole,
+        )
+        delegate = CurrentTimeDelegate()
+        index = model.index(0, 5)
+        cell_rect = QRectF(0, 0, 260, 40)
+        badge = index.data(BADGE_ROLE)
+        interval_rect, _interval_item = delegate._interruption_badge_rects(
+            cell_rect,
+            QApplication.font(),
+            badge,
+        )[0]
+        plus_rect, _plus_item = delegate._interruption_badge_rects(
+            cell_rect,
+            QApplication.font(),
+            badge,
+        )[1]
+
+        self.assertEqual(
+            delegate.badge_tooltip_at(
+                index,
+                cell_rect,
+                interval_rect.center(),
+                QApplication.font(),
+            ),
+            "Total pause time: 00:30",
+        )
+        self.assertIsNone(
+            delegate.badge_tooltip_at(
+                index,
+                cell_rect,
+                plus_rect.center(),
+                QApplication.font(),
+            )
+        )
 
     def test_interruption_badges_wrap_as_complete_items(self):
         model = self.make_model()

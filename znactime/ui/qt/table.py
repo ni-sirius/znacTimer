@@ -29,6 +29,7 @@ from znactime.ui.qt import (
     QStyleOptionViewItem,
     QTableView,
     QTimer,
+    QToolTip,
     QVBoxLayout,
     QWidget,
     Signal,
@@ -614,6 +615,40 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             if rect.contains(position):
                 return self._badge_key(index, "badge", badge_position)
         return None
+
+    def badge_tooltip_at(self, index, cell_rect, position, font):
+        badge = index.data(BADGE_ROLE) or {}
+        if badge.get("kind") != "interruption":
+            return None
+
+        for rect, item in self._interruption_badge_rects(
+            cell_rect,
+            font,
+            badge,
+        ):
+            if rect.contains(position):
+                target = item.get("target") or {}
+                if target.get("action") == "add":
+                    return None
+                total = badge.get("total_pause_time")
+                return f"Total pause time: {total}" if total else None
+        return None
+
+    def helpEvent(self, event, view, option, index):
+        if event.type() == QEvent.Type.ToolTip:
+            tooltip = self.badge_tooltip_at(
+                index,
+                option.rect,
+                event.pos(),
+                option.font,
+            )
+            if tooltip:
+                QToolTip.showText(event.globalPos(), tooltip, view)
+                return True
+            QToolTip.hideText()
+            event.ignore()
+            return False
+        return super().helpEvent(event, view, option, index)
 
     def set_hovered_badge(self, index, cell_rect, position, font):
         hovered_badge = None

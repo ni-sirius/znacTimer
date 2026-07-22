@@ -7,6 +7,7 @@ from znactime.core.time_utils import (
     coerce_interruption_input,
     coerce_time_input,
     hhmm_to_hours,
+    hours_to_hhmm,
     parse_interruption_input,
 )
 from znactime.storage import csv_store
@@ -274,6 +275,10 @@ class MonthTableModel(QAbstractTableModel):
 
         if column == 5:
             value = entry.interruption or "00:00"
+            parsed = parse_interruption_input(value)
+            total_pause_time = (
+                hours_to_hhmm(parsed.hours) if parsed is not None else "00:00"
+            )
             has_periods = "-" in value
             texts = []
             items = []
@@ -310,6 +315,7 @@ class MonthTableModel(QAbstractTableModel):
                 "texts": texts if texts else ["+"],
                 "items": items,
                 "state": "info" if active else "empty",
+                "total_pause_time": total_pause_time,
             }
 
         value = getattr(entry, ENTRY_FIELDS[column]) or "00:00"

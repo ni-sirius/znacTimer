@@ -46,6 +46,7 @@ _QT_NAMES = {
     "QStyledItemDelegate",
     "QStyleOptionViewItem",
     "QTableView",
+    "QToolTip",
     "QVBoxLayout",
     "QWidget",
     "QPalette",
@@ -109,6 +110,7 @@ try:
         QStyledItemDelegate,
         QStyleOptionViewItem,
         QTableView,
+        QToolTip,
         QVBoxLayout,
         QWidget,
     )
