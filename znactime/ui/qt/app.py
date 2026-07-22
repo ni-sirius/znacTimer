@@ -1,8 +1,10 @@
 import os
+from dataclasses import replace
 from datetime import datetime
 
 from znactime.config import DEFAULT_DAY_HOURS, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
+from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.core.models import MonthStats
 from znactime.core.time_utils import append_interruption_period, hours_to_hhmm
 from znactime.storage import csv_store, paths
@@ -86,6 +88,7 @@ class TimeTrackerApp(QMainWindow):
         self.setCentralWidget(central_widget)
         self.apply_shell_theme()
 
+        self._finalize_stale_session(now)
         self.load_month()
         self._today_rollover_timer = QTimer(self)
         self._today_rollover_timer.setInterval(60 * 1000)
@@ -159,8 +162,8 @@ class TimeTrackerApp(QMainWindow):
         if today == self._current_date:
             return
 
+        self._finalize_stale_session(now)
         self._current_date = today
-        self._clear_active_session()
 
         if self.header.year() != now.year or self.header.month() != now.month:
             self.header.set_period(now.year, now.month)
@@ -253,6 +256,110 @@ class TimeTrackerApp(QMainWindow):
         settings.sync()
         self._clear_active_pause()
 
+    def _finalize_stale_session(self, now=None):
+        if now is None:
+            now = datetime.now()
+
+        settings = self.theme_controller.settings
+        session_date_text = settings.value(SESSION_DATE_KEY, "", type=str)
+        session_start = settings.value(SESSION_START_KEY, "", type=str)
+        if not session_date_text or not session_start:
+            return False
+
+        try:
+            session_date = datetime.strptime(
+                session_date_text,
+                "%d.%m.%Y",
+            ).date()
+        except ValueError:
+            self._clear_active_session()
+            return False
+
+        if session_date >= now.date():
+            return False
+
+        pause_date = settings.value(PAUSE_DATE_KEY, "", type=str)
+        pause_start = settings.value(PAUSE_START_KEY, "", type=str)
+        displayed_entry = self.table.entry_for_date(session_date_text)
+        displayed_period_matches = (
+            self.header.year() == session_date.year
+            and self.header.month() == session_date.month
+        )
+
+        updated = False
+        if displayed_period_matches and displayed_entry is not None:
+            changes = self._stale_session_changes(
+                displayed_entry,
+                session_start,
+                pause_date,
+                pause_start,
+            )
+            if changes:
+                updated = self.table.update_entry_for_date(
+                    session_date_text,
+                    **changes,
+                )
+        elif not csv_store.is_month_closed(session_date.year, session_date.month):
+            entries = csv_store.load_month(session_date.year, session_date.month)
+            for position, entry in enumerate(entries):
+                if entry.date != session_date_text:
+                    continue
+                changes = self._stale_session_changes(
+                    entry,
+                    session_start,
+                    pause_date,
+                    pause_start,
+                )
+                if not changes:
+                    break
+                entries[position] = replace(entry, **changes)
+                entries = recalculate_entries(
+                    entries,
+                    carry_over=csv_store.get_carry_over(
+                        session_date.year,
+                        session_date.month,
+                    ),
+                    day_hours=DEFAULT_DAY_HOURS,
+                    today=now.date(),
+                    month_closed=False,
+                )
+                csv_store.save_month(session_date.year, session_date.month, entries)
+                updated = True
+                break
+
+        self._clear_active_session()
+        return updated
+
+    def _stale_session_changes(
+        self,
+        entry,
+        session_start,
+        pause_date,
+        pause_start,
+    ):
+        if entry.end != "00:00":
+            return {}
+
+        changes = {
+            "start": entry.start if entry.start != "00:00" else session_start,
+            "end": "23:59",
+        }
+        if pause_date != entry.date or not pause_start or pause_start >= "23:59":
+            return changes
+
+        interruption = entry.interruption
+        if interruption not in ("", "00:00") and "-" not in interruption:
+            return changes
+        try:
+            changes["interruption"] = append_interruption_period(
+                interruption,
+                pause_start,
+                "23:59",
+            )
+        except ValueError:
+            pass
+        return changes
+
     def refresh_workday_bar(self, now=None):
         if now is None:
             now = datetime.now()
@@ -266,39 +373,33 @@ class TimeTrackerApp(QMainWindow):
 
         pause_start = self._active_pause(now)
         session_start = self._active_session(now)
-        session_owned = (
-            session_start is not None
-            and session_start == entry.start
-            and entry.end == "00:00"
-        )
-        if entry.end != "00:00":
+        if entry.start == "00:00":
+            self._clear_active_session()
+            self.workday_bar.set_state("idle")
+        elif entry.end != "00:00":
             self._clear_active_session()
             self.workday_bar.set_state(
                 "complete",
                 start=entry.start,
                 end=entry.end,
             )
-        elif (
-            entry.start == "00:00"
-            and entry.end == "00:00"
-            and entry.interruption in ("", "00:00")
-        ):
-            self._clear_active_session()
-            self.workday_bar.set_state("idle")
-        elif not session_owned:
-            self._clear_active_session()
-            self.workday_bar.set_state(
-                "unavailable",
-                message="Workday controls disabled because time data is already filled",
-            )
-        elif pause_start:
-            self.workday_bar.set_state(
-                "paused",
-                start=entry.start,
-                pause_start=pause_start,
-            )
         else:
-            self.workday_bar.set_state("working", start=entry.start)
+            if session_start != entry.start:
+                self._clear_active_session()
+                self._set_active_session(entry.date, entry.start)
+                pause_start = None
+
+            if pause_start:
+                self.workday_bar.set_state(
+                    "paused",
+                    start=entry.start,
+                    pause_start=pause_start,
+                )
+                return
+            self.workday_bar.set_state(
+                "working",
+                start=entry.start,
+            )
 
     def on_workday_primary(self):
         now = datetime.now()
@@ -311,6 +412,17 @@ class TimeTrackerApp(QMainWindow):
         pause_start = self._active_pause(now)
 
         if entry.start == "00:00":
+            if entry.end != "00:00":
+                answer = QMessageBox.question(
+                    self,
+                    "Clear existing end time?",
+                    f"Starting the day will clear the existing end time "
+                    f"({entry.end}). Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
             self._clear_active_session()
             self._set_active_session(date_text, time_text)
             self.table.update_entry_for_date(

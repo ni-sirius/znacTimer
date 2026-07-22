@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from znactime.core.models import DayEntry
-from znactime.ui.qt import QApplication, Qt
+from znactime.ui.qt import QApplication, QMessageBox, Qt
 from znactime.ui.qt.app import TimeTrackerApp
 from znactime.ui.qt.player import WorkdayBar
 from znactime.ui.qt.table import TableWidget
@@ -89,11 +89,158 @@ class WorkdayBarTest(unittest.TestCase):
             end="08:00",
         )
 
+    @patch("znactime.ui.qt.app.datetime")
+    @patch("znactime.ui.qt.app.QMessageBox.question")
+    def test_starting_with_existing_end_requires_confirmation(
+        self,
+        question,
+        mock_datetime,
+    ):
+        now = Mock()
+        now.strftime.side_effect = lambda pattern: {
+            "%H:%M": "08:00",
+            "%d.%m.%Y": "17.06.2024",
+        }[pattern]
+        mock_datetime.now.return_value = now
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="00:00",
+            end="17:00",
+            interruption="00:00",
+        )
+        fake_app = SimpleNamespace(
+            month_closed=False,
+            _today_entry=Mock(return_value=entry),
+            _active_pause=Mock(return_value=None),
+            _clear_active_session=Mock(),
+            _set_active_session=Mock(),
+            table=SimpleNamespace(update_entry_for_date=Mock(return_value=True)),
+            refresh_workday_bar=Mock(),
+        )
+        question.return_value = QMessageBox.StandardButton.No
+
+        TimeTrackerApp.on_workday_primary(fake_app)
+
+        fake_app.table.update_entry_for_date.assert_not_called()
+
+        question.return_value = QMessageBox.StandardButton.Yes
+        TimeTrackerApp.on_workday_primary(fake_app)
+
+        fake_app.table.update_entry_for_date.assert_called_once_with(
+            "17.06.2024",
+            start="08:00",
+            end="00:00",
+        )
+
+    def test_stale_session_is_closed_at_2359_with_active_pause(self):
+        settings_values = {
+            "workday_timer/session_date": "17.06.2024",
+            "workday_timer/session_start": "08:00",
+            "workday_timer/pause_date": "17.06.2024",
+            "workday_timer/pause_start": "12:30",
+        }
+        settings = Mock()
+        settings.value.side_effect = (
+            lambda key, default, type: settings_values.get(key, default)
+        )
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="00:00",
+        )
+        fake_app = SimpleNamespace(
+            theme_controller=SimpleNamespace(settings=settings),
+            header=SimpleNamespace(
+                year=Mock(return_value=2024),
+                month=Mock(return_value=6),
+            ),
+            table=SimpleNamespace(
+                entry_for_date=Mock(return_value=entry),
+                update_entry_for_date=Mock(return_value=True),
+            ),
+            _clear_active_session=Mock(),
+        )
+        fake_app._stale_session_changes = lambda *args: (
+            TimeTrackerApp._stale_session_changes(fake_app, *args)
+        )
+
+        updated = TimeTrackerApp._finalize_stale_session(
+            fake_app,
+            datetime(2024, 6, 18, 0, 0),
+        )
+
+        self.assertTrue(updated)
+        fake_app.table.update_entry_for_date.assert_called_once_with(
+            "17.06.2024",
+            start="08:00",
+            end="23:59",
+            interruption="12:30-23:59",
+        )
+        fake_app._clear_active_session.assert_called_once_with()
+
+    @patch("znactime.ui.qt.app.csv_store.save_month")
+    @patch("znactime.ui.qt.app.csv_store.get_carry_over", return_value=0.0)
+    @patch("znactime.ui.qt.app.csv_store.is_month_closed", return_value=False)
+    @patch("znactime.ui.qt.app.csv_store.load_month")
+    def test_stale_session_from_previous_month_is_closed_on_startup(
+        self,
+        load_month,
+        _is_month_closed,
+        _get_carry_over,
+        save_month,
+    ):
+        settings_values = {
+            "workday_timer/session_date": "30.06.2024",
+            "workday_timer/session_start": "08:00",
+        }
+        settings = Mock()
+        settings.value.side_effect = (
+            lambda key, default, type: settings_values.get(key, default)
+        )
+        load_month.return_value = [
+            DayEntry(
+                cw="",
+                date="30.06.2024",
+                special="Normal day",
+                start="08:00",
+                end="00:00",
+                interruption="00:00",
+            )
+        ]
+        fake_app = SimpleNamespace(
+            theme_controller=SimpleNamespace(settings=settings),
+            header=SimpleNamespace(
+                year=Mock(return_value=2024),
+                month=Mock(return_value=7),
+            ),
+            table=SimpleNamespace(entry_for_date=Mock(return_value=None)),
+            _clear_active_session=Mock(),
+        )
+        fake_app._stale_session_changes = lambda *args: (
+            TimeTrackerApp._stale_session_changes(fake_app, *args)
+        )
+
+        updated = TimeTrackerApp._finalize_stale_session(
+            fake_app,
+            datetime(2024, 7, 1, 8, 0),
+        )
+
+        self.assertTrue(updated)
+        saved_year, saved_month, saved_entries = save_month.call_args.args
+        self.assertEqual((saved_year, saved_month), (2024, 6))
+        self.assertEqual(saved_entries[0].end, "23:59")
+        fake_app._clear_active_session.assert_called_once_with()
+
     def test_today_rollover_recalculates_current_month_and_stops_session(self):
         now = datetime(2024, 6, 18, 0, 0)
         fake_app = SimpleNamespace(
             _current_date=date(2024, 6, 17),
-            _clear_active_session=Mock(),
+            _finalize_stale_session=Mock(),
             header=SimpleNamespace(
                 year=Mock(return_value=2024),
                 month=Mock(return_value=6),
@@ -108,7 +255,7 @@ class WorkdayBarTest(unittest.TestCase):
         TimeTrackerApp._check_today_rollover(fake_app, now)
 
         self.assertEqual(fake_app._current_date, date(2024, 6, 18))
-        fake_app._clear_active_session.assert_called_once_with()
+        fake_app._finalize_stale_session.assert_called_once_with(now)
         fake_app.header.set_period.assert_not_called()
         fake_app.load_month.assert_not_called()
         fake_app.table.recalculate.assert_called_once_with(
@@ -121,7 +268,7 @@ class WorkdayBarTest(unittest.TestCase):
         now = datetime(2024, 7, 1, 0, 0)
         fake_app = SimpleNamespace(
             _current_date=date(2024, 6, 30),
-            _clear_active_session=Mock(),
+            _finalize_stale_session=Mock(),
             header=SimpleNamespace(
                 year=Mock(return_value=2024),
                 month=Mock(return_value=6),
@@ -135,7 +282,7 @@ class WorkdayBarTest(unittest.TestCase):
         TimeTrackerApp._check_today_rollover(fake_app, now)
 
         self.assertEqual(fake_app._current_date, date(2024, 7, 1))
-        fake_app._clear_active_session.assert_called_once_with()
+        fake_app._finalize_stale_session.assert_called_once_with(now)
         fake_app.header.set_period.assert_called_once_with(2024, 7)
         fake_app.load_month.assert_called_once_with()
         fake_app.table.recalculate.assert_not_called()
@@ -167,6 +314,118 @@ class WorkdayBarTest(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertTrue(changes)
+
+    def _refresh_fake_app(self, entry, session_start=None, pause_start=None):
+        fake_app = SimpleNamespace(
+            month_closed=False,
+            _today_entry=Mock(return_value=entry),
+            _active_pause=Mock(return_value=pause_start),
+            _active_session=Mock(return_value=session_start),
+            _clear_active_session=Mock(),
+            _set_active_session=Mock(),
+            workday_bar=SimpleNamespace(set_state=Mock()),
+        )
+        TimeTrackerApp.refresh_workday_bar(
+            fake_app,
+            datetime(2024, 6, 17, 12, 0),
+        )
+        return fake_app
+
+    def test_table_start_automatically_puts_player_in_working_state(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="00:00",
+        )
+
+        fake_app = self._refresh_fake_app(entry)
+
+        fake_app._set_active_session.assert_called_once_with(
+            "17.06.2024",
+            "08:00",
+        )
+        fake_app.workday_bar.set_state.assert_called_once_with(
+            "working",
+            start="08:00",
+        )
+
+    def test_table_end_automatically_finishes_player(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="17:00",
+            interruption="00:00",
+        )
+
+        fake_app = self._refresh_fake_app(entry, session_start="08:00")
+
+        fake_app._clear_active_session.assert_called_once_with()
+        fake_app.workday_bar.set_state.assert_called_once_with(
+            "complete",
+            start="08:00",
+            end="17:00",
+        )
+
+    def test_clearing_table_end_returns_player_to_working_state(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="00:00",
+        )
+
+        fake_app = self._refresh_fake_app(entry, session_start="08:00")
+
+        fake_app._clear_active_session.assert_not_called()
+        fake_app.workday_bar.set_state.assert_called_once_with(
+            "working",
+            start="08:00",
+        )
+
+    def test_matching_table_start_preserves_active_pause(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="00:00",
+        )
+
+        fake_app = self._refresh_fake_app(
+            entry,
+            session_start="08:00",
+            pause_start="12:30",
+        )
+
+        fake_app._clear_active_session.assert_not_called()
+        fake_app.workday_bar.set_state.assert_called_once_with(
+            "paused",
+            start="08:00",
+            pause_start="12:30",
+        )
+
+    def test_clearing_table_start_returns_player_to_idle_even_with_end(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="00:00",
+            end="17:00",
+            interruption="01:00",
+        )
+
+        fake_app = self._refresh_fake_app(entry, session_start="08:00")
+
+        fake_app._clear_active_session.assert_called_once_with()
+        fake_app.workday_bar.set_state.assert_called_once_with("idle")
 
     def test_interruption_badges_keep_single_line_row_height(self):
         table = TableWidget()

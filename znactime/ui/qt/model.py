@@ -349,7 +349,7 @@ class MonthTableModel(QAbstractTableModel):
         value = str(value).strip()
 
         if column in TIME_COLUMNS:
-            value = coerce_time_input(value)
+            value = "00:00" if value == "" else coerce_time_input(value)
             if value is None:
                 QMessageBox.warning(
                     None,

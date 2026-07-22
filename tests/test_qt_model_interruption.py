@@ -125,6 +125,25 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertIsNone(model.index(0, 6).data(BADGE_ROLE))
         self.assertIsNone(model.index(0, 7).data(BADGE_ROLE))
 
+    def test_clearing_start_or_end_resets_time_to_zero(self):
+        model = self.make_model()
+
+        start_changed = model.setData(
+            model.index(0, 3),
+            "",
+            Qt.ItemDataRole.EditRole,
+        )
+        end_changed = model.setData(
+            model.index(0, 4),
+            "",
+            Qt.ItemDataRole.EditRole,
+        )
+
+        self.assertTrue(start_changed)
+        self.assertTrue(end_changed)
+        self.assertEqual(model.entries()[0].start, "00:00")
+        self.assertEqual(model.entries()[0].end, "00:00")
+
     def test_empty_interruption_badge_shows_add_action(self):
         model = MonthTableModel()
         model.set_entries(
