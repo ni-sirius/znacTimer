@@ -163,6 +163,7 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         self.assertEqual(badge["texts"], ["+"])
         self.assertEqual(badge["items"][0]["text"], "+")
+        self.assertEqual(badge["items"][0]["icon"], "add")
         self.assertEqual(badge["items"][0]["target"]["action"], "add")
 
     def test_existing_interruption_badge_keeps_plus_action_near_periods(self):
@@ -331,7 +332,13 @@ class QtModelInterruptionTest(unittest.TestCase):
             {"action": "edit", "period_index": 1},
         )
         self.assertFalse(editor.remove_button.isHidden())
-        self.assertEqual(editor.remove_button.text(), "-")
+        self.assertEqual(editor.remove_button.text(), "")
+        self.assertFalse(editor.remove_button.icon().isNull())
+        self.assertEqual(
+            editor.remove_button.height(),
+            editor.start_edit.height(),
+        )
+        self.assertEqual(editor.remove_button.height(), editor.end_edit.height())
         editor._remove_period()
 
         self.assertEqual(editor.resolved_value(), "10:00-10:30")

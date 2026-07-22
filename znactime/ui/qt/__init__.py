@@ -19,7 +19,9 @@ _QT_NAMES = {
     "QColor",
     "QFont",
     "QFontMetrics",
+    "QIcon",
     "QKeySequence",
+    "QPainter",
     "QApplication",
     "QAbstractItemView",
     "QComboBox",
@@ -51,6 +53,7 @@ _QT_NAMES = {
     "QWidget",
     "QPalette",
     "QPainterPath",
+    "QPixmap",
     "QRegion",
 }
 
@@ -77,9 +80,12 @@ try:
         QColor,
         QFont,
         QFontMetrics,
+        QIcon,
         QKeySequence,
+        QPainter,
         QPainterPath,
         QPalette,
+        QPixmap,
         QRegion,
     )
     from PySide6.QtWidgets import (

@@ -309,6 +309,7 @@ class MonthTableModel(QAbstractTableModel):
                 items.append(
                     {
                         "text": "+",
+                        "icon": "add",
                         "state": "empty",
                         "target": {"action": "add", "period_index": None},
                     }

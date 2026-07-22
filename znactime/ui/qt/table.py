@@ -14,11 +14,14 @@ from znactime.ui.qt import (
     QGraphicsDropShadowEffect,
     QHeaderView,
     QHBoxLayout,
+    QIcon,
     QLabel,
     QLineEdit,
     QKeySequence,
     QPainterPath,
     QPalette,
+    QPainter,
+    QPixmap,
     QPropertyAnimation,
     QPushButton,
     QEasingCurve,
@@ -68,6 +71,29 @@ def _period_parts(value):
     if "-" not in value:
         return []
     return [part.strip() for part in value.split(";") if part.strip()]
+
+
+def _action_icon(action, color):
+    theme_icon = {
+        "add": QIcon.ThemeIcon.ListAdd,
+        "remove": QIcon.ThemeIcon.ListRemove,
+    }[action]
+    icon = QIcon.fromTheme(theme_icon)
+    if not icon.isNull():
+        return icon
+
+    pixmap = QPixmap(32, 32)
+    pixmap.setDevicePixelRatio(2.0)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawRoundedRect(QRectF(3, 7, 10, 2), 1, 1)
+    if action == "add":
+        painter.drawRoundedRect(QRectF(7, 3, 2, 10), 1, 1)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _interruption_badge_rows(width, font, badge):
@@ -216,9 +242,11 @@ class IntervalEditor(QWidget):
 
         separator = QLabel("-", self)
         separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.remove_button = QPushButton("-", self)
+        self.remove_button = QPushButton(self)
         self.remove_button.setToolTip("Remove pause period")
+        self.remove_button.setAccessibleName("Remove pause period")
         self.remove_button.setFixedWidth(28)
+        self.remove_button.setIconSize(QSize(16, 16))
         self.remove_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.remove_button.clicked.connect(self._remove_period)
 
@@ -228,8 +256,24 @@ class IntervalEditor(QWidget):
         layout.addWidget(self.start_edit)
         layout.addWidget(separator)
         layout.addWidget(self.end_edit)
-        layout.addWidget(self.remove_button)
+        layout.addWidget(
+            self.remove_button,
+            alignment=Qt.AlignmentFlag.AlignVCenter,
+        )
         self._apply_style()
+        self._synchronize_control_heights()
+
+    def _synchronize_control_heights(self):
+        controls = (self.start_edit, self.end_edit, self.remove_button)
+        for control in controls:
+            control.ensurePolished()
+
+        edit_height = max(
+            self.start_edit.sizeHint().height(),
+            self.end_edit.sizeHint().height(),
+        )
+        for control in controls:
+            control.setFixedHeight(edit_height)
 
     def _apply_style(self):
         if _is_dark_theme():
@@ -242,6 +286,8 @@ class IntervalEditor(QWidget):
             text = "#1f4f8f"
             border = "#6941c6"
             separator = "#225ea8"
+
+        self.remove_button.setIcon(_action_icon("remove", text))
 
         self.setStyleSheet(
             "QLineEdit {"
@@ -623,11 +669,18 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 0,
             )
             text = str(item.get("text", ""))
-            painter.drawText(
-                text_rect,
-                Qt.AlignmentFlag.AlignCenter,
-                text,
-            )
+            if item.get("icon") == "add":
+                _action_icon("add", colors["text"]).paint(
+                    painter,
+                    text_rect.toRect(),
+                    Qt.AlignmentFlag.AlignCenter,
+                )
+            else:
+                painter.drawText(
+                    text_rect,
+                    Qt.AlignmentFlag.AlignCenter,
+                    text,
+                )
 
         painter.restore()
 
