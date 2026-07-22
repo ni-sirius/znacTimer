@@ -29,7 +29,9 @@ class ThemeController(QObject):
         )
         self.system_palette = QPalette(self.app.palette())
         self.system_color_scheme = self.app.styleHints().colorScheme()
-        self.app.setFont(QFont("Segoe UI Variable Text", 10))
+        application_font = QFont(self.app.font())
+        application_font.setPointSize(10)
+        self.app.setFont(application_font)
         saved_mode = self.settings.value(THEME_SETTING_KEY, SYSTEM_THEME, type=str)
         self.mode = saved_mode if saved_mode in VALID_THEMES else SYSTEM_THEME
         self.set_mode(self.mode, persist=False)
