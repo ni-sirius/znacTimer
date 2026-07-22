@@ -213,7 +213,7 @@ class QtModelInterruptionTest(unittest.TestCase):
                 interval_rect.center(),
                 QApplication.font(),
             ),
-            "Total pause time: 00:30",
+            "00:30/00:30",
         )
         self.assertIsNone(
             delegate.badge_tooltip_at(
@@ -222,6 +222,41 @@ class QtModelInterruptionTest(unittest.TestCase):
                 plus_rect.center(),
                 QApplication.font(),
             )
+        )
+
+    def test_each_interruption_tooltip_shows_period_and_total_time(self):
+        model = self.make_model()
+        model.setData(
+            model.index(0, 5),
+            "11:00-11:30;14:00-15:00",
+            Qt.ItemDataRole.EditRole,
+        )
+        delegate = CurrentTimeDelegate()
+        index = model.index(0, 5)
+        cell_rect = QRectF(0, 0, 300, 40)
+        rects = delegate._interruption_badge_rects(
+            cell_rect,
+            QApplication.font(),
+            index.data(BADGE_ROLE),
+        )
+
+        self.assertEqual(
+            delegate.badge_tooltip_at(
+                index,
+                cell_rect,
+                rects[0][0].center(),
+                QApplication.font(),
+            ),
+            "00:30/01:30",
+        )
+        self.assertEqual(
+            delegate.badge_tooltip_at(
+                index,
+                cell_rect,
+                rects[1][0].center(),
+                QApplication.font(),
+            ),
+            "01:00/01:30",
         )
 
     def test_incomplete_interruption_badge_has_no_tooltip_or_add_action(self):

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from znactime.core.time_utils import parse_interruption_input
+from znactime.core.time_utils import hours_to_hhmm, parse_interruption_input
 from znactime.ui.constants import COLUMNS, current_row_accent_hex, row_color_hex
 from znactime.ui.qt import (
     QAbstractItemDelegate,
@@ -722,8 +722,11 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                     or not item.get("complete", True)
                 ):
                     return None
+                period = parse_interruption_input(item.get("text", ""))
                 total = badge.get("total_pause_time")
-                return f"Total pause time: {total}" if total else None
+                if period is None or not total:
+                    return None
+                return f"{hours_to_hhmm(period.hours)}/{total}"
         return None
 
     def helpEvent(self, event, view, option, index):
