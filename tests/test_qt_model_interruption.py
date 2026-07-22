@@ -204,6 +204,35 @@ class QtModelInterruptionTest(unittest.TestCase):
             )
         )
 
+    def test_incomplete_interruption_badge_has_no_tooltip_or_add_action(self):
+        model = self.make_model()
+        model.setData(
+            model.index(0, 5),
+            "11:00-...",
+            Qt.ItemDataRole.EditRole,
+        )
+        delegate = CurrentTimeDelegate()
+        index = model.index(0, 5)
+        cell_rect = QRectF(0, 0, 260, 40)
+        badge = index.data(BADGE_ROLE)
+        interval_rect, interval_item = delegate._interruption_badge_rects(
+            cell_rect,
+            QApplication.font(),
+            badge,
+        )[0]
+
+        self.assertEqual(badge["texts"], ["11:00-..."])
+        self.assertEqual([item["text"] for item in badge["items"]], ["11:00-..."])
+        self.assertFalse(interval_item["complete"])
+        self.assertIsNone(
+            delegate.badge_tooltip_at(
+                index,
+                cell_rect,
+                interval_rect.center(),
+                QApplication.font(),
+            )
+        )
+
     def test_interruption_badges_wrap_as_complete_items(self):
         model = self.make_model()
         model.setData(
@@ -253,6 +282,40 @@ class QtModelInterruptionTest(unittest.TestCase):
         editor.end_edit.setText("14:00")
 
         self.assertIsNone(editor.resolved_value())
+
+    def test_interval_editor_saves_start_only_and_can_remove_period(self):
+        editor = IntervalEditor()
+        editor.set_value("00:00", {"action": "add", "period_index": None})
+        editor.start_edit.setText("11:00")
+        editor.end_edit.clear()
+
+        self.assertEqual(editor.resolved_value(), "11:00-...")
+
+        editor.set_value(
+            "11:00-...",
+            {"action": "edit", "period_index": 0},
+        )
+        editor.end_edit.setText("11:30")
+
+        self.assertEqual(editor.resolved_value(), "11:00-11:30")
+
+        editor.set_value(
+            "11:00-...",
+            {"action": "edit", "period_index": 0},
+        )
+        editor._remove_period()
+
+        self.assertEqual(editor.resolved_value(), "00:00")
+
+        editor.set_value(
+            "10:00-10:30;11:00-...",
+            {"action": "edit", "period_index": 1},
+        )
+        self.assertFalse(editor.remove_button.isHidden())
+        self.assertEqual(editor.remove_button.text(), "-")
+        editor._remove_period()
+
+        self.assertEqual(editor.resolved_value(), "10:00-10:30")
 
     def test_interval_editor_tab_switches_between_time_fields(self):
         editor = IntervalEditor()

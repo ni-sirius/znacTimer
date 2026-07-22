@@ -20,6 +20,7 @@ from znactime.ui.qt import (
     QPainterPath,
     QPalette,
     QPropertyAnimation,
+    QPushButton,
     QEasingCurve,
     QRectF,
     QRegion,
@@ -197,6 +198,7 @@ class IntervalEditor(QWidget):
         super().__init__(parent)
         self.original_value = "00:00"
         self.target = {"action": "add", "period_index": None}
+        self._remove_requested = False
         self._commit_requested = False
         self._destroyed = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -214,6 +216,11 @@ class IntervalEditor(QWidget):
 
         separator = QLabel("-", self)
         separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.remove_button = QPushButton("-", self)
+        self.remove_button.setToolTip("Remove pause period")
+        self.remove_button.setFixedWidth(28)
+        self.remove_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.remove_button.clicked.connect(self._remove_period)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -221,6 +228,7 @@ class IntervalEditor(QWidget):
         layout.addWidget(self.start_edit)
         layout.addWidget(separator)
         layout.addWidget(self.end_edit)
+        layout.addWidget(self.remove_button)
         self._apply_style()
 
     def _apply_style(self):
@@ -250,16 +258,27 @@ class IntervalEditor(QWidget):
             f"color: {separator};"
             "font-weight: 700;"
             "}"
+            "QPushButton {"
+            f"background-color: {background};"
+            f"color: {text};"
+            f"border: 1px solid {border};"
+            f"border-radius: {BADGE_CORNER_RADIUS}px;"
+            "font-weight: 700;"
+            "}"
         )
 
     def set_value(self, value, target):
         self.original_value = str(value or "00:00").strip() or "00:00"
         self.target = target or {"action": "add", "period_index": None}
+        self._remove_requested = False
+        self.remove_button.setVisible(
+            self.target.get("action") in {"edit", "replace"}
+        )
         period = self._period_for_target()
         if period and "-" in period:
             start, end = period.split("-", 1)
             self.start_edit.setText(start)
-            self.end_edit.setText(end)
+            self.end_edit.setText("" if end == "..." else end)
             self.start_edit.selectAll()
         else:
             self.start_edit.clear()
@@ -280,15 +299,28 @@ class IntervalEditor(QWidget):
         return ""
 
     def resolved_value(self):
-        start = self.start_edit.text().strip()
-        end = self.end_edit.text().strip()
-        new_period = f"{start}-{end}"
-        if parse_interruption_input(new_period) is None:
-            return None
-
         periods = _period_parts(self.original_value)
         action = self.target.get("action")
         period_index = self.target.get("period_index")
+        if self._remove_requested:
+            if action == "edit" and period_index is not None:
+                if not 0 <= period_index < len(periods):
+                    return None
+                periods.pop(period_index)
+                candidate = ";".join(periods) or "00:00"
+            elif action == "replace":
+                candidate = "00:00"
+            else:
+                return None
+            parsed = parse_interruption_input(candidate)
+            return None if parsed is None else parsed.normalized
+
+        start = self.start_edit.text().strip()
+        end = self.end_edit.text().strip()
+        new_period = f"{start}-{end or '...'}"
+        if parse_interruption_input(new_period) is None:
+            return None
+
         if action == "edit" and period_index is not None:
             if not 0 <= period_index < len(periods):
                 return None
@@ -304,6 +336,10 @@ class IntervalEditor(QWidget):
 
         parsed = parse_interruption_input(candidate)
         return None if parsed is None else parsed.normalized
+
+    def _remove_period(self):
+        self._remove_requested = True
+        self.request_commit()
 
     def focus_start(self):
         self.start_edit.setFocus()
@@ -628,7 +664,10 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         ):
             if rect.contains(position):
                 target = item.get("target") or {}
-                if target.get("action") == "add":
+                if (
+                    target.get("action") == "add"
+                    or not item.get("complete", True)
+                ):
                     return None
                 total = badge.get("total_pause_time")
                 return f"Total pause time: {total}" if total else None

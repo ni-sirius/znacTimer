@@ -69,6 +69,23 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "00:00")
 
+    def test_incomplete_interruption_is_not_subtracted_and_marks_day_missing(self):
+        entries = [
+            DayEntry(
+                cw="",
+                date="17.06.2024",
+                special="Normal day",
+                start="08:00",
+                end="17:00",
+                interruption="11:00-...",
+            )
+        ]
+
+        result = recalculate(entries, 0.0, 8.0, date(2024, 6, 18), False)
+
+        self.assertEqual(result[0].daily_ot, "01:00")
+        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+
     def test_recalculate_weekend_auto_marks_special(self):
         entries = [
             DayEntry(

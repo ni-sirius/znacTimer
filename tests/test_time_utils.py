@@ -53,6 +53,21 @@ class TimeUtilsTest(unittest.TestCase):
         self.assertEqual(parsed.earliest_start, "07:30")
         self.assertEqual(parsed.latest_end, "18:00")
 
+    def test_incomplete_interruption_is_normalized_but_has_no_duration(self):
+        parsed = parse_interruption_input("1100-...")
+
+        self.assertEqual(parsed.normalized, "11:00-...")
+        self.assertEqual(parsed.hours, 0.0)
+        self.assertEqual(parsed.earliest_start, "11:00")
+        self.assertIsNone(parsed.latest_end)
+        self.assertTrue(parsed.has_incomplete)
+        self.assertEqual(interruption_hours("11:00-..."), 0.0)
+
+    def test_incomplete_interruption_must_be_the_last_period(self):
+        self.assertIsNone(
+            parse_interruption_input("11:00-...;14:00-14:30")
+        )
+
     def test_append_interruption_period(self):
         self.assertEqual(
             append_interruption_period("00:00", "12:30", "13:00"),

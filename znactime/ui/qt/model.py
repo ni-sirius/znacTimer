@@ -288,6 +288,7 @@ class MonthTableModel(QAbstractTableModel):
                     {
                         "text": text,
                         "state": "info",
+                        "complete": not text.endswith("-..."),
                         "target": {"action": "edit", "period_index": position},
                     }
                     for position, text in enumerate(texts)
@@ -298,18 +299,20 @@ class MonthTableModel(QAbstractTableModel):
                     {
                         "text": value,
                         "state": "info",
+                        "complete": True,
                         "target": {"action": "replace", "period_index": 0},
                     }
                 ]
 
             active = value not in ("", "00:00")
-            items.append(
-                {
-                    "text": "+",
-                    "state": "empty",
-                    "target": {"action": "add", "period_index": None},
-                }
-            )
+            if parsed is None or not parsed.has_incomplete:
+                items.append(
+                    {
+                        "text": "+",
+                        "state": "empty",
+                        "target": {"action": "add", "period_index": None},
+                    }
+                )
             return {
                 "kind": "interruption",
                 "texts": texts if texts else ["+"],
@@ -361,7 +364,8 @@ class MonthTableModel(QAbstractTableModel):
                     None,
                     "Invalid interruption",
                     "Use HH:MM or periods such as "
-                    "12:30-13:00;14:00-16:42. Periods may not overlap.",
+                    "12:30-13:00;14:00-16:42. Use 12:30-... for a "
+                    "pause without an end. Periods may not overlap.",
                 )
                 return False
 

@@ -3,7 +3,11 @@ from datetime import date, datetime
 
 from znactime.core.calendar_utils import calendar_week_tag, is_weekend
 from znactime.core.models import DayEntry
-from znactime.core.time_utils import hours_to_hhmm, interruption_hours
+from znactime.core.time_utils import (
+    hours_to_hhmm,
+    interruption_hours,
+    parse_interruption_input,
+)
 
 
 ROW_COLOR_KEYS = {
@@ -84,7 +88,14 @@ def recalculate(
                     entry.interruption,
                 )
                 daily_ot = worked - day_hours
-                if not row_color:
+                interruption = parse_interruption_input(entry.interruption)
+                if not row_color and interruption.has_incomplete:
+                    row_color = (
+                        ROW_COLOR_KEYS["missing_times_today"]
+                        if entry_is_today
+                        else ROW_COLOR_KEYS["missing_times"]
+                    )
+                elif not row_color:
                     row_color = (
                         ROW_COLOR_KEYS["valid_day_today"]
                         if entry_is_today

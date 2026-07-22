@@ -14,6 +14,7 @@ class InterruptionValue:
     hours: float
     earliest_start: str | None = None
     latest_end: str | None = None
+    has_incomplete: bool = False
 
 
 def coerce_time_input(value):
@@ -67,6 +68,7 @@ def parse_interruption_input(value):
         )
 
     periods = []
+    incomplete_count = 0
     for raw_period in value.split(INTERRUPTION_SEPARATOR):
         raw_period = raw_period.strip()
         if raw_period.count(PERIOD_SEPARATOR) != 1:
@@ -74,29 +76,45 @@ def parse_interruption_input(value):
 
         raw_start, raw_end = raw_period.split(PERIOD_SEPARATOR)
         start = coerce_time_input(raw_start.strip())
-        end = coerce_time_input(raw_end.strip())
-        if start is None or end is None:
+        end_text = raw_end.strip()
+        end = None if end_text == "..." else coerce_time_input(end_text)
+        if start is None or (end is None and end_text != "..."):
             return None
 
         start_minutes = _minutes_from_hhmm(start)
-        end_minutes = _minutes_from_hhmm(end)
-        if end_minutes <= start_minutes:
+        end_minutes = None if end is None else _minutes_from_hhmm(end)
+        if end_minutes is not None and end_minutes <= start_minutes:
             return None
-        periods.append((start_minutes, end_minutes, start, end))
+        if end is None:
+            incomplete_count += 1
+        periods.append((start_minutes, end_minutes, start, end or "..."))
+
+    if incomplete_count > 1:
+        return None
 
     periods.sort(key=lambda period: period[0])
     for previous, current in zip(periods, periods[1:]):
-        if current[0] < previous[1]:
+        if previous[1] is None or current[0] < previous[1]:
             return None
 
-    total_minutes = sum(end - start for start, end, _start, _end in periods)
+    total_minutes = sum(
+        end - start
+        for start, end, _start, _end in periods
+        if end is not None
+    )
+    completed_ends = [
+        (end_minutes, end)
+        for _start_minutes, end_minutes, _start, end in periods
+        if end_minutes is not None
+    ]
     return InterruptionValue(
         normalized=INTERRUPTION_SEPARATOR.join(
             f"{start}-{end}" for _start_minutes, _end_minutes, start, end in periods
         ),
         hours=total_minutes / 60,
         earliest_start=periods[0][2],
-        latest_end=periods[-1][3],
+        latest_end=max(completed_ends)[1] if completed_ends else None,
+        has_incomplete=bool(incomplete_count),
     )
 
 
