@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -41,6 +42,31 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
         return model
+
+    def test_recalculate_renders_malformed_csv_times_as_zero(self):
+        model = MonthTableModel()
+        model.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="not a time",
+                    end="17:00",
+                    interruption="12:30-broken",
+                )
+            ]
+        )
+
+        model.recalculate(today=date(2024, 6, 18), autosave=False)
+
+        self.assertEqual(model.index(0, 3).data(), "00:00")
+        self.assertEqual(model.index(0, 4).data(), "17:00")
+        self.assertEqual(model.index(0, 5).data(), "00:00")
+        self.assertEqual(
+            model.index(0, 2).data(BADGE_ROLE)["state"],
+            "missing_times",
+        )
 
     def test_only_interruption_starts_custom_edit_path(self):
         class RecordingTableView(MonthTableView):
@@ -317,7 +343,7 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         self.assertFalse(index.data(CELL_EDITING_ROLE))
 
-    def test_interval_editor_adds_edits_and_rejects_invalid_periods(self):
+    def test_interval_editor_adds_edits_and_allows_reversed_periods(self):
         editor = IntervalEditor()
         editor.set_value("12:30-13:00", {"action": "add", "period_index": None})
         editor.start_edit.setText("14:00")
@@ -335,6 +361,10 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(editor.resolved_value(), "12:30-13:00;14:15-14:45")
 
         editor.end_edit.setText("14:00")
+
+        self.assertEqual(editor.resolved_value(), "12:30-13:00;14:15-14:00")
+
+        editor.end_edit.setText("not a time")
 
         self.assertIsNone(editor.resolved_value())
 

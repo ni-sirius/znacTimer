@@ -5,8 +5,10 @@ from znactime.core.calendar_utils import calendar_week_tag, is_weekend
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import (
     hours_to_hhmm,
+    interruption_input_or_zero,
     interruption_hours,
     parse_interruption_input,
+    time_input_or_zero,
 )
 
 
@@ -25,7 +27,7 @@ ROW_COLOR_KEYS = {
 def _is_today(date_str, today):
     try:
         return datetime.strptime(date_str, "%d.%m.%Y").date() == today
-    except ValueError:
+    except (TypeError, ValueError):
         return False
 
 
@@ -51,12 +53,28 @@ def recalculate(
     monthly_balance = carry_over
 
     for entry in entries:
+        entry = replace(
+            entry,
+            start=time_input_or_zero(entry.start),
+            end=time_input_or_zero(entry.end),
+            interruption=interruption_input_or_zero(entry.interruption),
+        )
         daily_ot = 0.0
         row_color = ""
-        special = entry.special
+        special = str(entry.special or "")
         entry_is_today = _is_today(entry.date, today)
+        try:
+            cw = calendar_week_tag(entry.date)
+            entry_is_weekend = is_weekend(entry.date)
+            date_is_valid = True
+        except (TypeError, ValueError):
+            cw = ""
+            entry_is_weekend = False
+            date_is_valid = False
 
-        if is_weekend(entry.date):
+        if not date_is_valid:
+            row_color = ROW_COLOR_KEYS["missing_times"]
+        elif entry_is_weekend:
             if special.lower() in ("", "normal day"):
                 special = "Weekend"
             row_color = (
@@ -71,7 +89,9 @@ def recalculate(
                 else ROW_COLOR_KEYS["special_day"]
             )
 
-        if entry.start == "00:00" or entry.end == "00:00":
+        if not date_is_valid:
+            daily_ot = 0.0
+        elif entry.start == "00:00" or entry.end == "00:00":
             if row_color:
                 daily_ot = 0.0
             else:
@@ -120,7 +140,7 @@ def recalculate(
         calculated_entries.append(
             replace(
                 entry,
-                cw=calendar_week_tag(entry.date),
+                cw=cw,
                 special=special,
                 daily_ot=hours_to_hhmm(daily_ot),
                 monthly_balance=hours_to_hhmm(monthly_balance),

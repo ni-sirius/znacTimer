@@ -83,8 +83,6 @@ def parse_interruption_input(value):
 
         start_minutes = _minutes_from_hhmm(start)
         end_minutes = None if end is None else _minutes_from_hhmm(end)
-        if end_minutes is not None and end_minutes <= start_minutes:
-            return None
         if end is None:
             incomplete_count += 1
         periods.append((start_minutes, end_minutes, start, end or "..."))
@@ -94,22 +92,27 @@ def parse_interruption_input(value):
 
     periods.sort(key=lambda period: period[0])
 
+    valid_periods = [
+        period
+        for period in periods
+        if period[1] is None or period[1] > period[0]
+    ]
     total_minutes = sum(
-        end - start
+        max(0, end - start)
         for start, end, _start, _end in periods
         if end is not None
     )
     completed_ends = [
         (end_minutes, end)
         for _start_minutes, end_minutes, _start, end in periods
-        if end_minutes is not None
+        if end_minutes is not None and end_minutes > _start_minutes
     ]
     return InterruptionValue(
         normalized=INTERRUPTION_SEPARATOR.join(
             f"{start}-{end}" for _start_minutes, _end_minutes, start, end in periods
         ),
         hours=total_minutes / 60,
-        earliest_start=periods[0][2],
+        earliest_start=valid_periods[0][2] if valid_periods else None,
         latest_end=max(completed_ends)[1] if completed_ends else None,
         has_incomplete=bool(incomplete_count),
     )
@@ -118,6 +121,14 @@ def parse_interruption_input(value):
 def coerce_interruption_input(value):
     parsed = parse_interruption_input(value)
     return None if parsed is None else parsed.normalized
+
+
+def time_input_or_zero(value):
+    return coerce_time_input(value) or "00:00"
+
+
+def interruption_input_or_zero(value):
+    return coerce_interruption_input(value) or "00:00"
 
 
 def interruption_hours(value):

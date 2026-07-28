@@ -42,14 +42,22 @@ class TimeUtilsTest(unittest.TestCase):
             3.2,
         )
 
-    def test_interruption_sums_overlapping_periods_but_rejects_reversed_periods(self):
+    def test_interruption_sums_overlapping_periods_and_ignores_reversed_periods(self):
         parsed = parse_interruption_input(
-            "12:30-14:00;13:30-15:00"
+            "12:30-14:00;13:30-15:00;17:00-16:00"
         )
 
-        self.assertEqual(parsed.normalized, "12:30-14:00;13:30-15:00")
+        self.assertEqual(
+            parsed.normalized,
+            "12:30-14:00;13:30-15:00;17:00-16:00",
+        )
         self.assertEqual(parsed.hours, 3.0)
-        self.assertIsNone(parse_interruption_input("14:00-12:30"))
+
+        reversed_only = parse_interruption_input("14:00-12:30")
+        self.assertEqual(reversed_only.normalized, "14:00-12:30")
+        self.assertEqual(reversed_only.hours, 0.0)
+        self.assertIsNone(reversed_only.earliest_start)
+        self.assertIsNone(reversed_only.latest_end)
 
     def test_interruption_reports_period_boundaries(self):
         parsed = parse_interruption_input("07:30-08:00;16:30-18:00")

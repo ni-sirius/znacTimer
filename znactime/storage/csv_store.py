@@ -5,7 +5,11 @@ from datetime import date
 
 from znactime.core.calendar_utils import calendar_week_tag
 from znactime.core.models import DayEntry, MonthStats
-from znactime.core.time_utils import hhmm_to_hours
+from znactime.core.time_utils import (
+    hhmm_to_hours,
+    interruption_input_or_zero,
+    time_input_or_zero,
+)
 from znactime.storage import paths
 
 
@@ -57,13 +61,17 @@ def _default_entries(year, month):
 
 def _entry_from_csv_row(row):
     csv_row = _normalized_csv_row(row)
+    try:
+        cw = calendar_week_tag(csv_row[0])
+    except (TypeError, ValueError):
+        cw = ""
     return DayEntry(
-        cw=calendar_week_tag(csv_row[0]),
+        cw=cw,
         date=csv_row[0],
         special=csv_row[1],
-        start=csv_row[2],
-        end=csv_row[3],
-        interruption=csv_row[4],
+        start=time_input_or_zero(csv_row[2]),
+        end=time_input_or_zero(csv_row[3]),
+        interruption=interruption_input_or_zero(csv_row[4]),
         daily_ot=csv_row[5],
         monthly_balance=csv_row[6],
     )

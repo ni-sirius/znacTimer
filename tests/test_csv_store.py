@@ -77,6 +77,52 @@ class CsvStoreTest(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].interruption, "01:00")
 
+    def test_load_month_normalizes_malformed_external_time_values(self):
+        month_file = paths.tmp_month_file(2024, 6, data_dir=self.data_dir)
+        paths.year_dir(2024, create=True, data_dir=self.data_dir)
+        with open(month_file, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerows(
+                [
+                    [
+                        "17.06.2024",
+                        "Normal day",
+                        "not a time",
+                        "17:00",
+                        "12:30-not a time",
+                    ],
+                    [
+                        "18.06.2024",
+                        "Normal day",
+                        "17:00",
+                        "08:00",
+                        "14:00-13:00",
+                    ],
+                ]
+            )
+
+        entries = csv_store.load_month(2024, 6, data_dir=self.data_dir)
+
+        self.assertEqual(entries[0].start, "00:00")
+        self.assertEqual(entries[0].end, "17:00")
+        self.assertEqual(entries[0].interruption, "00:00")
+        self.assertEqual(entries[1].start, "17:00")
+        self.assertEqual(entries[1].end, "08:00")
+        self.assertEqual(entries[1].interruption, "14:00-13:00")
+
+    def test_load_month_keeps_malformed_date_row_without_crashing(self):
+        month_file = paths.tmp_month_file(2024, 6, data_dir=self.data_dir)
+        paths.year_dir(2024, create=True, data_dir=self.data_dir)
+        with open(month_file, "w", newline="") as f:
+            csv.writer(f).writerow(
+                ["not a date", "Normal day", "08:00", "17:00", "00:00"]
+            )
+
+        entries = csv_store.load_month(2024, 6, data_dir=self.data_dir)
+
+        self.assertEqual(entries[0].date, "not a date")
+        self.assertEqual(entries[0].cw, "")
+
     def test_load_month_returns_default_entries_when_file_missing(self):
         entries = csv_store.load_month(2024, 2, data_dir=self.data_dir)
 
