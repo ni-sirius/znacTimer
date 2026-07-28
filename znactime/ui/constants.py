@@ -51,6 +51,9 @@ DARK_OVERTIME_TEXT_COLORS = {
     "negative": "#ff8796",
 }
 
+LIGHT_CALENDAR_WEEK_TEXT_COLORS = ("#202124", "#8993a1")
+DARK_CALENDAR_WEEK_TEXT_COLORS = ("#f1f3f4", "#7f8b9b")
+
 
 def row_color_hex(row_color, dark=False):
     if not row_color:
@@ -64,6 +67,20 @@ def row_color_hex(row_color, dark=False):
 
 def current_row_accent_hex(dark=False):
     return DARK_CURRENT_ROW_ACCENT if dark else LIGHT_CURRENT_ROW_ACCENT
+
+
+def calendar_week_text_color_hex(calendar_week, dark=False):
+    try:
+        week_number = int(str(calendar_week).rsplit("-", 1)[-1])
+    except (TypeError, ValueError):
+        week_number = 1
+
+    palette = (
+        DARK_CALENDAR_WEEK_TEXT_COLORS
+        if dark
+        else LIGHT_CALENDAR_WEEK_TEXT_COLORS
+    )
+    return palette[(week_number + 1) % 2]
 
 
 def overtime_text_color_hex(value, dark=False):

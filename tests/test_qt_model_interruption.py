@@ -614,6 +614,59 @@ class QtModelInterruptionTest(unittest.TestCase):
             model.index(0, 0).data(Qt.ItemDataRole.BackgroundRole)
         )
 
+    def test_cw_and_date_text_alternates_by_calendar_week(self):
+        model = MonthTableModel()
+        model.set_entries(
+            [
+                DayEntry(
+                    "CW-25",
+                    "21.06.2024",
+                    "",
+                    "00:00",
+                    "00:00",
+                    "00:00",
+                ),
+                DayEntry(
+                    "CW-26",
+                    "24.06.2024",
+                    "",
+                    "00:00",
+                    "00:00",
+                    "00:00",
+                ),
+            ]
+        )
+
+        with patch("znactime.ui.qt.model._is_dark_theme", return_value=False):
+            light_week_25 = model.index(0, 0).data(
+                Qt.ItemDataRole.ForegroundRole
+            )
+            light_date_25 = model.index(0, 1).data(
+                Qt.ItemDataRole.ForegroundRole
+            )
+            light_week_26 = model.index(1, 0).data(
+                Qt.ItemDataRole.ForegroundRole
+            )
+
+        self.assertEqual(light_week_25, light_date_25)
+        self.assertNotEqual(light_week_25, light_week_26)
+        self.assertLess(light_week_25.lightness(), light_week_26.lightness())
+
+        with patch("znactime.ui.qt.model._is_dark_theme", return_value=True):
+            dark_week_25 = model.index(0, 0).data(
+                Qt.ItemDataRole.ForegroundRole
+            )
+            dark_date_25 = model.index(0, 1).data(
+                Qt.ItemDataRole.ForegroundRole
+            )
+            dark_week_26 = model.index(1, 0).data(
+                Qt.ItemDataRole.ForegroundRole
+            )
+
+        self.assertEqual(dark_week_25, dark_date_25)
+        self.assertNotEqual(dark_week_25, dark_week_26)
+        self.assertGreater(dark_week_25.lightness(), dark_week_26.lightness())
+
     @patch(
         "znactime.ui.qt.model.InterruptionBoundaryDialog.selected_overrides",
         return_value=(True, True),

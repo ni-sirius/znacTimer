@@ -13,6 +13,7 @@ from znactime.core.time_utils import (
 from znactime.storage import csv_store
 from znactime.ui.constants import (
     COLUMNS,
+    calendar_week_text_color_hex,
     overtime_text_color_hex,
 )
 from znactime.ui.qt import (
@@ -234,7 +235,12 @@ class MonthTableModel(QAbstractTableModel):
             if (index.row(), index.column()) in self._editing_cells:
                 return QColor("#8b8d91" if _is_dark_theme() else "#7a7f87")
             if column in (0, 1):
-                return QColor("#f1f3f4" if _is_dark_theme() else "#202124")
+                return QColor(
+                    calendar_week_text_color_hex(
+                        entry.cw,
+                        dark=_is_dark_theme(),
+                    )
+                )
             if column in (6, 7):
                 overtime_color = overtime_text_color_hex(
                     getattr(entry, ENTRY_FIELDS[column]),
