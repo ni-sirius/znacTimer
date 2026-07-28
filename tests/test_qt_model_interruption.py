@@ -464,6 +464,35 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(badge["state"], "valid_day_today")
         self.assertTrue(badge["full_width"])
 
+    def test_day_badge_text_is_derived_from_its_fill_color(self):
+        delegate = CurrentTimeDelegate()
+
+        with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
+            light_colors = delegate._badge_colors("weekend")
+
+        self.assertEqual(light_colors["fill"].name(), "#e1edff")
+        self.assertEqual(
+            light_colors["text"].hue(),
+            light_colors["fill"].hue(),
+        )
+        self.assertLess(
+            light_colors["text"].lightness(),
+            light_colors["fill"].lightness(),
+        )
+
+        with patch("znactime.ui.qt.table._is_dark_theme", return_value=True):
+            dark_colors = delegate._badge_colors("weekend")
+
+        self.assertEqual(dark_colors["fill"].name(), "#2b3d5b")
+        self.assertEqual(
+            dark_colors["text"].hue(),
+            dark_colors["fill"].hue(),
+        )
+        self.assertGreater(
+            dark_colors["text"].lightness(),
+            dark_colors["fill"].lightness(),
+        )
+
     def test_time_badge_hover_targets_badge_rect_only(self):
         model = self.make_model()
         delegate = CurrentTimeDelegate()

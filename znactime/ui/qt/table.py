@@ -66,6 +66,22 @@ def _is_dark_theme():
     return window_color.lightness() < 128
 
 
+def _badge_text_color(fill, dark):
+    hue, saturation, _lightness, alpha = fill.getHsl()
+    if hue < 0:
+        return fill.lighter(230) if dark else fill.darker(240)
+
+    text = QColor()
+    if dark:
+        saturation = min(max(saturation, 100), 175)
+        lightness = 195
+    else:
+        saturation = min(max(saturation, 120), 190)
+        lightness = 72
+    text.setHsl(hue, saturation, lightness, alpha)
+    return text
+
+
 def _period_parts(value):
     value = str(value).strip()
     if "-" not in value:
@@ -633,9 +649,10 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             }
         row_color = row_color_hex(state, dark=_is_dark_theme())
         if row_color:
+            fill = QColor(row_color)
             return {
-                "fill": QColor(row_color),
-                "text": QColor("#f1f3f4" if _is_dark_theme() else "#202124"),
+                "fill": fill,
+                "text": _badge_text_color(fill, dark=_is_dark_theme()),
             }
         return palette.get(state, palette["empty"])
 
