@@ -93,9 +93,6 @@ def parse_interruption_input(value):
         return None
 
     periods.sort(key=lambda period: period[0])
-    for previous, current in zip(periods, periods[1:]):
-        if previous[1] is None or current[0] < previous[1]:
-            return None
 
     total_minutes = sum(
         end - start
@@ -144,8 +141,45 @@ def append_interruption_period(value, start, end):
 
     parsed = parse_interruption_input(combined)
     if parsed is None:
-        raise ValueError("The interruption period is invalid or overlaps")
+        raise ValueError("The interruption period is invalid")
     return parsed.normalized
+
+
+def finish_interruption_period(value, start, end):
+    start = coerce_time_input(start)
+    end = coerce_time_input(end)
+    if start is None or end is None:
+        raise ValueError("The interruption period is invalid")
+
+    parsed = parse_interruption_input(value)
+    if parsed is None:
+        raise ValueError("The interruption period is invalid")
+    if PERIOD_SEPARATOR not in parsed.normalized:
+        if parsed.normalized == "00:00":
+            if end <= start:
+                return parsed.normalized
+            return append_interruption_period(parsed.normalized, start, end)
+        raise ValueError("The interruption period is invalid")
+
+    periods = parsed.normalized.split(INTERRUPTION_SEPARATOR)
+    open_period = f"{start}-..."
+    try:
+        period_index = periods.index(open_period)
+    except ValueError:
+        if end <= start:
+            return parsed.normalized
+        return append_interruption_period(parsed.normalized, start, end)
+
+    if end <= start:
+        periods.pop(period_index)
+    else:
+        periods[period_index] = f"{start}-{end}"
+
+    candidate = INTERRUPTION_SEPARATOR.join(periods) or "00:00"
+    finished = parse_interruption_input(candidate)
+    if finished is None:
+        raise ValueError("The interruption period is invalid")
+    return finished.normalized
 
 
 def hhmm_to_hours(hhmm_str):

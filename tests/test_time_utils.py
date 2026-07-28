@@ -4,6 +4,7 @@ from znactime.core.time_utils import (
     append_interruption_period,
     coerce_interruption_input,
     coerce_time_input,
+    finish_interruption_period,
     hhmm_to_hours,
     hours_to_hhmm,
     interruption_hours,
@@ -41,10 +42,13 @@ class TimeUtilsTest(unittest.TestCase):
             3.2,
         )
 
-    def test_interruption_rejects_overlapping_or_reversed_periods(self):
-        self.assertIsNone(
-            parse_interruption_input("12:30-14:00;13:30-15:00")
+    def test_interruption_sums_overlapping_periods_but_rejects_reversed_periods(self):
+        parsed = parse_interruption_input(
+            "12:30-14:00;13:30-15:00"
         )
+
+        self.assertEqual(parsed.normalized, "12:30-14:00;13:30-15:00")
+        self.assertEqual(parsed.hours, 3.0)
         self.assertIsNone(parse_interruption_input("14:00-12:30"))
 
     def test_interruption_reports_period_boundaries(self):
@@ -63,10 +67,14 @@ class TimeUtilsTest(unittest.TestCase):
         self.assertTrue(parsed.has_incomplete)
         self.assertEqual(interruption_hours("11:00-..."), 0.0)
 
-    def test_incomplete_interruption_must_be_the_last_period(self):
-        self.assertIsNone(
-            parse_interruption_input("11:00-...;14:00-14:30")
+    def test_incomplete_interruption_can_overlap_a_completed_period(self):
+        parsed = parse_interruption_input(
+            "11:00-...;14:00-14:30"
         )
+
+        self.assertEqual(parsed.normalized, "11:00-...;14:00-14:30")
+        self.assertEqual(parsed.hours, 0.5)
+        self.assertTrue(parsed.has_incomplete)
 
     def test_append_interruption_period(self):
         self.assertEqual(
@@ -83,6 +91,30 @@ class TimeUtilsTest(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             append_interruption_period("01:00", "12:30", "13:00")
+
+    def test_finish_interruption_period_replaces_open_end(self):
+        self.assertEqual(
+            finish_interruption_period(
+                "10:00-10:30;12:30-...",
+                "12:30",
+                "13:00",
+            ),
+            "10:00-10:30;12:30-13:00",
+        )
+
+    def test_finish_zero_length_interruption_removes_open_period(self):
+        self.assertEqual(
+            finish_interruption_period(
+                "10:00-10:30;12:30-...",
+                "12:30",
+                "12:30",
+            ),
+            "10:00-10:30",
+        )
+        self.assertEqual(
+            finish_interruption_period("00:00", "12:30", "12:30"),
+            "00:00",
+        )
 
 
 if __name__ == "__main__":

@@ -56,6 +56,99 @@ class WorkdayBarTest(unittest.TestCase):
         self.assertTrue(resumed)
         fake_app._clear_active_pause.assert_called_once_with()
 
+    def test_starting_pause_immediately_adds_open_interruption(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="10:00-10:30",
+        )
+        fake_app = SimpleNamespace(
+            table=SimpleNamespace(
+                update_entry_for_date=Mock(return_value=True),
+            ),
+            _set_active_pause=Mock(),
+        )
+
+        started = TimeTrackerApp._start_active_pause(
+            fake_app,
+            entry,
+            "17.06.2024",
+            "12:30",
+        )
+
+        self.assertTrue(started)
+        fake_app.table.update_entry_for_date.assert_called_once_with(
+            "17.06.2024",
+            interruption="10:00-10:30;12:30-...",
+        )
+        fake_app._set_active_pause.assert_called_once_with(
+            "17.06.2024",
+            "12:30",
+        )
+
+    def test_resuming_pause_finishes_existing_open_interruption(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="10:00-10:30;12:30-...",
+        )
+        fake_app = SimpleNamespace(
+            _active_pause=Mock(return_value="12:30"),
+            table=SimpleNamespace(
+                update_entry_for_date=Mock(return_value=True),
+            ),
+            _clear_active_pause=Mock(),
+        )
+
+        resumed = TimeTrackerApp._finish_active_pause(
+            fake_app,
+            entry,
+            "13:00",
+        )
+
+        self.assertTrue(resumed)
+        fake_app.table.update_entry_for_date.assert_called_once_with(
+            "17.06.2024",
+            interruption="10:00-10:30;12:30-13:00",
+        )
+        fake_app._clear_active_pause.assert_called_once_with()
+
+    def test_zero_length_pause_removes_open_interruption(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="10:00-10:30;12:30-...",
+        )
+        fake_app = SimpleNamespace(
+            _active_pause=Mock(return_value="12:30"),
+            table=SimpleNamespace(
+                update_entry_for_date=Mock(return_value=True),
+            ),
+            _clear_active_pause=Mock(),
+        )
+
+        resumed = TimeTrackerApp._finish_active_pause(
+            fake_app,
+            entry,
+            "12:30",
+        )
+
+        self.assertTrue(resumed)
+        fake_app.table.update_entry_for_date.assert_called_once_with(
+            "17.06.2024",
+            interruption="10:00-10:30",
+        )
+        fake_app._clear_active_pause.assert_called_once_with()
+
     @patch("znactime.ui.qt.app.datetime")
     def test_stop_workday_accepts_same_start_and_end_time(self, mock_datetime):
         now = Mock()

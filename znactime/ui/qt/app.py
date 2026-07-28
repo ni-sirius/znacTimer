@@ -6,7 +6,11 @@ from znactime.config import DEFAULT_DAY_HOURS, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
 from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.core.models import MonthStats
-from znactime.core.time_utils import append_interruption_period, hours_to_hhmm
+from znactime.core.time_utils import (
+    append_interruption_period,
+    finish_interruption_period,
+    hours_to_hhmm,
+)
 from znactime.storage import csv_store, paths
 from znactime.ui.qt import (
     QApplication,
@@ -351,7 +355,7 @@ class TimeTrackerApp(QMainWindow):
         if interruption not in ("", "00:00") and "-" not in interruption:
             return changes
         try:
-            changes["interruption"] = append_interruption_period(
+            changes["interruption"] = finish_interruption_period(
                 interruption,
                 pause_start,
                 "23:59",
@@ -434,15 +438,49 @@ class TimeTrackerApp(QMainWindow):
             if not self._finish_active_pause(entry, time_text):
                 return
         elif entry.end == "00:00":
-            self._set_active_pause(date_text, time_text)
+            if not self._start_active_pause(entry, date_text, time_text):
+                return
 
         self.refresh_workday_bar(now)
+
+    def _start_active_pause(self, entry, date_text, start_text):
+        interruption = entry.interruption
+        if interruption not in ("", "00:00") and "-" not in interruption:
+            answer = QMessageBox.question(
+                self,
+                "Replace interruption duration?",
+                "Today's interruption is stored as a duration. Replace it "
+                "with the recorded pause period?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
+            interruption = "00:00"
+
+        try:
+            interruption = append_interruption_period(
+                interruption,
+                start_text,
+                "...",
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Invalid pause", str(error))
+            return False
+
+        updated = self.table.update_entry_for_date(
+            entry.date,
+            interruption=interruption,
+        )
+        if updated:
+            self._set_active_pause(date_text, start_text)
+        return updated
 
     def _finish_active_pause(self, entry, end_text):
         pause_start = self._active_pause()
         if pause_start is None:
             return True
-        if end_text <= pause_start:
+        if entry is None:
             self._clear_active_pause()
             return True
 
@@ -461,7 +499,7 @@ class TimeTrackerApp(QMainWindow):
             interruption = "00:00"
 
         try:
-            interruption = append_interruption_period(
+            interruption = finish_interruption_period(
                 interruption,
                 pause_start,
                 end_text,

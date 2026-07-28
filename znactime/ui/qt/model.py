@@ -366,7 +366,7 @@ class MonthTableModel(QAbstractTableModel):
                     "Invalid interruption",
                     "Use HH:MM or periods such as "
                     "12:30-13:00;14:00-16:42. Use 12:30-... for a "
-                    "pause without an end. Periods may not overlap.",
+                    "pause without an end.",
                 )
                 return False
 
