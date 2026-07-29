@@ -1,6 +1,7 @@
 import os
 import unittest
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -423,6 +424,51 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.app.processEvents()
 
         self.assertIs(QApplication.focusWidget(), editor.start_edit)
+
+    def test_interval_editor_and_controls_are_vertically_centered(self):
+        cell = QDialog()
+        cell.setGeometry(11, 17, 320, 42)
+        editor = IntervalEditor(cell)
+        option = SimpleNamespace(rect=cell.geometry())
+
+        CurrentTimeDelegate().updateEditorGeometry(
+            editor,
+            option,
+            self.make_model().index(0, 5),
+        )
+
+        self.assertEqual(
+            editor.geometry().center().y(),
+            option.rect.center().y(),
+        )
+        self.assertEqual(editor.start_edit.height(), editor.height())
+        self.assertEqual(editor.end_edit.height(), editor.height())
+        self.assertEqual(editor.remove_button.height(), editor.height())
+
+    def test_remove_icon_has_balanced_internal_margins(self):
+        editor = IntervalEditor()
+        pixmap = editor.remove_button.icon().pixmap(
+            editor.remove_button.iconSize()
+        )
+        image = pixmap.toImage()
+        opaque_pixels = [
+            (x, y)
+            for y in range(image.height())
+            for x in range(image.width())
+            if image.pixelColor(x, y).alpha() > 0
+        ]
+        xs = [x for x, _y in opaque_pixels]
+        ys = [y for _x, y in opaque_pixels]
+
+        self.assertTrue(opaque_pixels)
+        self.assertLessEqual(
+            abs((min(xs) + max(xs)) - (image.width() - 1)),
+            1,
+        )
+        self.assertLessEqual(
+            abs((min(ys) + max(ys)) - (image.height() - 1)),
+            1,
+        )
 
     def test_interval_editor_commit_request_is_idempotent(self):
         editor = IntervalEditor()

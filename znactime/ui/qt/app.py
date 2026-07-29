@@ -20,6 +20,7 @@ from znactime.ui.qt import (
     QTimer,
     QVBoxLayout,
     QWidget,
+    Qt,
 )
 from znactime.ui.qt.header import HeaderWidget
 from znactime.ui.qt.menu import MenuBar
@@ -83,6 +84,7 @@ class TimeTrackerApp(QMainWindow):
 
         central_widget = QWidget(self)
         central_widget.setObjectName("appBackground")
+        central_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(16, 14, 16, 16)
         layout.setSpacing(10)
@@ -90,6 +92,7 @@ class TimeTrackerApp(QMainWindow):
         layout.addWidget(self.table, stretch=1)
         layout.addWidget(self.workday_bar)
         self.setCentralWidget(central_widget)
+        central_widget.setFocus(Qt.FocusReason.OtherFocusReason)
         self.apply_shell_theme()
 
         self._finalize_stale_session(now)

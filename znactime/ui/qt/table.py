@@ -58,6 +58,7 @@ BADGE_HORIZONTAL_PADDING = 8
 BADGE_VERTICAL_PADDING = 4
 BADGE_GAP = 4
 BADGE_CORNER_RADIUS = 6
+EDIT_BADGE_BORDER_WIDTH = 2
 INTERRUPTION_COLUMN = 5
 
 
@@ -90,14 +91,6 @@ def _period_parts(value):
 
 
 def _action_icon(action, color):
-    theme_icon = {
-        "add": QIcon.ThemeIcon.ListAdd,
-        "remove": QIcon.ThemeIcon.ListRemove,
-    }[action]
-    icon = QIcon.fromTheme(theme_icon)
-    if not icon.isNull():
-        return icon
-
     pixmap = QPixmap(32, 32)
     pixmap.setDevicePixelRatio(2.0)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -256,13 +249,14 @@ class IntervalEditor(QWidget):
             editor.editingFinished.connect(self._commit_if_focus_left)
             editor.installEventFilter(self)
 
-        separator = QLabel("-", self)
-        separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.separator_label = QLabel("-", self)
+        self.separator_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.remove_button = QPushButton(self)
         self.remove_button.setToolTip("Remove pause period")
         self.remove_button.setAccessibleName("Remove pause period")
         self.remove_button.setFixedWidth(28)
         self.remove_button.setIconSize(QSize(16, 16))
+        self.remove_button.setContentsMargins(0, 0, 0, 0)
         self.remove_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.remove_button.clicked.connect(self._remove_period)
 
@@ -270,7 +264,7 @@ class IntervalEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addWidget(self.start_edit)
-        layout.addWidget(separator)
+        layout.addWidget(self.separator_label)
         layout.addWidget(self.end_edit)
         layout.addWidget(
             self.remove_button,
@@ -279,15 +273,16 @@ class IntervalEditor(QWidget):
         self._apply_style()
         self._synchronize_control_heights()
 
-    def _synchronize_control_heights(self):
-        controls = (self.start_edit, self.end_edit, self.remove_button)
-        for control in controls:
-            control.ensurePolished()
-
-        edit_height = max(
-            self.start_edit.sizeHint().height(),
-            self.end_edit.sizeHint().height(),
+    def preferred_height(self):
+        return (
+            self.fontMetrics().height()
+            + BADGE_VERTICAL_PADDING * 2
+            + EDIT_BADGE_BORDER_WIDTH
         )
+
+    def _synchronize_control_heights(self, height=None):
+        controls = (self.start_edit, self.end_edit, self.remove_button)
+        edit_height = height or self.preferred_height()
         for control in controls:
             control.setFixedHeight(edit_height)
 
@@ -309,7 +304,7 @@ class IntervalEditor(QWidget):
             "QLineEdit {"
             f"background-color: {background};"
             f"color: {text};"
-            f"border: 1px solid {border};"
+            f"border: {EDIT_BADGE_BORDER_WIDTH}px solid {border};"
             f"border-radius: {BADGE_CORNER_RADIUS}px;"
             f"selection-background-color: {border};"
             "selection-color: white;"
@@ -323,9 +318,11 @@ class IntervalEditor(QWidget):
             "QPushButton {"
             f"background-color: {background};"
             f"color: {text};"
-            f"border: 1px solid {border};"
+            f"border: {EDIT_BADGE_BORDER_WIDTH}px solid {border};"
             f"border-radius: {BADGE_CORNER_RADIUS}px;"
             "font-weight: 700;"
+            "margin: 0;"
+            "padding: 0;"
             "}"
         )
 
@@ -845,7 +842,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 "QLineEdit {"
                 f"background-color: {background};"
                 f"color: {text};"
-                f"border: 1px solid {accent};"
+                f"border: {EDIT_BADGE_BORDER_WIDTH}px solid {accent};"
                 f"border-radius: {BADGE_CORNER_RADIUS}px;"
                 f"selection-background-color: {accent};"
                 "selection-color: white;"
@@ -857,7 +854,25 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
     def updateEditorGeometry(self, editor, option, index):
         if isinstance(editor, IntervalEditor):
-            editor.setGeometry(option.rect.adjusted(5, 4, -5, -4))
+            horizontal_margin = 5
+            vertical_margin = 4
+            editor_height = min(
+                option.rect.height() - vertical_margin * 2,
+                editor.preferred_height(),
+            )
+            editor_height = max(1, editor_height)
+            editor_rect = option.rect.adjusted(
+                horizontal_margin,
+                0,
+                -horizontal_margin,
+                0,
+            )
+            editor_rect.setTop(
+                option.rect.y() + (option.rect.height() - editor_height) // 2
+            )
+            editor_rect.setHeight(editor_height)
+            editor.setGeometry(editor_rect)
+            editor._synchronize_control_heights(editor_height)
             return
 
         if not isinstance(editor, QLineEdit):

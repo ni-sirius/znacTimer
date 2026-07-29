@@ -56,7 +56,8 @@ class HeaderWidget(QWidget):
         layout.addSpacing(10)
         layout.addWidget(self.carry_over_label)
         layout.addWidget(self.overtime_label)
-        layout.addWidget(self.calendar_week_label, stretch=1)
+        layout.addWidget(self.calendar_week_label)
+        layout.addStretch(1)
         self.apply_theme()
 
         self.year_box.valueChanged.connect(
@@ -187,19 +188,13 @@ class HeaderWidget(QWidget):
             "outline: 0;"
             "padding: 4px;"
             "}"
-            "QLabel#summaryBadge {"
+            "QLabel#summaryBadge, QLabel#calendarSummary {"
             f"background-color: {badge};"
             f"color: {accent};"
             "border: none;"
             "border-radius: 8px;"
             "padding: 6px 10px;"
             "font-weight: 600;"
-            "}"
-            "QLabel#calendarSummary {"
-            f"color: {muted};"
-            "border: none;"
-            "background: transparent;"
-            "padding-left: 6px;"
             "}"
         )
 
