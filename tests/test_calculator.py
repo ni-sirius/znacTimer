@@ -89,7 +89,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].monthly_balance, "01:00")
         self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
 
-    def test_recalculate_ignores_reversed_interruption_duration(self):
+    def test_recalculate_marks_reversed_interruption_period_missing(self):
         entries = [
             DayEntry(
                 cw="",
@@ -106,7 +106,29 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].interruption, "14:00-13:00")
         self.assertEqual(result[0].daily_ot, "01:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["valid_day"])
+        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+
+    def test_recalculate_marks_day_missing_when_any_pause_is_outside_workday(self):
+        entries = [
+            DayEntry(
+                cw="",
+                date="17.06.2024",
+                special="Normal day",
+                start="08:00",
+                end="17:00",
+                interruption="07:45-08:00;12:00-12:30",
+            )
+        ]
+
+        result = recalculate(entries, 0.0, 8.0, date(2024, 6, 18), False)
+
+        self.assertEqual(result[0].start, "08:00")
+        self.assertEqual(result[0].end, "17:00")
+        self.assertEqual(
+            result[0].interruption,
+            "07:45-08:00;12:00-12:30",
+        )
+        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
 
     def test_recalculate_normalizes_malformed_time_values_to_zero(self):
         entries = [

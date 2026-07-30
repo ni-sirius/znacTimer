@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import date
 
+from znactime.config import DEFAULT_DAY_HOURS
 from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import (
@@ -8,6 +9,7 @@ from znactime.core.time_utils import (
     coerce_time_input,
     hhmm_to_hours,
     hours_to_hhmm,
+    expected_end_time,
     parse_interruption_input,
 )
 from znactime.storage import csv_store
@@ -19,16 +21,11 @@ from znactime.ui.constants import (
 from znactime.ui.qt import (
     QAbstractTableModel,
     QApplication,
-    QCheckBox,
     QColor,
-    QDialog,
-    QDialogButtonBox,
-    QLabel,
     QModelIndex,
     QMessageBox,
     Signal,
     Qt,
-    QVBoxLayout,
 )
 
 
@@ -59,58 +56,6 @@ def _is_dark_theme():
     return window_color.lightness() < 128
 
 
-class InterruptionBoundaryDialog(QDialog):
-    def __init__(
-        self,
-        current_start,
-        current_end,
-        proposed_start=None,
-        proposed_end=None,
-        parent=None,
-    ):
-        super().__init__(parent)
-        self.setWindowTitle("Interruption outside workday")
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel(
-                "The interruption periods extend outside the current workday.",
-                self,
-            )
-        )
-
-        self.start_checkbox = None
-        if proposed_start is not None:
-            self.start_checkbox = QCheckBox(
-                f"Override start {current_start} with {proposed_start}?",
-                self,
-            )
-            layout.addWidget(self.start_checkbox)
-
-        self.end_checkbox = None
-        if proposed_end is not None:
-            self.end_checkbox = QCheckBox(
-                f"Override end {current_end} with {proposed_end}?",
-                self,
-            )
-            layout.addWidget(self.end_checkbox)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def selected_overrides(self):
-        return (
-            self.start_checkbox is not None and self.start_checkbox.isChecked(),
-            self.end_checkbox is not None and self.end_checkbox.isChecked(),
-        )
-
-
 class MonthTableModel(QAbstractTableModel):
     overtimeChanged = Signal(float)
 
@@ -120,16 +65,26 @@ class MonthTableModel(QAbstractTableModel):
         self.year = None
         self.month = None
         self.carry_over = 0.0
-        self.day_hours = 8.0
+        self.day_hours = DEFAULT_DAY_HOURS
+        self.show_expected_end = True
         self.month_closed = False
         self._editing_cells = set()
 
-    def set_context(self, year, month, carry_over, day_hours, month_closed):
+    def set_context(
+        self,
+        year,
+        month,
+        carry_over,
+        day_hours,
+        month_closed,
+        show_expected_end=True,
+    ):
         self.year = year
         self.month = month
         self.carry_over = carry_over
         self.day_hours = day_hours
         self.month_closed = month_closed
+        self.show_expected_end = show_expected_end
 
     def set_month_closed(self, month_closed):
         self.month_closed = month_closed
@@ -329,6 +284,22 @@ class MonthTableModel(QAbstractTableModel):
             }
 
         value = getattr(entry, ENTRY_FIELDS[column]) or "00:00"
+        if (
+            column == 4
+            and value == "00:00"
+            and self.show_expected_end
+        ):
+            expected = expected_end_time(
+                entry.start,
+                entry.interruption,
+                self.day_hours,
+            )
+            if expected is not None:
+                return {
+                    "texts": [expected],
+                    "state": "expected",
+                    "outline": True,
+                }
         return {
             "texts": [value],
             "state": "success" if value != "00:00" else "empty",
@@ -365,8 +336,7 @@ class MonthTableModel(QAbstractTableModel):
                 )
                 return False
         elif column == 5:
-            parsed_interruption = parse_interruption_input(value)
-            if parsed_interruption is None:
+            if parse_interruption_input(value) is None:
                 QMessageBox.warning(
                     None,
                     "Invalid interruption",
@@ -377,44 +347,6 @@ class MonthTableModel(QAbstractTableModel):
                 return False
 
             value = coerce_interruption_input(value)
-            entry = self._entries[index.row()]
-            proposed_start = None
-            proposed_end = None
-            if (
-                parsed_interruption.earliest_start is not None
-                and parsed_interruption.earliest_start < entry.start
-            ):
-                proposed_start = parsed_interruption.earliest_start
-            if (
-                parsed_interruption.latest_end is not None
-                and parsed_interruption.latest_end > entry.end
-            ):
-                proposed_end = parsed_interruption.latest_end
-
-            if proposed_start is not None or proposed_end is not None:
-                dialog = InterruptionBoundaryDialog(
-                    current_start=entry.start,
-                    current_end=entry.end,
-                    proposed_start=proposed_start,
-                    proposed_end=proposed_end,
-                )
-                if dialog.exec() != QDialog.DialogCode.Accepted:
-                    return False
-
-                override_start, override_end = dialog.selected_overrides()
-                if proposed_start is not None and not override_start:
-                    return False
-                if proposed_end is not None and not override_end:
-                    return False
-
-                updates = {"interruption": value}
-                if override_start:
-                    updates["start"] = proposed_start
-                if override_end:
-                    updates["end"] = proposed_end
-                self._entries[index.row()] = replace(entry, **updates)
-                self.recalculate(autosave=True)
-                return True
 
         if column == 2 and value == "":
             value = "Normal day"

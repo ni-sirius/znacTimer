@@ -33,7 +33,9 @@ from znactime.ui.qt.player import (
 )
 from znactime.ui.qt.settings import (
     AppearanceDialog,
+    WorkScheduleDialog,
     load_startup_window_settings,
+    load_work_schedule_settings,
 )
 from znactime.ui.qt.table import TableWidget
 from znactime.ui.qt.theme import ThemeController
@@ -57,12 +59,17 @@ class TimeTrackerApp(QMainWindow):
         ) = load_startup_window_settings(
             self.theme_controller.settings
         )
+        (
+            self.day_hours,
+            self.show_expected_end,
+        ) = load_work_schedule_settings(self.theme_controller.settings)
         self.resize(initial_width, initial_height)
 
         self.menu = MenuBar(
             self,
             close_month_command=self.close_month,
             appearance_command=self.open_appearance_settings,
+            work_schedule_command=self.open_work_schedule_settings,
         )
         self.setMenuBar(self.menu)
 
@@ -138,6 +145,35 @@ class TimeTrackerApp(QMainWindow):
         dialog = AppearanceDialog(self, self.theme_controller)
         dialog.exec()
 
+    def open_work_schedule_settings(self):
+        dialog = WorkScheduleDialog(
+            self,
+            self.theme_controller.settings,
+        )
+        dialog.exec()
+        self._apply_work_schedule_settings()
+
+    def _apply_work_schedule_settings(self):
+        day_hours, show_expected_end = load_work_schedule_settings(
+            self.theme_controller.settings
+        )
+        if (
+            day_hours == self.day_hours
+            and show_expected_end == self.show_expected_end
+        ):
+            return
+        self.day_hours = day_hours
+        self.show_expected_end = show_expected_end
+        self.table.set_context(
+            year=self.header.year(),
+            month=self.header.month(),
+            carry_over=self.carry_over,
+            day_hours=self.day_hours,
+            month_closed=self.month_closed,
+            show_expected_end=self.show_expected_end,
+        )
+        self.table.recalculate(today=datetime.today().date(), autosave=False)
+
     def on_theme_changed(self, _mode):
         self.apply_shell_theme()
         self.menu.apply_theme()
@@ -198,8 +234,9 @@ class TimeTrackerApp(QMainWindow):
             year=year,
             month=month,
             carry_over=self.carry_over,
-            day_hours=DEFAULT_DAY_HOURS,
+            day_hours=self.day_hours,
             month_closed=self.month_closed,
+            show_expected_end=self.show_expected_end,
         )
         self.table.set_entries(csv_store.load_month(year, month))
         self.table.recalculate(today=datetime.today().date(), autosave=False)
@@ -326,7 +363,11 @@ class TimeTrackerApp(QMainWindow):
                         session_date.year,
                         session_date.month,
                     ),
-                    day_hours=DEFAULT_DAY_HOURS,
+                    day_hours=getattr(
+                        self,
+                        "day_hours",
+                        DEFAULT_DAY_HOURS,
+                    ),
                     today=now.date(),
                     month_closed=False,
                 )
@@ -563,8 +604,9 @@ class TimeTrackerApp(QMainWindow):
             year=self.header.year(),
             month=self.header.month(),
             carry_over=self.carry_over,
-            day_hours=DEFAULT_DAY_HOURS,
+            day_hours=self.day_hours,
             month_closed=True,
+            show_expected_end=self.show_expected_end,
         )
         self.table.recalculate(today=datetime.today().date(), autosave=False)
         self.table.set_month_closed(True)

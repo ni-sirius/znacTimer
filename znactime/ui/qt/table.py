@@ -575,7 +575,15 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 hovered=self._is_badge_hovered(index, "badge", position),
             )
             text_width = metrics.horizontalAdvance(text)
-            painter.setBrush(colors["fill"])
+            if badge.get("outline"):
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(colors.get("border", colors["text"]))
+                outline_pen = painter.pen()
+                outline_pen.setWidth(EDIT_BADGE_BORDER_WIDTH)
+                painter.setPen(outline_pen)
+            else:
+                painter.setBrush(colors["fill"])
+                painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(
                 rect,
                 BADGE_CORNER_RADIUS,
@@ -607,6 +615,19 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _badge_colors(self, state, hovered=False):
+        if state == "expected":
+            if _is_dark_theme():
+                background = "#1f2228"
+                expected = "#ff8796"
+            else:
+                background = "#ffffff"
+                expected = "#c23b4d"
+            return {
+                "fill": QColor(background),
+                "text": QColor(expected),
+                "border": QColor(expected),
+            }
+
         if hovered:
             accent = current_row_accent_hex(dark=_is_dark_theme())
             return {
@@ -1429,8 +1450,23 @@ class TableWidget(QWidget):
             return QSize(hint.width(), self._content_height)
         return hint
 
-    def set_context(self, year, month, carry_over, day_hours, month_closed):
-        self.model.set_context(year, month, carry_over, day_hours, month_closed)
+    def set_context(
+        self,
+        year,
+        month,
+        carry_over,
+        day_hours,
+        month_closed,
+        show_expected_end=True,
+    ):
+        self.model.set_context(
+            year,
+            month,
+            carry_over,
+            day_hours,
+            month_closed,
+            show_expected_end,
+        )
 
     def set_entries(self, entries):
         self.model.set_entries(entries)

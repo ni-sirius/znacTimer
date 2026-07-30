@@ -2,7 +2,13 @@ from znactime.ui.qt import QAction, QApplication, QMenuBar, QPalette
 
 
 class MenuBar(QMenuBar):
-    def __init__(self, parent, close_month_command, appearance_command):
+    def __init__(
+        self,
+        parent,
+        close_month_command,
+        appearance_command,
+        work_schedule_command,
+    ):
         super().__init__(parent)
         self.setObjectName("mainMenu")
         month_menu = self.addMenu("Month")
@@ -20,6 +26,9 @@ class MenuBar(QMenuBar):
         appearance_action = QAction("Appearance", self)
         appearance_action.triggered.connect(appearance_command)
         settings_menu.addAction(appearance_action)
+        work_schedule_action = QAction("Work schedule", self)
+        work_schedule_action.triggered.connect(work_schedule_command)
+        settings_menu.addAction(work_schedule_action)
         self.apply_theme()
 
     def apply_theme(self):

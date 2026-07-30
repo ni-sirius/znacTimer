@@ -171,6 +171,75 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(model.entries()[0].start, "00:00")
         self.assertEqual(model.entries()[0].end, "00:00")
 
+    def test_missing_end_shows_non_persisted_expected_badge(self):
+        model = MonthTableModel()
+        model.set_context(
+            2024,
+            6,
+            0.0,
+            8.0,
+            False,
+            show_expected_end=True,
+        )
+        model.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="08:00",
+                    end="00:00",
+                    interruption="12:00-12:30;15:00-15:15",
+                )
+            ]
+        )
+
+        badge = model.index(0, 4).data(BADGE_ROLE)
+
+        self.assertEqual(badge["texts"], ["16:45"])
+        self.assertEqual(badge["state"], "expected")
+        self.assertTrue(badge["outline"])
+        self.assertEqual(model.index(0, 4).data(), "00:00")
+        self.assertEqual(model.entries()[0].end, "00:00")
+
+    def test_expected_end_badge_can_be_disabled(self):
+        model = MonthTableModel()
+        model.set_context(
+            2024,
+            6,
+            0.0,
+            7.5,
+            False,
+            show_expected_end=False,
+        )
+        model.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="08:00",
+                    end="00:00",
+                    interruption="01:00",
+                )
+            ]
+        )
+
+        badge = model.index(0, 4).data(BADGE_ROLE)
+
+        self.assertEqual(badge["texts"], ["00:00"])
+        self.assertEqual(badge["state"], "empty")
+
+    def test_expected_badge_uses_red_outline_colors(self):
+        delegate = CurrentTimeDelegate()
+
+        with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
+            colors = delegate._badge_colors("expected")
+
+        self.assertEqual(colors["fill"].name(), "#ffffff")
+        self.assertEqual(colors["text"].name(), "#c23b4d")
+        self.assertEqual(colors["border"].name(), "#c23b4d")
+
     def test_empty_interruption_badge_shows_add_action(self):
         model = MonthTableModel()
         model.set_entries(
@@ -713,18 +782,8 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertNotEqual(dark_week_25, dark_week_26)
         self.assertGreater(dark_week_25.lightness(), dark_week_26.lightness())
 
-    @patch(
-        "znactime.ui.qt.model.InterruptionBoundaryDialog.selected_overrides",
-        return_value=(True, True),
-    )
-    @patch(
-        "znactime.ui.qt.model.InterruptionBoundaryDialog.exec",
-        return_value=QDialog.DialogCode.Accepted,
-    )
-    def test_periods_can_override_both_workday_boundaries(
+    def test_outside_periods_are_saved_without_changing_workday_boundaries(
         self,
-        _exec,
-        _selected_overrides,
     ):
         model = self.make_model()
 
@@ -736,37 +795,53 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         self.assertTrue(changed)
         entry = model.entries()[0]
-        self.assertEqual(entry.start, "07:30")
-        self.assertEqual(entry.end, "18:00")
+        self.assertEqual(entry.start, "08:00")
+        self.assertEqual(entry.end, "17:00")
         self.assertEqual(
             entry.interruption,
             "07:30-08:00;16:30-18:00",
         )
+        self.assertEqual(entry.row_color, "missing_times")
 
-    @patch(
-        "znactime.ui.qt.model.InterruptionBoundaryDialog.selected_overrides",
-        return_value=(False, False),
-    )
-    @patch(
-        "znactime.ui.qt.model.InterruptionBoundaryDialog.exec",
-        return_value=QDialog.DialogCode.Accepted,
-    )
-    def test_periods_outside_workday_are_rejected_without_override(
-        self,
-        _exec,
-        _selected_overrides,
-    ):
-        model = self.make_model()
+    def test_unfinished_day_expected_end_includes_outside_pause_interval(self):
+        model = MonthTableModel()
+        model.set_context(
+            2024,
+            6,
+            0.0,
+            8.0,
+            False,
+            show_expected_end=True,
+        )
+        model.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="08:00",
+                    end="00:00",
+                    interruption="00:00",
+                )
+            ]
+        )
 
         changed = model.setData(
             model.index(0, 5),
-            "07:30-08:00",
+            "17:00-18:00",
             Qt.ItemDataRole.EditRole,
         )
 
-        self.assertFalse(changed)
-        self.assertEqual(model.entries()[0].start, "08:00")
-        self.assertEqual(model.entries()[0].interruption, "01:00")
+        self.assertTrue(changed)
+        entry = model.entries()[0]
+        self.assertEqual(entry.start, "08:00")
+        self.assertEqual(entry.end, "00:00")
+        self.assertEqual(entry.interruption, "17:00-18:00")
+        self.assertEqual(entry.row_color, "missing_times")
+        self.assertEqual(
+            model.index(0, 4).data(BADGE_ROLE)["texts"],
+            ["17:00"],
+        )
 
 
 if __name__ == "__main__":

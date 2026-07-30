@@ -4,9 +4,11 @@ from znactime.core.time_utils import (
     append_interruption_period,
     coerce_interruption_input,
     coerce_time_input,
+    expected_end_time,
     finish_interruption_period,
     hhmm_to_hours,
     hours_to_hhmm,
+    interruption_has_outside_workday_period,
     interruption_hours,
     parse_interruption_input,
 )
@@ -83,6 +85,57 @@ class TimeUtilsTest(unittest.TestCase):
         self.assertEqual(parsed.normalized, "11:00-...;14:00-14:30")
         self.assertEqual(parsed.hours, 0.5)
         self.assertTrue(parsed.has_incomplete)
+
+    def test_expected_end_adds_workday_and_completed_interruptions(self):
+        self.assertEqual(
+            expected_end_time(
+                "08:15",
+                "12:00-12:30;15:00-15:15",
+                7.5,
+            ),
+            "16:30",
+        )
+        self.assertEqual(
+            expected_end_time("08:15", "00:45", 7.5),
+            "16:30",
+        )
+
+    def test_expected_end_requires_a_start_and_wraps_at_midnight(self):
+        self.assertIsNone(expected_end_time("00:00", "01:00", 8))
+        self.assertEqual(
+            expected_end_time("20:00", "01:00", 8),
+            "05:00",
+        )
+
+    def test_detects_pause_periods_outside_workday_boundaries(self):
+        self.assertFalse(
+            interruption_has_outside_workday_period(
+                "12:00-12:30;15:00-15:15",
+                "08:00",
+                "17:00",
+            )
+        )
+        self.assertTrue(
+            interruption_has_outside_workday_period(
+                "07:45-08:00;12:00-12:30",
+                "08:00",
+                "17:00",
+            )
+        )
+        self.assertTrue(
+            interruption_has_outside_workday_period(
+                "12:00-12:30;16:45-17:15",
+                "08:00",
+                "17:00",
+            )
+        )
+        self.assertFalse(
+            interruption_has_outside_workday_period(
+                "01:00",
+                "08:00",
+                "17:00",
+            )
+        )
 
     def test_append_interruption_period(self):
         self.assertEqual(

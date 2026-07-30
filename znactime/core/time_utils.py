@@ -138,6 +138,52 @@ def interruption_hours(value):
     return parsed.hours
 
 
+def expected_end_time(start, interruption, workday_hours):
+    """Return a display-only expected end time for a started workday."""
+    start = coerce_time_input(start)
+    parsed_interruption = parse_interruption_input(interruption)
+    if start in (None, "00:00") or parsed_interruption is None:
+        return None
+
+    start_minutes = _minutes_from_hhmm(start)
+    workday_minutes = round(float(workday_hours) * 60)
+    interruption_minutes = round(parsed_interruption.hours * 60)
+    if workday_minutes <= 0:
+        return None
+
+    expected_minutes = (
+        start_minutes + workday_minutes + interruption_minutes
+    ) % (24 * 60)
+    return f"{expected_minutes // 60:02d}:{expected_minutes % 60:02d}"
+
+
+def interruption_has_outside_workday_period(value, workday_start, workday_end):
+    """Return whether any explicit pause period exceeds workday boundaries."""
+    parsed = parse_interruption_input(value)
+    workday_start = coerce_time_input(workday_start)
+    workday_end = coerce_time_input(workday_end)
+    if (
+        parsed is None
+        or workday_start in (None, "00:00")
+        or workday_end in (None, "00:00")
+    ):
+        return False
+    if PERIOD_SEPARATOR not in parsed.normalized:
+        return False
+
+    for period in parsed.normalized.split(INTERRUPTION_SEPARATOR):
+        period_start, period_end = period.split(PERIOD_SEPARATOR, 1)
+        if period_start < workday_start:
+            return True
+        if period_end == "...":
+            if period_start >= workday_end:
+                return True
+            continue
+        if period_end <= period_start or period_end > workday_end:
+            return True
+    return False
+
+
 def append_interruption_period(value, start, end):
     period = f"{start}-{end}"
     existing = str(value).strip()
