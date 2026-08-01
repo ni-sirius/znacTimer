@@ -3,6 +3,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from PySide6 import __version__ as PYSIDE_VERSION
+
 from znactime.config import DEFAULT_DAY_HOURS, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
 from znactime.core.calculator import recalculate as recalculate_entries
@@ -19,6 +21,7 @@ from znactime.ui.qt import (
     QMainWindow,
     QMessageBox,
     QPalette,
+    QPixmap,
     QTimer,
     QVBoxLayout,
     QWidget,
@@ -44,6 +47,40 @@ from znactime.ui.qt.theme import ThemeController
 
 
 APP_ICON_PATH = Path(__file__).with_name("assets") / "app_icon.png"
+ABOUT_LICENSE = "MIT"
+ABOUT_WEBSITE = "https://znac.org"
+ABOUT_CONTACT = "znacompany@gmail.com"
+ABOUT_USE = "Track workdays, interruptions, and overtime."
+
+
+def create_about_dialog(parent=None):
+    dialog = QMessageBox(parent)
+    dialog.setWindowTitle("About znacTime")
+    dialog.setWindowIcon(QIcon(str(APP_ICON_PATH)))
+    dialog.setTextFormat(Qt.TextFormat.RichText)
+    dialog.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+    dialog.setText(
+        "<h2>znacTime</h2>"
+        f"<p><b>Version:</b> {VERSION}<br>"
+        f"<b>License:</b> {ABOUT_LICENSE}<br>"
+        f"<b>Built with:</b> PySide6 {PYSIDE_VERSION} — LGPL v3</p>"
+        f"<p>{ABOUT_USE}</p>"
+        f'<p><b>Author:</b> <a href="{ABOUT_WEBSITE}">znac.org</a><br>'
+        f'<b>Contact:</b> <a href="mailto:{ABOUT_CONTACT}">'
+        f"{ABOUT_CONTACT}</a></p>"
+    )
+    icon = QPixmap(str(APP_ICON_PATH))
+    if not icon.isNull():
+        dialog.setIconPixmap(
+            icon.scaled(
+                96,
+                96,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+    dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+    return dialog
 
 
 class TimeTrackerApp(QMainWindow):
@@ -76,6 +113,7 @@ class TimeTrackerApp(QMainWindow):
             close_month_command=self.close_month,
             appearance_command=self.open_appearance_settings,
             work_schedule_command=self.open_work_schedule_settings,
+            about_command=self.show_about,
         )
         self.setMenuBar(self.menu)
 
@@ -158,6 +196,9 @@ class TimeTrackerApp(QMainWindow):
         )
         dialog.exec()
         self._apply_work_schedule_settings()
+
+    def show_about(self):
+        create_about_dialog(self).exec()
 
     def _apply_work_schedule_settings(self):
         day_hours, show_expected_end = load_work_schedule_settings(

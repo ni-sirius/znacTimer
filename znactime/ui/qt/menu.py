@@ -8,6 +8,7 @@ class MenuBar(QMenuBar):
         close_month_command,
         appearance_command,
         work_schedule_command,
+        about_command,
     ):
         super().__init__(parent)
         self.setObjectName("mainMenu")
@@ -29,6 +30,11 @@ class MenuBar(QMenuBar):
         work_schedule_action = QAction("Work schedule", self)
         work_schedule_action.triggered.connect(work_schedule_command)
         settings_menu.addAction(work_schedule_action)
+
+        help_menu = self.addMenu("Help")
+        self.about_action = QAction("About znacTime", self)
+        self.about_action.triggered.connect(about_command)
+        help_menu.addAction(self.about_action)
         self.apply_theme()
 
     def apply_theme(self):
