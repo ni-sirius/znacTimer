@@ -350,6 +350,128 @@ this step is purely a binding swap.
 
 ---
 
+## Phase 6 — Delivery
+
+> **Prerequisite:** Phases 1–5 are complete and the Phase 4.7 parity checklist has been
+> signed off. Delivery must package the migrated PySide6 application without moving
+> business logic back into the UI or changing the existing CSV, `.flag`, or yearly-summary
+> formats.
+
+**Goal:** produce a repeatable Windows release that can be tested in a clean environment,
+upgraded without risking existing time data, and rolled back independently of user data.
+
+### 6.0 — Delivery contract
+
+- The production UI is the PySide6 backend launched by `python -m znactime`; `tracker.py`
+  remains a compatibility entry point.
+- The first delivery target is a Windows x64 portable bundle. Name the release artifact
+  `znacTime-<VERSION>-windows-x64.zip`.
+- The bundle contains the application executable, required Qt runtime/plugins, the SVG
+  assets under `ui/qt/assets/`, third-party license notices, and a short launch/upgrade
+  guide. It must never contain development or real user data.
+- `znactime.config.VERSION`, the Git tag, artifact name, and displayed application version
+  must match.
+- Keep the Tk source available until parity is signed off. The delivered entry point
+  exposes Qt only; remove `tksheet` from runtime dependencies only when retirement of the
+  Tk fallback is an explicit release decision.
+
+### 6.1 — Reproducible release inputs
+
+1. Separate and pin runtime dependencies (`PySide6`, `reportlab`, and `tksheet` while the
+   Tk fallback is retained) from development/build dependencies (`pytest`, `PyInstaller`).
+   Commit the resolved versions used for the release.
+2. Add a checked-in PyInstaller spec and a build script. The build must:
+   - start from a clean virtual environment;
+   - use `znactime.__main__:main` as the application entry point;
+   - include Qt platform/image plugins and `ui/qt/assets/*.svg`;
+   - fail when a required asset or dependency is missing; and
+   - write generated files only below `build/` and `dist/`.
+3. Run the same build from CI and from a documented local command. Do not hand-edit the
+   generated bundle after the build.
+4. Publish a SHA-256 checksum beside every release artifact.
+
+### 6.2 — Data location, compatibility, and upgrade safety
+
+- Preserve the current `data/<year>/` structure, CSV column order, file names, and
+  `closed_<month>.flag` behavior exactly.
+- Make the data root independent of the process working directory. For the portable
+  release, resolve `data/` beside the executable; keep an explicit path override for tests
+  and controlled migrations.
+- Before an upgrade rehearsal, copy the complete existing `data/` directory to a
+  timestamped backup. Never delete or rewrite the backup automatically.
+- Test the new build against a copy of production-like data containing:
+  - an open month;
+  - a closed month and its `.flag`;
+  - a year summary;
+  - a generated PDF; and
+  - a December-to-January carry-over.
+- Opening and saving an unchanged month must not reorder columns or alter unrelated rows.
+  Byte-compare representative CSV output with the pre-delivery version.
+- A future data-format change is a separate migration and blocks release until forward
+  migration, validation, backup, and rollback behavior are documented and tested.
+
+### 6.3 — Release verification
+
+Run verification in a clean environment, not only in the development checkout:
+
+1. Install the pinned development dependencies and run the full test suite headlessly
+   (`QT_QPA_PLATFORM=offscreen` where required).
+2. Run the complete Phase 4.7 feature-parity checklist on the packaged executable,
+   including autosave, month closing, carry-over, PDF creation, locking, and time-input
+   validation.
+3. Verify the PySide6-specific Phase 5.4 pass; the packaged application must not import or
+   require PyQt6.
+4. Smoke-test the unpacked bundle on a clean supported Windows x64 machine with no Python
+   installation:
+   - launch from Explorer and from a working directory different from the app directory;
+   - switch month and year;
+   - edit and autosave an entry;
+   - start, pause/resume, and stop a workday;
+   - restart and verify settings/session recovery;
+   - close a test month and open the generated PDF; and
+   - verify light, dark, and system themes at common display-scaling settings.
+5. Confirm that no test data, local settings, caches, credentials, or developer paths are
+   present in the artifact.
+
+### 6.4 — Rollout
+
+1. Create a release-candidate tag from a clean commit and build the candidate only from
+   that tag.
+2. Pilot the candidate with a copy of existing user data. Record the app version, Windows
+   version, test result, and any deviation from the parity checklist.
+3. After sign-off, promote the exact tested artifact; do not rebuild it for the final
+   release.
+4. Publish the artifact, checksum, dependency/license notices, release notes, known
+   limitations, backup instructions, and the path used for portable `data/`.
+5. Keep the previous supported artifact available for rollback. Automatic update behavior
+   is out of scope until its trust, signing, and rollback model are designed.
+
+### 6.5 — Rollback
+
+- Roll back the executable by replacing the application bundle with the previous release;
+  do not roll back or delete user data by default.
+- Because Phase 6 does not change the persisted format, the previous release must be able
+  to open data saved by the new release. Verify this during the upgrade rehearsal.
+- Restore the timestamped data backup only when validation shows that files were changed
+  incorrectly, and preserve the failed data set for diagnosis.
+- Document the exact last-known-good version and checksum in the release record.
+
+### 6.6 — Definition of done
+
+- [ ] Runtime and build dependencies are pinned and install successfully in a clean
+      environment.
+- [ ] The automated tests pass headlessly.
+- [ ] Every Phase 4.7 parity item passes against the packaged executable.
+- [ ] The PySide6-only binding check passes.
+- [ ] The portable bundle runs on clean Windows x64 without Python installed.
+- [ ] Existing open/closed month data, carry-over, yearly summary, and PDF export survive
+      the upgrade rehearsal unchanged.
+- [ ] Artifact contents, version, checksum, licenses, release notes, backup steps, and
+      rollback steps are verified.
+- [ ] The exact release candidate tested is the artifact published.
+
+---
+
 ## Responsibility Split for Multiple Devs
 
 | Layer | Owns | Can change without breaking |
