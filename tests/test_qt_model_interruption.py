@@ -240,6 +240,15 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(colors["text"].name(), "#c23b4d")
         self.assertEqual(colors["border"].name(), "#c23b4d")
 
+    def test_expected_badge_uses_accent_colors_when_hovered(self):
+        delegate = CurrentTimeDelegate()
+
+        with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
+            colors = delegate._badge_colors("expected", hovered=True)
+
+        self.assertEqual(colors["fill"].name(), "#6941c6")
+        self.assertEqual(colors["text"].name(), "#ffffff")
+
     def test_empty_interruption_badge_shows_add_action(self):
         model = MonthTableModel()
         model.set_entries(

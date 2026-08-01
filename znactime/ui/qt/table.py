@@ -570,12 +570,13 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
         painter.setPen(Qt.PenStyle.NoPen)
         for rect, position, text in _badge_rects(option.rect, font, badge):
+            hovered = self._is_badge_hovered(index, "badge", position)
             colors = self._badge_colors(
                 state,
-                hovered=self._is_badge_hovered(index, "badge", position),
+                hovered=hovered,
             )
             text_width = metrics.horizontalAdvance(text)
-            if badge.get("outline"):
+            if badge.get("outline") and not hovered:
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.setPen(colors.get("border", colors["text"]))
                 outline_pen = painter.pen()
@@ -615,6 +616,13 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _badge_colors(self, state, hovered=False):
+        if hovered:
+            accent = current_row_accent_hex(dark=_is_dark_theme())
+            return {
+                "fill": QColor(accent),
+                "text": QColor("#202124" if _is_dark_theme() else "#ffffff"),
+            }
+
         if state == "expected":
             if _is_dark_theme():
                 background = "#1f2228"
@@ -626,13 +634,6 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 "fill": QColor(background),
                 "text": QColor(expected),
                 "border": QColor(expected),
-            }
-
-        if hovered:
-            accent = current_row_accent_hex(dark=_is_dark_theme())
-            return {
-                "fill": QColor(accent),
-                "text": QColor("#202124" if _is_dark_theme() else "#ffffff"),
             }
 
         if _is_dark_theme():
