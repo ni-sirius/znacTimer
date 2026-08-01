@@ -1,6 +1,7 @@
+from html import escape
 from pathlib import Path
 
-from znactime.ui.constants import MONTHS
+from znactime.ui.constants import MONTHS, overtime_text_color_hex
 from znactime.ui.qt import (
     QApplication,
     QComboBox,
@@ -32,8 +33,11 @@ class HeaderWidget(QWidget):
 
         self.carry_over_label = QLabel("Carry over: 00:00", self)
         self.carry_over_label.setObjectName("summaryBadge")
-        self.overtime_label = QLabel("Overtime: 00:00", self)
+        self._overtime_text = "Overtime: 00:00"
+        self._month_closed = False
+        self.overtime_label = QLabel(self._overtime_text, self)
         self.overtime_label.setObjectName("summaryBadge")
+        self.overtime_label.setTextFormat(Qt.TextFormat.RichText)
         self.calendar_week_label = QLabel(
             "Calendar week 00, This month 00-00, This year 00",
             self,
@@ -197,6 +201,7 @@ class HeaderWidget(QWidget):
             "font-weight: 600;"
             "}"
         )
+        self._render_overtime_text(dark)
 
     def set_year(self, year):
         self.year_box.setValue(year)
@@ -226,7 +231,23 @@ class HeaderWidget(QWidget):
     def set_carry_over_text(self, text):
         self.carry_over_label.setText(text)
 
-    def set_overtime_text(self, text):
+    def set_overtime_text(self, text, closed=False):
+        self._overtime_text = str(text)
+        self._month_closed = bool(closed)
+        dark = (
+            QApplication.palette().color(QPalette.ColorRole.Window).lightness()
+            < 128
+        )
+        self._render_overtime_text(dark)
+
+    def _render_overtime_text(self, dark):
+        text = escape(self._overtime_text)
+        if self._month_closed:
+            closed_color = overtime_text_color_hex("-00:01", dark=dark)
+            text += (
+                " &nbsp;·&nbsp; "
+                f'<span style="color: {closed_color};">Closed</span>'
+            )
         self.overtime_label.setText(text)
 
     def set_calendar_week_text(self, text):

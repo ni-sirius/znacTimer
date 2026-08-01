@@ -13,13 +13,17 @@ from znactime.ui.qt.model import (
     CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
     MonthTableModel,
+    ROW_TEXTURE_ROLE,
 )
 from znactime.ui.qt.table import (
     CurrentTimeDelegate,
     IntervalEditor,
     MonthTableView,
+    ROW_STRIPE_SPACING,
+    ROW_STRIPE_WIDTH,
     _badge_rects,
     _interruption_badge_rows,
+    _row_texture_color,
 )
 
 
@@ -112,6 +116,48 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(view.columnWidth(0), view.columnWidth(6))
         self.assertEqual(view.columnWidth(0), view.columnWidth(7))
         self.assertEqual(view.columnWidth(2), view.columnWidth(0) * 2)
+
+    def test_row_texture_uses_gray_and_red_stripes(self):
+        with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
+            closed = _row_texture_color("closed", current=False)
+            missing = _row_texture_color("missing_times", current=False)
+
+        self.assertEqual(
+            ROW_STRIPE_SPACING,
+            round(ROW_STRIPE_WIDTH * 2 * 1.41421356237),
+        )
+        self.assertEqual(closed.saturation(), 0)
+        self.assertEqual(closed.alpha(), missing.alpha() // 2)
+        self.assertGreater(missing.saturation(), 0)
+        self.assertTrue(missing.hue() >= 330 or missing.hue() <= 15)
+
+    def test_row_texture_only_marks_empty_future_days_in_open_month(self):
+        model = MonthTableModel()
+        model.set_entries(
+            [
+                DayEntry("", "17.06.2024", "", "00:00", "00:00", "00:00"),
+                DayEntry("", "18.06.2024", "", "00:00", "00:00", "00:00"),
+                DayEntry("", "19.06.2024", "", "08:00", "17:00", "00:00"),
+                DayEntry("", "20.06.2024", "", "00:00", "00:00", "00:00"),
+                DayEntry("", "22.06.2024", "Weekend", "00:00", "00:00", "00:00",
+                         row_color="weekend"),
+                DayEntry("", "24.06.2024", "Vacation", "00:00", "00:00", "00:00",
+                         row_color="special_day"),
+            ]
+        )
+        model.recalculate(today=date(2024, 6, 18), autosave=False)
+
+        self.assertEqual(model.index(0, 0).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(1, 0).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(2, 0).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(3, 0).data(ROW_TEXTURE_ROLE), "missing_times")
+        self.assertEqual(model.index(4, 0).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(5, 0).data(ROW_TEXTURE_ROLE), "")
+
+        model.set_month_closed(True)
+
+        for row in range(model.rowCount()):
+            self.assertEqual(model.index(row, 0).data(ROW_TEXTURE_ROLE), "closed")
 
     def test_periods_inside_workday_are_saved_without_override_dialog(self):
         model = self.make_model()
@@ -288,6 +334,84 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(badge["items"][0]["target"]["action"], "edit")
         self.assertEqual(badge["items"][2]["target"]["action"], "add")
         self.assertEqual(badge["total_pause_time"], "01:00")
+
+    def test_closed_month_uses_plain_colored_text_without_add_action(self):
+        model = MonthTableModel()
+        model.set_context(2024, 6, 0.0, 8.0, True)
+        model.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Normal day",
+                    start="08:00",
+                    end="00:00",
+                    interruption="12:30-13:00",
+                    row_color="valid_day",
+                ),
+                DayEntry(
+                    cw="",
+                    date="18.06.2024",
+                    special="Normal day",
+                    start="00:00",
+                    end="00:00",
+                    interruption="00:00",
+                    row_color="missing_times",
+                ),
+            ]
+        )
+
+        day = model.index(0, 2).data(BADGE_ROLE)
+        start = model.index(0, 3).data(BADGE_ROLE)
+        end = model.index(0, 4).data(BADGE_ROLE)
+        interruption = model.index(0, 5).data(BADGE_ROLE)
+        empty_interruption = model.index(1, 5).data(BADGE_ROLE)
+
+        self.assertTrue(day["plain"])
+        self.assertEqual(day["state"], "valid_day")
+        self.assertEqual(start["state"], "success")
+        self.assertEqual(end["state"], "empty")
+        self.assertEqual(end["texts"], ["00:00"])
+        self.assertNotEqual(end["state"], "expected")
+        self.assertEqual(interruption["state"], "info")
+        self.assertEqual(interruption["texts"], ["12:30-13:00"])
+        self.assertEqual(empty_interruption["texts"], ["00:00"])
+        for badge in (day, start, end, interruption, empty_interruption):
+            self.assertTrue(badge["plain"])
+        self.assertNotIn(
+            "+",
+            [item["text"] for item in interruption["items"]],
+        )
+        self.assertNotIn(
+            "+",
+            [item["text"] for item in empty_interruption["items"]],
+        )
+
+        delegate = CurrentTimeDelegate()
+        index = model.index(0, 3)
+        cell_rect = QRectF(0, 0, 120, 40)
+        self.assertIsNone(
+            delegate.badge_hover_at(
+                index,
+                cell_rect,
+                cell_rect.center(),
+                QApplication.font(),
+            )
+        )
+
+        with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
+            self.assertEqual(
+                delegate._badge_colors(start["state"])["text"].name(),
+                "#146c43",
+            )
+            self.assertEqual(
+                delegate._badge_colors(end["state"])["text"].name(),
+                "#68717d",
+            )
+            self.assertEqual(
+                delegate._badge_colors(interruption["state"])["text"].name(),
+                "#225ea8",
+            )
 
     def test_interruption_badge_tooltip_shows_total_pause_time(self):
         model = self.make_model()

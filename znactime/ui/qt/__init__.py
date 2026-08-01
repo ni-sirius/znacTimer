@@ -54,6 +54,7 @@ _QT_NAMES = {
     "QPalette",
     "QPainterPath",
     "QPixmap",
+    "QPen",
     "QRegion",
 }
 
@@ -86,6 +87,7 @@ try:
         QPainterPath,
         QPalette,
         QPixmap,
+        QPen,
         QRegion,
     )
     from PySide6.QtWidgets import (

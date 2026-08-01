@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 
 from znactime.config import DEFAULT_DAY_HOURS
 from znactime.core.calculator import recalculate as recalculate_entries
@@ -45,6 +45,7 @@ CENTERED_COLUMNS = {0, 1, 3, 4, 5, 6, 7}
 BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
 CURRENT_ROW_ROLE = Qt.ItemDataRole.UserRole + 2
 CELL_EDITING_ROLE = Qt.ItemDataRole.UserRole + 3
+ROW_TEXTURE_ROLE = Qt.ItemDataRole.UserRole + 4
 BADGE_COLUMNS = {2, 3, 4, 5}
 
 
@@ -68,6 +69,7 @@ class MonthTableModel(QAbstractTableModel):
         self.day_hours = DEFAULT_DAY_HOURS
         self.show_expected_end = True
         self.month_closed = False
+        self._today = date.today()
         self._editing_cells = set()
 
     def set_context(
@@ -88,6 +90,13 @@ class MonthTableModel(QAbstractTableModel):
 
     def set_month_closed(self, month_closed):
         self.month_closed = month_closed
+        self._emit_all_rows_changed(
+            [
+                Qt.ItemDataRole.ForegroundRole,
+                BADGE_ROLE,
+                ROW_TEXTURE_ROLE,
+            ]
+        )
         self.layoutChanged.emit()
 
     def set_entries(self, entries):
@@ -106,6 +115,7 @@ class MonthTableModel(QAbstractTableModel):
             [
                 Qt.ItemDataRole.ForegroundRole,
                 CURRENT_ROW_ROLE,
+                ROW_TEXTURE_ROLE,
             ],
         )
 
@@ -224,7 +234,31 @@ class MonthTableModel(QAbstractTableModel):
         if role == CURRENT_ROW_ROLE:
             return is_current_row
 
+        if role == ROW_TEXTURE_ROLE:
+            return self._row_texture_state(entry)
+
         return None
+
+    def _emit_all_rows_changed(self, roles=None):
+        if not self._entries:
+            return
+
+        top_left = self.index(0, 0)
+        bottom_right = self.index(len(self._entries) - 1, len(COLUMNS) - 1)
+        self.dataChanged.emit(top_left, bottom_right, roles or [])
+
+    def _row_texture_state(self, entry):
+        if self.month_closed:
+            return "closed"
+
+        try:
+            entry_date = datetime.strptime(entry.date, "%d.%m.%Y").date()
+        except (TypeError, ValueError):
+            return ""
+
+        if entry.row_color == "missing_times" and entry_date > self._today:
+            return "missing_times"
+        return ""
 
     def _badge_data(self, entry, column):
         if column == 2:
@@ -232,6 +266,7 @@ class MonthTableModel(QAbstractTableModel):
                 "texts": [entry.special or "Normal day"],
                 "state": entry.row_color or "empty",
                 "full_width": True,
+                "plain": self.month_closed,
             }
 
         if column == 5:
@@ -241,6 +276,28 @@ class MonthTableModel(QAbstractTableModel):
                 hours_to_hhmm(parsed.hours) if parsed is not None else "00:00"
             )
             has_periods = "-" in value
+            if self.month_closed:
+                texts = (
+                    [part.strip() for part in value.split(";") if part.strip()]
+                    if has_periods
+                    else [value]
+                )
+                return {
+                    "kind": "interruption",
+                    "texts": texts,
+                    "items": [
+                        {
+                            "text": text,
+                            "state": "info",
+                            "complete": not text.endswith("-..."),
+                        }
+                        for text in texts
+                    ],
+                    "state": "info",
+                    "total_pause_time": total_pause_time,
+                    "plain": True,
+                }
+
             texts = []
             items = []
             if has_periods:
@@ -287,6 +344,7 @@ class MonthTableModel(QAbstractTableModel):
         if (
             column == 4
             and value == "00:00"
+            and not self.month_closed
             and self.show_expected_end
         ):
             expected = expected_end_time(
@@ -303,6 +361,7 @@ class MonthTableModel(QAbstractTableModel):
         return {
             "texts": [value],
             "state": "success" if value != "00:00" else "empty",
+            "plain": self.month_closed,
         }
 
     def flags(self, index):
@@ -361,6 +420,7 @@ class MonthTableModel(QAbstractTableModel):
     def recalculate(self, today=None, autosave=True):
         if today is None:
             today = date.today()
+        self._today = today
 
         self._entries = recalculate_entries(
             self._entries,

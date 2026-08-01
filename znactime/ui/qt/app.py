@@ -195,7 +195,10 @@ class TimeTrackerApp(QMainWindow):
 
     def set_current_overtime(self, overtime):
         self.current_overtime = overtime
-        self.header.set_overtime_text(f"Overtime: {hours_to_hhmm(overtime)}")
+        self.header.set_overtime_text(
+            f"Overtime: {hours_to_hhmm(overtime)}",
+            closed=self.month_closed,
+        )
 
     def _check_today_rollover(self, now=None):
         if now is None:

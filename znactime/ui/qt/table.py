@@ -22,6 +22,7 @@ from znactime.ui.qt import (
     QPalette,
     QPainter,
     QPixmap,
+    QPen,
     QPropertyAnimation,
     QPushButton,
     QEasingCurve,
@@ -45,6 +46,7 @@ from znactime.ui.qt.model import (
     CURRENT_ROW_ROLE,
     EDITABLE_COLUMNS,
     MonthTableModel,
+    ROW_TEXTURE_ROLE,
 )
 
 
@@ -60,6 +62,8 @@ BADGE_GAP = 4
 BADGE_CORNER_RADIUS = 6
 EDIT_BADGE_BORDER_WIDTH = 2
 INTERRUPTION_COLUMN = 5
+ROW_STRIPE_WIDTH = 12
+ROW_STRIPE_SPACING = round(ROW_STRIPE_WIDTH * 2 * 1.41421356237)
 
 
 def _is_dark_theme():
@@ -103,6 +107,30 @@ def _action_icon(action, color):
         painter.drawRoundedRect(QRectF(7, 3, 2, 10), 1, 1)
     painter.end()
     return QIcon(pixmap)
+
+
+def _row_texture_color(state, current=False):
+    if state == "closed":
+        color = QColor("#929292" if _is_dark_theme() else "#c9c9c9")
+    else:
+        color = QColor(row_color_hex(state, dark=_is_dark_theme()))
+    if not color.isValid():
+        return QColor()
+
+    if _is_dark_theme():
+        color = color.lighter(145)
+        alpha = 90 if current else 64
+    else:
+        color = color.darker(135)
+        alpha = 82 if current else 58
+    if state == "closed":
+        alpha //= 2
+    color.setAlpha(alpha)
+    return color
+
+
+def _row_texture_base_color():
+    return QColor("#1f2228" if _is_dark_theme() else "#ffffff")
 
 
 def _interruption_badge_rows(width, font, badge):
@@ -508,15 +536,14 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
     def _paint_cell_background(self, painter, option, index):
         if _is_dark_theme():
-            background = QColor("#1f2228")
             divider_color = QColor("#343944")
         else:
-            background = QColor("#ffffff")
             divider_color = QColor("#d8dce3")
 
         pixel_ratio = painter.device().devicePixelRatioF()
         separator_height = 1.0 / max(1.0, pixel_ratio)
         is_current_row = bool(index.data(CURRENT_ROW_ROLE))
+        row_texture_state = index.data(ROW_TEXTURE_ROLE)
         if is_current_row:
             divider_color = QColor(
                 current_row_accent_hex(dark=_is_dark_theme())
@@ -528,15 +555,20 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             cell_rect.width() + 2.0,
             cell_rect.height(),
         )
-        painter.fillRect(
-            QRectF(
-                expanded_rect.x(),
-                expanded_rect.y(),
-                expanded_rect.width(),
-                max(0.0, expanded_rect.height() - separator_height),
-            ),
-            background,
+        body_rect = QRectF(
+            expanded_rect.x(),
+            expanded_rect.y(),
+            expanded_rect.width(),
+            max(0.0, expanded_rect.height() - separator_height),
         )
+        painter.fillRect(body_rect, _row_texture_base_color())
+        if row_texture_state:
+            self._paint_row_texture(
+                painter,
+                body_rect,
+                row_texture_state,
+                is_current_row,
+            )
         painter.fillRect(
             QRectF(
                 expanded_rect.x(),
@@ -557,6 +589,49 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 divider_color,
             )
 
+    def _paint_row_texture(self, painter, rect, state, is_current_row):
+        stripe_color = _row_texture_color(state, current=is_current_row)
+        if not stripe_color.isValid():
+            return
+
+        painter.save()
+        painter.setClipRect(rect)
+        stripe_pen = QPen(
+            stripe_color,
+            ROW_STRIPE_WIDTH,
+        )
+        stripe_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(stripe_pen)
+
+        height = int(rect.height())
+        if height <= 0:
+            painter.restore()
+            return
+
+        left = int(rect.left())
+        right = int(rect.right())
+        top = int(rect.top())
+        bottom = int(rect.bottom())
+        width = int(rect.width())
+        line_extension = max(width, height) + ROW_STRIPE_SPACING
+        diagonal_span = height + line_extension
+        start = left - diagonal_span - (
+            (left - diagonal_span) % ROW_STRIPE_SPACING
+        )
+        for x in range(
+            start,
+            right + diagonal_span + ROW_STRIPE_SPACING,
+            ROW_STRIPE_SPACING,
+        ):
+            painter.drawLine(
+                x - line_extension,
+                bottom + line_extension,
+                x + height + line_extension,
+                top - line_extension,
+            )
+
+        painter.restore()
+
     def _paint_badges(self, painter, option, index, badge):
         if not badge.get("texts"):
             badge = {**badge, "texts": [option.text]}
@@ -567,29 +642,34 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         font.setBold(True)
         painter.setFont(font)
         metrics = painter.fontMetrics()
+        plain = badge.get("plain", False)
 
         painter.setPen(Qt.PenStyle.NoPen)
         for rect, position, text in _badge_rects(option.rect, font, badge):
-            hovered = self._is_badge_hovered(index, "badge", position)
+            hovered = (
+                not plain
+                and self._is_badge_hovered(index, "badge", position)
+            )
             colors = self._badge_colors(
                 state,
                 hovered=hovered,
             )
             text_width = metrics.horizontalAdvance(text)
-            if badge.get("outline") and not hovered:
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(colors.get("border", colors["text"]))
-                outline_pen = painter.pen()
-                outline_pen.setWidth(EDIT_BADGE_BORDER_WIDTH)
-                painter.setPen(outline_pen)
-            else:
-                painter.setBrush(colors["fill"])
-                painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(
-                rect,
-                BADGE_CORNER_RADIUS,
-                BADGE_CORNER_RADIUS,
-            )
+            if not plain:
+                if badge.get("outline") and not hovered:
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(colors.get("border", colors["text"]))
+                    outline_pen = painter.pen()
+                    outline_pen.setWidth(EDIT_BADGE_BORDER_WIDTH)
+                    painter.setPen(outline_pen)
+                else:
+                    painter.setBrush(colors["fill"])
+                    painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(
+                    rect,
+                    BADGE_CORNER_RADIUS,
+                    BADGE_CORNER_RADIUS,
+                )
 
             painter.setPen(colors["text"])
             text_rect = rect.adjusted(
@@ -680,6 +760,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         font = option.font
         font.setBold(True)
         painter.setFont(font)
+        plain = badge.get("plain", False)
 
         for position, (rect, item) in enumerate(_interruption_badge_rects(
             option.rect,
@@ -688,15 +769,19 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         )):
             colors = self._badge_colors(
                 item.get("state", "empty"),
-                hovered=self._is_badge_hovered(index, "interruption", position),
+                hovered=(
+                    not plain
+                    and self._is_badge_hovered(index, "interruption", position)
+                ),
             )
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(colors["fill"])
-            painter.drawRoundedRect(
-                rect,
-                BADGE_CORNER_RADIUS,
-                BADGE_CORNER_RADIUS,
-            )
+            if not plain:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(colors["fill"])
+                painter.drawRoundedRect(
+                    rect,
+                    BADGE_CORNER_RADIUS,
+                    BADGE_CORNER_RADIUS,
+                )
             painter.setPen(colors["text"])
             text_rect = rect.adjusted(
                 BADGE_HORIZONTAL_PADDING,
@@ -725,7 +810,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
     def badge_hover_at(self, index, cell_rect, position, font):
         badge = index.data(BADGE_ROLE) or {}
-        if not badge:
+        if not badge or badge.get("plain"):
             return None
 
         if badge.get("kind") == "interruption":
