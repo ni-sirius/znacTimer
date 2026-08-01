@@ -1,6 +1,7 @@
 import os
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 
 from znactime.config import DEFAULT_DAY_HOURS, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
@@ -14,6 +15,7 @@ from znactime.core.time_utils import (
 from znactime.storage import csv_store, paths
 from znactime.ui.qt import (
     QApplication,
+    QIcon,
     QMainWindow,
     QMessageBox,
     QPalette,
@@ -41,10 +43,14 @@ from znactime.ui.qt.table import TableWidget
 from znactime.ui.qt.theme import ThemeController
 
 
+APP_ICON_PATH = Path(__file__).with_name("assets") / "app_icon.png"
+
+
 class TimeTrackerApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"znacTime v{VERSION}")
+        self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
         self.month_closed = False
         self.carry_over = 0.0
