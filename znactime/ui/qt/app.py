@@ -13,6 +13,7 @@ from znactime.core.time_utils import (
     append_interruption_period,
     finish_interruption_period,
     hours_to_hhmm,
+    parse_interruption_input,
 )
 from znactime.storage import csv_store, paths
 from znactime.ui.qt import (
@@ -486,6 +487,24 @@ class TimeTrackerApp(QMainWindow):
                 self._clear_active_session()
                 self._set_active_session(entry.date, entry.start)
                 pause_start = None
+
+            if pause_start:
+                interruption = parse_interruption_input(entry.interruption)
+                open_pause_start = None
+                if interruption is not None and interruption.has_incomplete:
+                    open_period = next(
+                        period
+                        for period in interruption.normalized.split(";")
+                        if period.endswith("-...")
+                    )
+                    open_pause_start = open_period.removesuffix("-...")
+
+                if open_pause_start is None:
+                    self._clear_active_pause()
+                    pause_start = None
+                elif open_pause_start != pause_start:
+                    self._set_active_pause(entry.date, open_pause_start)
+                    pause_start = open_pause_start
 
             if pause_start:
                 self.workday_bar.set_state(

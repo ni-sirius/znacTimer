@@ -415,7 +415,9 @@ class WorkdayBarTest(unittest.TestCase):
             _active_pause=Mock(return_value=pause_start),
             _active_session=Mock(return_value=session_start),
             _clear_active_session=Mock(),
+            _clear_active_pause=Mock(),
             _set_active_session=Mock(),
+            _set_active_pause=Mock(),
             workday_bar=SimpleNamespace(set_state=Mock()),
         )
         TimeTrackerApp.refresh_workday_bar(
@@ -489,7 +491,7 @@ class WorkdayBarTest(unittest.TestCase):
             special="Normal day",
             start="08:00",
             end="00:00",
-            interruption="00:00",
+            interruption="12:30-...",
         )
 
         fake_app = self._refresh_fake_app(
@@ -499,10 +501,59 @@ class WorkdayBarTest(unittest.TestCase):
         )
 
         fake_app._clear_active_session.assert_not_called()
+        fake_app._clear_active_pause.assert_not_called()
         fake_app.workday_bar.set_state.assert_called_once_with(
             "paused",
             start="08:00",
             pause_start="12:30",
+        )
+
+    def test_completing_active_pause_in_table_resumes_player(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="12:30-13:00",
+        )
+
+        fake_app = self._refresh_fake_app(
+            entry,
+            session_start="08:00",
+            pause_start="12:30",
+        )
+
+        fake_app._clear_active_pause.assert_called_once_with()
+        fake_app.workday_bar.set_state.assert_called_once_with(
+            "working",
+            start="08:00",
+        )
+
+    def test_editing_active_pause_start_in_table_updates_player(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="00:00",
+            interruption="12:45-...",
+        )
+
+        fake_app = self._refresh_fake_app(
+            entry,
+            session_start="08:00",
+            pause_start="12:30",
+        )
+
+        fake_app._set_active_pause.assert_called_once_with(
+            "17.06.2024",
+            "12:45",
+        )
+        fake_app.workday_bar.set_state.assert_called_once_with(
+            "paused",
+            start="08:00",
+            pause_start="12:45",
         )
 
     def test_clearing_table_start_returns_player_to_idle_even_with_end(self):
