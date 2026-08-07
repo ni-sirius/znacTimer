@@ -1,1 +1,0 @@
-"""Tkinter backend for znacTime."""

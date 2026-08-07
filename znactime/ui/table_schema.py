@@ -1,4 +1,4 @@
-"""Shared table-column contract for all UI backends."""
+"""Table-column contract shared by the Qt model and view."""
 
 from enum import IntEnum
 
@@ -64,5 +64,3 @@ BADGE_COLUMNS = frozenset(
         Column.INTERRUPTION,
     }
 )
-READ_ONLY_COLUMNS = frozenset(set(Column) - set(EDITABLE_COLUMNS))
-

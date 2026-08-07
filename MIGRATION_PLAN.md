@@ -1,5 +1,9 @@
 # znacTime — Modular Refactor & Qt Migration Plan
 
+> Historical migration record. The PySide6 migration is complete, and the legacy
+> Tkinter/tksheet backend was retired on 2026-08-07. References to Tk below describe
+> the migration source and are not part of the current application architecture.
+
 ## Target Structure
 
 ```
@@ -22,15 +26,10 @@ znactime/                        # rename the package
 │
 ├── ui/                          # all GUI code, isolated here
 │   ├── __init__.py
-│   ├── constants.py             # COLORS, COLUMNS (shared across backends)
-│   ├── tk/                      # current implementation
-│   │   ├── __init__.py
-│   │   ├── app.py               # TimeTrackerApp(tk.Tk) — thin shell
-│   │   ├── header.py            # HeaderFrame widget
-│   │   ├── table.py             # SheetFrame widget + cell validation
-│   │   └── menu.py              # MenuBar
-│   └── qt/                      # future migration target (Phase 4)
-│       ├── __init__.py          # funnels the PyQt6/PySide6 binding (single swap point)
+│   ├── constants.py             # shared visual constants
+│   ├── table_schema.py          # table columns and field mapping
+│   └── qt/                      # production PySide6 interface
+│       ├── __init__.py          # PySide6 import boundary
 │       ├── app.py               # TimeTrackerApp(QMainWindow)
 │       ├── header.py            # header widget
 │       ├── model.py             # MonthTableModel(QAbstractTableModel) over list[DayEntry]
@@ -47,9 +46,8 @@ znactime/                        # rename the package
 
 ## The Key Architectural Rule
 
-`core/` and `storage/` must never import from `tkinter`, `PyQt`, or any GUI library.
-The UI layer calls into core/storage and maps results onto widgets.
-When migrating to Qt, only `ui/tk/` is replaced with `ui/qt/` — everything else stays.
+`core/` and `storage/` must never import from a GUI library.
+The PySide6 UI layer calls into core/storage and maps results onto widgets.
 
 ---
 
@@ -266,7 +264,7 @@ if __name__ == "__main__":
     sys.exit(app.exec())
 ```
 
-### 4.7 — Feature-parity checklist (verify before deleting `ui/tk/`)
+### 4.7 — Historical feature-parity checklist
 
 - [ ] Year/month switch reloads data and recomputes carry-over.
 - [ ] Weekend rows auto-mark "Weekend" and color correctly; special days, missing-times,
@@ -280,7 +278,7 @@ if __name__ == "__main__":
 - [ ] Autosave writes the tmp CSV on every edit; byte-compare a saved file against one
       produced by the Tk version for the same input to confirm format parity.
 
-Keep `ui/tk/` until every box is checked; only then remove it (or keep both behind a flag).
+The legacy backend has now been removed following the explicit retirement decision.
 
 ---
 
@@ -371,14 +369,13 @@ upgraded without risking existing time data, and rolled back independently of us
   guide. It must never contain development or real user data.
 - `znactime.config.VERSION`, the Git tag, artifact name, and displayed application version
   must match.
-- Keep the Tk source available until parity is signed off. The delivered entry point
-  exposes Qt only; remove `tksheet` from runtime dependencies only when retirement of the
-  Tk fallback is an explicit release decision.
+- The retired Tk source and `tksheet` dependency are not included. The delivered entry
+  point exposes PySide6 only.
 
 ### 6.1 — Reproducible release inputs
 
-1. Separate and pin runtime dependencies (`PySide6`, `reportlab`, and `tksheet` while the
-   Tk fallback is retained) from development/build dependencies (`pytest`, `PyInstaller`).
+1. Separate and pin runtime dependencies (`PySide6` and `reportlab`) from
+   development/build dependencies (`pytest`, `PyInstaller`).
    Commit the resolved versions used for the release.
 2. Add a checked-in PyInstaller spec and a build script. The build must:
    - start from a clean virtual environment;
@@ -478,7 +475,6 @@ Run verification in a clean environment, not only in the development checkout:
 |---|---|---|
 | `core/` | domain logic | storage, UI |
 | `storage/` | CSV, PDF, paths | core, UI |
-| `ui/tk/` | Tkinter widgets | core, storage |
 | `ui/qt/` | Qt widgets | core, storage |
 | `tests/` | all of core + storage | UI (headless) |
 

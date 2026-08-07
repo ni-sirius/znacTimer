@@ -1,7 +1,6 @@
 import calendar
 
 from znactime.core.constants import DayStatus, ZERO_DURATION
-from znactime.ui.table_schema import COLUMNS
 
 MONTHS = list(calendar.month_name)[1:]
 
