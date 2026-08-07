@@ -5,15 +5,24 @@ from pathlib import Path
 
 from PySide6 import __version__ as PYSIDE_VERSION
 
-from znactime.config import DEFAULT_DAY_HOURS, VERSION
+from znactime.config import APP_NAME, DEFAULT_DAY_HOURS, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
 from znactime.core.calculator import recalculate as recalculate_entries
+from znactime.core.constants import (
+    DATE_FORMAT,
+    END_OF_DAY,
+    OPEN_END_MARKER,
+    PERIOD_SEPARATOR,
+    TIME_FORMAT,
+    UNSET_TIME,
+    ZERO_DURATION,
+)
 from znactime.core.models import MonthStats
 from znactime.core.time_utils import (
     append_interruption_period,
     finish_interruption_period,
     hours_to_hhmm,
-    parse_interruption_input,
+    open_interruption_start,
 )
 from znactime.storage import csv_store, paths
 from znactime.ui.qt import (
@@ -31,11 +40,14 @@ from znactime.ui.qt import (
 from znactime.ui.qt.header import HeaderWidget
 from znactime.ui.qt.menu import MenuBar
 from znactime.ui.qt.player import (
+    WorkdayBar,
+    WorkdayState,
+)
+from znactime.ui.qt.workday_session import (
     PAUSE_DATE_KEY,
     PAUSE_START_KEY,
     SESSION_DATE_KEY,
     SESSION_START_KEY,
-    WorkdayBar,
 )
 from znactime.ui.qt.settings import (
     AppearanceDialog,
@@ -56,12 +68,12 @@ ABOUT_USE = "Track workdays, interruptions, and overtime."
 
 def create_about_dialog(parent=None):
     dialog = QMessageBox(parent)
-    dialog.setWindowTitle("About znacTime")
+    dialog.setWindowTitle(f"About {APP_NAME}")
     dialog.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     dialog.setTextFormat(Qt.TextFormat.RichText)
     dialog.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
     dialog.setText(
-        "<h2>znacTime</h2>"
+        f"<h2>{APP_NAME}</h2>"
         f"<p><b>Version:</b> {VERSION}<br>"
         f"<b>License:</b> {ABOUT_LICENSE}<br>"
         f"<b>Built with:</b> PySide6 {PYSIDE_VERSION} — LGPL v3</p>"
@@ -87,7 +99,7 @@ def create_about_dialog(parent=None):
 class TimeTrackerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"znacTime v{VERSION}")
+        self.setWindowTitle(f"{APP_NAME} v{VERSION}")
         self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
         self.month_closed = False
@@ -300,7 +312,7 @@ class TimeTrackerApp(QMainWindow):
             now = datetime.now()
         if self.header.year() != now.year or self.header.month() != now.month:
             return None
-        return self.table.entry_for_date(now.strftime("%d.%m.%Y"))
+        return self.table.entry_for_date(now.strftime(DATE_FORMAT))
 
     def _active_pause(self, now=None):
         if now is None:
@@ -308,7 +320,7 @@ class TimeTrackerApp(QMainWindow):
         settings = self.theme_controller.settings
         pause_date = settings.value(PAUSE_DATE_KEY, "", type=str)
         pause_start = settings.value(PAUSE_START_KEY, "", type=str)
-        today_text = now.strftime("%d.%m.%Y")
+        today_text = now.strftime(DATE_FORMAT)
         if pause_date and pause_date != today_text:
             self._clear_active_pause()
             return None
@@ -332,7 +344,7 @@ class TimeTrackerApp(QMainWindow):
         settings = self.theme_controller.settings
         session_date = settings.value(SESSION_DATE_KEY, "", type=str)
         session_start = settings.value(SESSION_START_KEY, "", type=str)
-        today_text = now.strftime("%d.%m.%Y")
+        today_text = now.strftime(DATE_FORMAT)
         if session_date and session_date != today_text:
             self._clear_active_session()
             return None
@@ -364,7 +376,7 @@ class TimeTrackerApp(QMainWindow):
         try:
             session_date = datetime.strptime(
                 session_date_text,
-                "%d.%m.%Y",
+                DATE_FORMAT,
             ).date()
         except ValueError:
             self._clear_active_session()
@@ -436,24 +448,27 @@ class TimeTrackerApp(QMainWindow):
         pause_date,
         pause_start,
     ):
-        if entry.end != "00:00":
+        if entry.end != UNSET_TIME:
             return {}
 
         changes = {
-            "start": entry.start if entry.start != "00:00" else session_start,
-            "end": "23:59",
+            "start": entry.start if entry.start != UNSET_TIME else session_start,
+            "end": END_OF_DAY,
         }
-        if pause_date != entry.date or not pause_start or pause_start >= "23:59":
+        if pause_date != entry.date or not pause_start or pause_start >= END_OF_DAY:
             return changes
 
         interruption = entry.interruption
-        if interruption not in ("", "00:00") and "-" not in interruption:
+        if (
+            interruption not in ("", ZERO_DURATION)
+            and PERIOD_SEPARATOR not in interruption
+        ):
             return changes
         try:
             changes["interruption"] = finish_interruption_period(
                 interruption,
                 pause_start,
-                "23:59",
+                END_OF_DAY,
             )
         except ValueError:
             pass
@@ -465,20 +480,20 @@ class TimeTrackerApp(QMainWindow):
         entry = self._today_entry(now)
         if self.month_closed or entry is None:
             self.workday_bar.set_state(
-                "unavailable",
+                WorkdayState.UNAVAILABLE,
                 message="Open the current, unlocked month to use workday controls",
             )
             return
 
         pause_start = self._active_pause(now)
         session_start = self._active_session(now)
-        if entry.start == "00:00":
+        if entry.start == UNSET_TIME:
             self._clear_active_session()
-            self.workday_bar.set_state("idle")
-        elif entry.end != "00:00":
+            self.workday_bar.set_state(WorkdayState.IDLE)
+        elif entry.end != UNSET_TIME:
             self._clear_active_session()
             self.workday_bar.set_state(
-                "complete",
+                WorkdayState.COMPLETE,
                 start=entry.start,
                 end=entry.end,
             )
@@ -489,15 +504,7 @@ class TimeTrackerApp(QMainWindow):
                 pause_start = None
 
             if pause_start:
-                interruption = parse_interruption_input(entry.interruption)
-                open_pause_start = None
-                if interruption is not None and interruption.has_incomplete:
-                    open_period = next(
-                        period
-                        for period in interruption.normalized.split(";")
-                        if period.endswith("-...")
-                    )
-                    open_pause_start = open_period.removesuffix("-...")
+                open_pause_start = open_interruption_start(entry.interruption)
 
                 if open_pause_start is None:
                     self._clear_active_pause()
@@ -508,13 +515,13 @@ class TimeTrackerApp(QMainWindow):
 
             if pause_start:
                 self.workday_bar.set_state(
-                    "paused",
+                    WorkdayState.PAUSED,
                     start=entry.start,
                     pause_start=pause_start,
                 )
                 return
             self.workday_bar.set_state(
-                "working",
+                WorkdayState.WORKING,
                 start=entry.start,
             )
 
@@ -524,12 +531,12 @@ class TimeTrackerApp(QMainWindow):
         if self.month_closed or entry is None:
             return
 
-        date_text = now.strftime("%d.%m.%Y")
-        time_text = now.strftime("%H:%M")
+        date_text = now.strftime(DATE_FORMAT)
+        time_text = now.strftime(TIME_FORMAT)
         pause_start = self._active_pause(now)
 
-        if entry.start == "00:00":
-            if entry.end != "00:00":
+        if entry.start == UNSET_TIME:
+            if entry.end != UNSET_TIME:
                 answer = QMessageBox.question(
                     self,
                     "Clear existing end time?",
@@ -545,12 +552,12 @@ class TimeTrackerApp(QMainWindow):
             self.table.update_entry_for_date(
                 date_text,
                 start=time_text,
-                end="00:00",
+                end=UNSET_TIME,
             )
         elif pause_start:
             if not self._finish_active_pause(entry, time_text):
                 return
-        elif entry.end == "00:00":
+        elif entry.end == UNSET_TIME:
             if not self._start_active_pause(entry, date_text, time_text):
                 return
 
@@ -558,7 +565,10 @@ class TimeTrackerApp(QMainWindow):
 
     def _start_active_pause(self, entry, date_text, start_text):
         interruption = entry.interruption
-        if interruption not in ("", "00:00") and "-" not in interruption:
+        if (
+            interruption not in ("", ZERO_DURATION)
+            and PERIOD_SEPARATOR not in interruption
+        ):
             answer = QMessageBox.question(
                 self,
                 "Replace interruption duration?",
@@ -569,13 +579,13 @@ class TimeTrackerApp(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return False
-            interruption = "00:00"
+            interruption = ZERO_DURATION
 
         try:
             interruption = append_interruption_period(
                 interruption,
                 start_text,
-                "...",
+                OPEN_END_MARKER,
             )
         except ValueError as error:
             QMessageBox.warning(self, "Invalid pause", str(error))
@@ -598,7 +608,10 @@ class TimeTrackerApp(QMainWindow):
             return True
 
         interruption = entry.interruption
-        if interruption not in ("", "00:00") and "-" not in interruption:
+        if (
+            interruption not in ("", ZERO_DURATION)
+            and PERIOD_SEPARATOR not in interruption
+        ):
             answer = QMessageBox.question(
                 self,
                 "Replace interruption duration?",
@@ -609,7 +622,7 @@ class TimeTrackerApp(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return False
-            interruption = "00:00"
+            interruption = ZERO_DURATION
 
         try:
             interruption = finish_interruption_period(
@@ -632,10 +645,10 @@ class TimeTrackerApp(QMainWindow):
     def stop_workday(self):
         now = datetime.now()
         entry = self._today_entry(now)
-        if self.month_closed or entry is None or entry.start == "00:00":
+        if self.month_closed or entry is None or entry.start == UNSET_TIME:
             return
 
-        end_text = now.strftime("%H:%M")
+        end_text = now.strftime(TIME_FORMAT)
         if end_text < entry.start:
             return
 

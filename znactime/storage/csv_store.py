@@ -4,6 +4,13 @@ import os
 from datetime import date
 
 from znactime.core.calendar_utils import calendar_week_tag
+from znactime.core.constants import (
+    CALENDAR_WEEK_PREFIX,
+    DATE_FORMAT,
+    NORMAL_DAY,
+    UNSET_TIME,
+    ZERO_DURATION,
+)
 from znactime.core.models import DayEntry, MonthStats
 from znactime.core.time_utils import (
     hhmm_to_hours,
@@ -30,7 +37,7 @@ def _data_rows(rows):
 
 def _normalized_csv_row(row):
     row_data = list(row)
-    if row_data and row_data[0].startswith("CW-"):
+    if row_data and row_data[0].startswith(CALENDAR_WEEK_PREFIX):
         row_data = row_data[1:]
     normalized = list(row_data[:7])
     while len(normalized) < 7:
@@ -44,15 +51,15 @@ def _default_entries(year, month):
 
     for day in range(1, days + 1):
         current_date = date(year, month, day)
-        date_str = current_date.strftime("%d.%m.%Y")
+        date_str = current_date.strftime(DATE_FORMAT)
         entries.append(
             DayEntry(
                 cw=calendar_week_tag(date_str),
                 date=date_str,
-                special="Normal day",
-                start="00:00",
-                end="00:00",
-                interruption="00:00",
+                special=NORMAL_DAY,
+                start=UNSET_TIME,
+                end=UNSET_TIME,
+                interruption=ZERO_DURATION,
             )
         )
 

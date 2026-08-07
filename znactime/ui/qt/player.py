@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from znactime.core.constants import TIME_FORMAT
 from znactime.ui.qt import (
     QApplication,
     QHBoxLayout,
@@ -11,18 +12,26 @@ from znactime.ui.qt import (
     Qt,
     QWidget,
 )
+from znactime.ui.qt.workday_session import (
+    PAUSE_DATE_KEY,
+    PAUSE_START_KEY,
+    SESSION_DATE_KEY,
+    SESSION_START_KEY,
+)
 
 
-PAUSE_DATE_KEY = "workday_timer/pause_date"
-PAUSE_START_KEY = "workday_timer/pause_start"
-SESSION_DATE_KEY = "workday_timer/session_date"
-SESSION_START_KEY = "workday_timer/session_start"
+class WorkdayState:
+    UNAVAILABLE = "unavailable"
+    IDLE = "idle"
+    WORKING = "working"
+    PAUSED = "paused"
+    COMPLETE = "complete"
 
 
 def _elapsed_text(start_text, now=None):
     if now is None:
         now = datetime.now()
-    start = datetime.strptime(start_text, "%H:%M").replace(
+    start = datetime.strptime(start_text, TIME_FORMAT).replace(
         year=now.year,
         month=now.month,
         day=now.day,
@@ -40,7 +49,7 @@ class WorkdayBar(QWidget):
         super().__init__(parent)
         self.setObjectName("workdayBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._state = "unavailable"
+        self._state = WorkdayState.UNAVAILABLE
         self._start = None
         self._end = None
         self._pause_start = None
@@ -82,15 +91,15 @@ class WorkdayBar(QWidget):
         self._end = end
         self._pause_start = pause_start
 
-        if state == "idle":
+        if state == WorkdayState.IDLE:
             self.primary_button.setText("Start day")
             self.primary_button.setEnabled(True)
             self.stop_button.setEnabled(False)
-        elif state == "working":
+        elif state == WorkdayState.WORKING:
             self.primary_button.setText("Pause")
             self.primary_button.setEnabled(True)
             self.stop_button.setEnabled(True)
-        elif state == "paused":
+        elif state == WorkdayState.PAUSED:
             self.primary_button.setText("Resume")
             self.primary_button.setEnabled(True)
             self.stop_button.setEnabled(True)
@@ -105,18 +114,22 @@ class WorkdayBar(QWidget):
             self._refresh_status()
 
     def _refresh_status(self):
-        if self._state == "idle":
+        if self._state == WorkdayState.IDLE:
             self.status_label.setText("Ready to start today's workday")
-        elif self._state == "working" and self._start:
+        elif self._state == WorkdayState.WORKING and self._start:
             self.status_label.setText(
                 f"Working since {self._start} · {_elapsed_text(self._start)}"
             )
-        elif self._state == "paused" and self._pause_start:
+        elif self._state == WorkdayState.PAUSED and self._pause_start:
             self.status_label.setText(
                 f"Paused since {self._pause_start} · "
                 f"{_elapsed_text(self._pause_start)}"
             )
-        elif self._state == "complete" and self._start and self._end:
+        elif (
+            self._state == WorkdayState.COMPLETE
+            and self._start
+            and self._end
+        ):
             self.status_label.setText(
                 f"Workday complete · {self._start}–{self._end}"
             )

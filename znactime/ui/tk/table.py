@@ -4,11 +4,26 @@ from tkinter import ttk
 
 from tksheet import Sheet
 
+from znactime.config import DEFAULT_DAY_HOURS
 from znactime.core.calculator import recalculate as recalculate_entries
+from znactime.core.constants import (
+    END_OF_DAY,
+    NORMAL_DAY,
+    TIME_FORMAT,
+    UNSET_TIME,
+)
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import coerce_time_input, hhmm_to_hours
 from znactime.storage import csv_store
-from znactime.ui.constants import COLUMNS, row_color_hex
+from znactime.ui.constants import row_color_hex
+from znactime.ui.table_schema import (
+    CENTERED_COLUMNS,
+    COLUMNS,
+    EDITABLE_COLUMNS,
+    READ_ONLY_COLUMNS,
+    TIME_COLUMNS,
+    Column,
+)
 
 
 class SheetFrame(ttk.Frame):
@@ -25,7 +40,7 @@ class SheetFrame(ttk.Frame):
         self.year = None
         self.month = None
         self.carry_over = 0.0
-        self.day_hours = 8.0
+        self.day_hours = DEFAULT_DAY_HOURS
         self.month_closed = False
         self.autosave_enabled = True
 
@@ -48,10 +63,10 @@ class SheetFrame(ttk.Frame):
                 "redo",
             )
         )
-        self.sheet.readonly_columns({0, 1, 6, 7})
+        self.sheet.readonly_columns(set(READ_ONLY_COLUMNS))
         self.sheet.set_options(auto_resize_columns=150)
 
-        for column in (0, 3, 4, 5, 6, 7):
+        for column in CENTERED_COLUMNS:
             self.sheet.align_columns(column, "center")
 
         self.sheet.extra_bindings(
@@ -89,14 +104,14 @@ class SheetFrame(ttk.Frame):
     def entries(self):
         return [
             DayEntry(
-                cw=row[0],
-                date=row[1],
-                special=row[2],
-                start=row[3],
-                end=row[4],
-                interruption=row[5],
-                daily_ot=row[6],
-                monthly_balance=row[7],
+                cw=row[Column.CALENDAR_WEEK],
+                date=row[Column.DATE],
+                special=row[Column.SPECIAL_DAY],
+                start=row[Column.START],
+                end=row[Column.END],
+                interruption=row[Column.INTERRUPTION],
+                daily_ot=row[Column.DAILY_OVERTIME],
+                monthly_balance=row[Column.MONTHLY_BALANCE],
             )
             for row in self.sheet.get_sheet_data()
         ]
@@ -121,10 +136,18 @@ class SheetFrame(ttk.Frame):
         )
 
         for row_index, entry in enumerate(calculated_entries):
-            self.sheet.set_cell_data(row_index, 0, entry.cw)
-            self.sheet.set_cell_data(row_index, 2, entry.special)
-            self.sheet.set_cell_data(row_index, 6, entry.daily_ot)
-            self.sheet.set_cell_data(row_index, 7, entry.monthly_balance)
+            self.sheet.set_cell_data(row_index, Column.CALENDAR_WEEK, entry.cw)
+            self.sheet.set_cell_data(row_index, Column.SPECIAL_DAY, entry.special)
+            self.sheet.set_cell_data(
+                row_index,
+                Column.DAILY_OVERTIME,
+                entry.daily_ot,
+            )
+            self.sheet.set_cell_data(
+                row_index,
+                Column.MONTHLY_BALANCE,
+                entry.monthly_balance,
+            )
             self.sheet.highlight_rows(row_index, bg=row_color_hex(entry.row_color))
 
         if autosave:
@@ -146,17 +169,17 @@ class SheetFrame(ttk.Frame):
         data = self.sheet.get_sheet_data()
         if not data:
             return 0.0
-        return hhmm_to_hours(data[-1][7])
+        return hhmm_to_hours(data[-1][Column.MONTHLY_BALANCE])
 
     def on_begin_edit_cell(self, event):
         row, column, value = event["row"], event["column"], event["value"]
 
         if (
-            column in (3, 4)
+            column in TIME_COLUMNS
             and event["key"] in (None, "??", "Return", "F2")
-            and self.sheet.get_cell_data(row, column) == "00:00"
+            and self.sheet.get_cell_data(row, column) == UNSET_TIME
         ):
-            return datetime.now().strftime("%H:%M")
+            return datetime.now().strftime(TIME_FORMAT)
 
         return value
 
@@ -173,21 +196,24 @@ class SheetFrame(ttk.Frame):
         row, column = event["row"], event["column"]
         value = self.sheet.get_cell_data(row, column)
 
-        if column in (3, 4, 5):
+        if column in EDITABLE_COLUMNS - {Column.SPECIAL_DAY}:
             value = coerce_time_input(value)
             if value is None:
-                messagebox.showerror("Invalid time", "Time must be HH:MM (00:00-23:59)")
-                self.sheet.set_cell_data(row, column, "00:00")
+                messagebox.showerror(
+                    "Invalid time",
+                    f"Time must be HH:MM ({UNSET_TIME}-{END_OF_DAY})",
+                )
+                self.sheet.set_cell_data(row, column, UNSET_TIME)
             else:
                 self.sheet.set_cell_data(row, column, value)
 
-        if column == 2 and value == "":
-            self.sheet.set_cell_data(row, column, "Normal day")
+        if column == Column.SPECIAL_DAY and value == "":
+            self.sheet.set_cell_data(row, column, NORMAL_DAY)
 
         self.recalculate()
 
     def _apply_edit_mode_for_month(self):
-        self.sheet.readonly_columns({0, 1, 6, 7})
+        self.sheet.readonly_columns(set(READ_ONLY_COLUMNS))
         self.sheet.readonly(readonly=False)
 
         if hasattr(self.sheet, "disable_bindings"):

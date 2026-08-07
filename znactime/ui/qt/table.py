@@ -1,7 +1,18 @@
 from datetime import date, datetime
 
+from znactime.config import DEFAULT_SHOW_EXPECTED_END
+from znactime.core.constants import (
+    DATE_FORMAT,
+    INTERRUPTION_SEPARATOR,
+    OPEN_END_MARKER,
+    PERIOD_SEPARATOR,
+    TIME_FORMAT,
+    UNSET_TIME,
+    ZERO_DURATION,
+)
 from znactime.core.time_utils import hours_to_hhmm, parse_interruption_input
-from znactime.ui.constants import COLUMNS, current_row_accent_hex, row_color_hex
+from znactime.ui.constants import current_row_accent_hex, row_color_hex
+from znactime.ui.table_schema import COLUMNS, EDITABLE_COLUMNS, Column
 from znactime.ui.qt import (
     QAbstractItemDelegate,
     QAbstractItemView,
@@ -40,17 +51,19 @@ from znactime.ui.qt import (
     Signal,
     Qt,
 )
-from znactime.ui.qt.model import (
+from znactime.ui.qt.model import MonthTableModel
+from znactime.ui.qt.table_contract import (
     BADGE_ROLE,
     CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
-    EDITABLE_COLUMNS,
-    MonthTableModel,
     ROW_TEXTURE_ROLE,
+    BadgeKind,
+    BadgeState,
+    InterruptionAction,
+    RowTextureState,
 )
 
 
-UNDO_REDO_SUPPORTED = False
 COLUMN_WEIGHTS = (1, 1, 2, 1, 1, 2, 1, 1)
 MIN_COMPACT_COLUMN_WIDTH = 72
 ROW_HEIGHT_SCALE = 1.5
@@ -61,7 +74,6 @@ BADGE_VERTICAL_PADDING = 4
 BADGE_GAP = 4
 BADGE_CORNER_RADIUS = 6
 EDIT_BADGE_BORDER_WIDTH = 2
-INTERRUPTION_COLUMN = 5
 ROW_STRIPE_WIDTH = 12
 ROW_STRIPE_SPACING = round(ROW_STRIPE_WIDTH * 2 * 1.41421356237)
 
@@ -89,9 +101,13 @@ def _badge_text_color(fill, dark):
 
 def _period_parts(value):
     value = str(value).strip()
-    if "-" not in value:
+    if PERIOD_SEPARATOR not in value:
         return []
-    return [part.strip() for part in value.split(";") if part.strip()]
+    return [
+        part.strip()
+        for part in value.split(INTERRUPTION_SEPARATOR)
+        if part.strip()
+    ]
 
 
 def _action_icon(action, color):
@@ -103,14 +119,14 @@ def _action_icon(action, color):
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(color))
     painter.drawRoundedRect(QRectF(3, 7, 10, 2), 1, 1)
-    if action == "add":
+    if action == InterruptionAction.ADD:
         painter.drawRoundedRect(QRectF(7, 3, 2, 10), 1, 1)
     painter.end()
     return QIcon(pixmap)
 
 
 def _row_texture_color(state, current=False):
-    if state == "closed":
+    if state == RowTextureState.CLOSED:
         color = QColor("#929292" if _is_dark_theme() else "#c9c9c9")
     else:
         color = QColor(row_color_hex(state, dark=_is_dark_theme()))
@@ -123,7 +139,7 @@ def _row_texture_color(state, current=False):
     else:
         color = color.darker(135)
         alpha = 82 if current else 58
-    if state == "closed":
+    if state == RowTextureState.CLOSED:
         alpha //= 2
     color.setAlpha(alpha)
     return color
@@ -259,8 +275,11 @@ class IntervalEditor(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.original_value = "00:00"
-        self.target = {"action": "add", "period_index": None}
+        self.original_value = ZERO_DURATION
+        self.target = {
+            "action": InterruptionAction.ADD,
+            "period_index": None,
+        }
         self._remove_requested = False
         self._commit_requested = False
         self._destroyed = False
@@ -277,7 +296,7 @@ class IntervalEditor(QWidget):
             editor.editingFinished.connect(self._commit_if_focus_left)
             editor.installEventFilter(self)
 
-        self.separator_label = QLabel("-", self)
+        self.separator_label = QLabel(PERIOD_SEPARATOR, self)
         self.separator_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.remove_button = QPushButton(self)
         self.remove_button.setToolTip("Remove pause period")
@@ -355,17 +374,21 @@ class IntervalEditor(QWidget):
         )
 
     def set_value(self, value, target):
-        self.original_value = str(value or "00:00").strip() or "00:00"
-        self.target = target or {"action": "add", "period_index": None}
+        self.original_value = str(value or ZERO_DURATION).strip() or ZERO_DURATION
+        self.target = target or {
+            "action": InterruptionAction.ADD,
+            "period_index": None,
+        }
         self._remove_requested = False
         self.remove_button.setVisible(
-            self.target.get("action") in {"edit", "replace"}
+            self.target.get("action")
+            in {InterruptionAction.EDIT, InterruptionAction.REPLACE}
         )
         period = self._period_for_target()
-        if period and "-" in period:
-            start, end = period.split("-", 1)
+        if period and PERIOD_SEPARATOR in period:
+            start, end = period.split(PERIOD_SEPARATOR, 1)
             self.start_edit.setText(start)
-            self.end_edit.setText("" if end == "..." else end)
+            self.end_edit.setText("" if end == OPEN_END_MARKER else end)
             self.start_edit.selectAll()
         else:
             self.start_edit.clear()
@@ -376,12 +399,15 @@ class IntervalEditor(QWidget):
         periods = _period_parts(self.original_value)
         period_index = self.target.get("period_index")
         if (
-            self.target.get("action") == "edit"
+            self.target.get("action") == InterruptionAction.EDIT
             and period_index is not None
             and 0 <= period_index < len(periods)
         ):
             return periods[period_index]
-        if self.target.get("action") == "replace" and "-" not in self.original_value:
+        if (
+            self.target.get("action") == InterruptionAction.REPLACE
+            and PERIOD_SEPARATOR not in self.original_value
+        ):
             return ""
         return ""
 
@@ -390,13 +416,13 @@ class IntervalEditor(QWidget):
         action = self.target.get("action")
         period_index = self.target.get("period_index")
         if self._remove_requested:
-            if action == "edit" and period_index is not None:
+            if action == InterruptionAction.EDIT and period_index is not None:
                 if not 0 <= period_index < len(periods):
                     return None
                 periods.pop(period_index)
-                candidate = ";".join(periods) or "00:00"
-            elif action == "replace":
-                candidate = "00:00"
+                candidate = INTERRUPTION_SEPARATOR.join(periods) or ZERO_DURATION
+            elif action == InterruptionAction.REPLACE:
+                candidate = ZERO_DURATION
             else:
                 return None
             parsed = parse_interruption_input(candidate)
@@ -404,18 +430,18 @@ class IntervalEditor(QWidget):
 
         start = self.start_edit.text().strip()
         end = self.end_edit.text().strip()
-        new_period = f"{start}-{end or '...'}"
+        new_period = f"{start}{PERIOD_SEPARATOR}{end or OPEN_END_MARKER}"
         if parse_interruption_input(new_period) is None:
             return None
 
-        if action == "edit" and period_index is not None:
+        if action == InterruptionAction.EDIT and period_index is not None:
             if not 0 <= period_index < len(periods):
                 return None
             periods[period_index] = new_period
-            candidate = ";".join(periods)
-        elif action in {"add", "replace"}:
-            if periods and action == "add":
-                candidate = ";".join([*periods, new_period])
+            candidate = INTERRUPTION_SEPARATOR.join(periods)
+        elif action in {InterruptionAction.ADD, InterruptionAction.REPLACE}:
+            if periods and action == InterruptionAction.ADD:
+                candidate = INTERRUPTION_SEPARATOR.join([*periods, new_period])
             else:
                 candidate = new_period
         else:
@@ -515,7 +541,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             )
         badge = index.data(BADGE_ROLE)
         if badge:
-            if badge.get("kind") == "interruption":
+            if badge.get("kind") == BadgeKind.INTERRUPTION:
                 self._paint_interruption_badges(
                     painter,
                     style_option,
@@ -635,7 +661,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
     def _paint_badges(self, painter, option, index, badge):
         if not badge.get("texts"):
             badge = {**badge, "texts": [option.text]}
-        state = badge.get("state", "empty")
+        state = badge.get("state", BadgeState.EMPTY)
 
         painter.save()
         font = option.font
@@ -703,7 +729,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 "text": QColor("#202124" if _is_dark_theme() else "#ffffff"),
             }
 
-        if state == "expected":
+        if state == BadgeState.EXPECTED:
             if _is_dark_theme():
                 background = "#1f2228"
                 expected = "#ff8796"
@@ -718,30 +744,30 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
         if _is_dark_theme():
             palette = {
-                "success": {
+                BadgeState.SUCCESS: {
                     "fill": QColor("#244d36"),
                     "text": QColor("#a8f0c1"),
                 },
-                "info": {
+                BadgeState.INFO: {
                     "fill": QColor("#263f66"),
                     "text": QColor("#b8d4ff"),
                 },
-                "empty": {
+                BadgeState.EMPTY: {
                     "fill": QColor("#303540"),
                     "text": QColor("#b9c0ca"),
                 },
             }
         else:
             palette = {
-                "success": {
+                BadgeState.SUCCESS: {
                     "fill": QColor("#ddf8e7"),
                     "text": QColor("#146c43"),
                 },
-                "info": {
+                BadgeState.INFO: {
                     "fill": QColor("#e0edff"),
                     "text": QColor("#225ea8"),
                 },
-                "empty": {
+                BadgeState.EMPTY: {
                     "fill": QColor("#f0f2f5"),
                     "text": QColor("#68717d"),
                 },
@@ -753,7 +779,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 "fill": fill,
                 "text": _badge_text_color(fill, dark=_is_dark_theme()),
             }
-        return palette.get(state, palette["empty"])
+        return palette.get(state, palette[BadgeState.EMPTY])
 
     def _paint_interruption_badges(self, painter, option, index, badge):
         painter.save()
@@ -768,10 +794,14 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             badge,
         )):
             colors = self._badge_colors(
-                item.get("state", "empty"),
+                item.get("state", BadgeState.EMPTY),
                 hovered=(
                     not plain
-                    and self._is_badge_hovered(index, "interruption", position)
+                    and self._is_badge_hovered(
+                        index,
+                        BadgeKind.INTERRUPTION,
+                        position,
+                    )
                 ),
             )
             if not plain:
@@ -790,8 +820,8 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 0,
             )
             text = str(item.get("text", ""))
-            if item.get("icon") == "add":
-                _action_icon("add", colors["text"]).paint(
+            if item.get("icon") == InterruptionAction.ADD:
+                _action_icon(InterruptionAction.ADD, colors["text"]).paint(
                     painter,
                     text_rect.toRect(),
                     Qt.AlignmentFlag.AlignCenter,
@@ -813,12 +843,16 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         if not badge or badge.get("plain"):
             return None
 
-        if badge.get("kind") == "interruption":
+        if badge.get("kind") == BadgeKind.INTERRUPTION:
             for item_position, (rect, _item) in enumerate(
                 self._interruption_badge_rects(cell_rect, font, badge)
             ):
                 if rect.contains(position):
-                    return self._badge_key(index, "interruption", item_position)
+                    return self._badge_key(
+                        index,
+                        BadgeKind.INTERRUPTION,
+                        item_position,
+                    )
             return None
 
         for rect, badge_position, _text in _badge_rects(cell_rect, font, badge):
@@ -828,7 +862,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
     def badge_tooltip_at(self, index, cell_rect, position, font):
         badge = index.data(BADGE_ROLE) or {}
-        if badge.get("kind") != "interruption":
+        if badge.get("kind") != BadgeKind.INTERRUPTION:
             return None
 
         for rect, item in self._interruption_badge_rects(
@@ -839,7 +873,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             if rect.contains(position):
                 target = item.get("target") or {}
                 if (
-                    target.get("action") == "add"
+                    target.get("action") == InterruptionAction.ADD
                     or not item.get("complete", True)
                 ):
                     return None
@@ -908,14 +942,17 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
         items = badge.get("items") or []
         if not items:
-            return {"action": "add", "period_index": None}
+            return {
+                "action": InterruptionAction.ADD,
+                "period_index": None,
+            }
         return items[0].get("target")
 
     def _target_key(self, index):
         return (id(index.model()), index.row(), index.column())
 
     def createEditor(self, parent, option, index):
-        if index.column() == INTERRUPTION_COLUMN:
+        if index.column() == Column.INTERRUPTION:
             editor = IntervalEditor(parent)
             index.model().set_cell_editing(index, True)
             editor.destroyed.connect(
@@ -935,7 +972,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 column=index.column(): self._finish_editing(model, row, column)
             )
             badge = index.data(BADGE_ROLE) or {}
-            colors = self._badge_colors(badge.get("state", "empty"))
+            colors = self._badge_colors(
+                badge.get("state", BadgeState.EMPTY)
+            )
             background = colors["fill"].name()
             text = colors["text"].name()
             accent = current_row_accent_hex(dark=_is_dark_theme())
@@ -1015,7 +1054,10 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         if isinstance(editor, IntervalEditor):
             target = self._interruption_targets.pop(
                 self._target_key(index),
-                {"action": "add", "period_index": None},
+                {
+                    "action": InterruptionAction.ADD,
+                    "period_index": None,
+                },
             )
             value = index.model().data(index, Qt.ItemDataRole.EditRole)
             editor.set_value(value, target)
@@ -1024,10 +1066,10 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
         if (
             index.column() in (3, 4)
-            and index.model().data(index, Qt.ItemDataRole.EditRole) == "00:00"
+            and index.model().data(index, Qt.ItemDataRole.EditRole) == UNSET_TIME
             and isinstance(editor, QLineEdit)
         ):
-            editor.setText(datetime.now().strftime("%H:%M"))
+            editor.setText(datetime.now().strftime(TIME_FORMAT))
             editor.selectAll()
             return
 
@@ -1249,9 +1291,9 @@ class MonthTableView(QTableView):
         if model is None:
             return
 
-        today_text = date.today().strftime("%d.%m.%Y")
+        today_text = date.today().strftime(DATE_FORMAT)
         for row in range(model.rowCount()):
-            date_index = model.index(row, 1)
+            date_index = model.index(row, Column.DATE)
             if model.data(date_index, Qt.ItemDataRole.DisplayRole) != today_text:
                 continue
 
@@ -1300,9 +1342,9 @@ class MonthTableView(QTableView):
             return 0
 
         line_count = 1
-        interruption_index = model.index(row, 5)
+        interruption_index = model.index(row, Column.INTERRUPTION)
         badge = interruption_index.data(BADGE_ROLE)
-        if badge and badge.get("kind") == "interruption":
+        if badge and badge.get("kind") == BadgeKind.INTERRUPTION:
             rows = _interruption_badge_rows(
                 self.columnWidth(5),
                 self.font(),
@@ -1333,7 +1375,7 @@ class MonthTableView(QTableView):
         widths = [unit_width * weight for weight in COLUMN_WEIGHTS]
         remainder = available_width - sum(widths)
         if remainder > 0:
-            widths[2] += remainder
+            widths[Column.SPECIAL_DAY] += remainder
 
         for column, width in enumerate(widths):
             self.setColumnWidth(column, width)
@@ -1365,7 +1407,7 @@ class MonthTableView(QTableView):
     def _start_interruption_edit(self, index, position):
         if (
             not index.isValid()
-            or index.column() != INTERRUPTION_COLUMN
+            or index.column() != Column.INTERRUPTION
             or not index.flags() & Qt.ItemFlag.ItemIsEditable
         ):
             return False
@@ -1543,7 +1585,7 @@ class TableWidget(QWidget):
         carry_over,
         day_hours,
         month_closed,
-        show_expected_end=True,
+        show_expected_end=DEFAULT_SHOW_EXPECTED_END,
     ):
         self.model.set_context(
             year,

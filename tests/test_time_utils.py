@@ -10,6 +10,7 @@ from znactime.core.time_utils import (
     hours_to_hhmm,
     interruption_has_outside_workday_period,
     interruption_hours,
+    open_interruption_start,
     parse_interruption_input,
 )
 
@@ -85,6 +86,13 @@ class TimeUtilsTest(unittest.TestCase):
         self.assertEqual(parsed.normalized, "11:00-...;14:00-14:30")
         self.assertEqual(parsed.hours, 0.5)
         self.assertTrue(parsed.has_incomplete)
+
+    def test_open_interruption_start_uses_parsed_period_data(self):
+        self.assertEqual(
+            open_interruption_start("10:00-10:30;12:30-..."),
+            "12:30",
+        )
+        self.assertIsNone(open_interruption_start("12:30-13:00"))
 
     def test_expected_end_adds_workday_and_completed_interruptions(self):
         self.assertEqual(

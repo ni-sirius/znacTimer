@@ -1,3 +1,4 @@
+from znactime.config import APP_NAME
 from znactime.ui.qt import QAction, QApplication, QMenuBar, QPalette
 
 
@@ -32,7 +33,7 @@ class MenuBar(QMenuBar):
         settings_menu.addAction(work_schedule_action)
 
         help_menu = self.addMenu("Help")
-        self.about_action = QAction("About znacTime", self)
+        self.about_action = QAction(f"About {APP_NAME}", self)
         self.about_action.triggered.connect(about_command)
         help_menu.addAction(self.about_action)
         self.apply_theme()

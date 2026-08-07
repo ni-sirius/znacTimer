@@ -2,6 +2,14 @@ from dataclasses import replace
 from datetime import date, datetime
 
 from znactime.core.calendar_utils import calendar_week_tag, is_weekend
+from znactime.core.constants import (
+    DATE_FORMAT,
+    DayStatus,
+    NORMAL_DAY,
+    TIME_FORMAT,
+    UNSET_TIME,
+    WEEKEND_DAY,
+)
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import (
     hours_to_hhmm,
@@ -12,29 +20,16 @@ from znactime.core.time_utils import (
     time_input_or_zero,
 )
 
-
-ROW_COLOR_KEYS = {
-    "weekend": "weekend",
-    "weekend_today": "weekend_today",
-    "special_day": "special_day",
-    "special_day_today": "special_day_today",
-    "missing_times": "missing_times",
-    "missing_times_today": "missing_times_today",
-    "valid_day": "valid_day",
-    "valid_day_today": "valid_day_today",
-}
-
-
 def _is_today(date_str, today):
     try:
-        return datetime.strptime(date_str, "%d.%m.%Y").date() == today
+        return datetime.strptime(date_str, DATE_FORMAT).date() == today
     except (TypeError, ValueError):
         return False
 
 
 def _calculate_worked_hours(start, end, interruption):
-    start_time = datetime.strptime(start, "%H:%M")
-    end_time = datetime.strptime(end, "%H:%M")
+    start_time = datetime.strptime(start, TIME_FORMAT)
+    end_time = datetime.strptime(end, TIME_FORMAT)
 
     if end_time <= start_time:
         raise ValueError("End must be after start")
@@ -74,32 +69,32 @@ def recalculate(
             date_is_valid = False
 
         if not date_is_valid:
-            row_color = ROW_COLOR_KEYS["missing_times"]
+            row_color = DayStatus.MISSING_TIMES
         elif entry_is_weekend:
-            if special.lower() in ("", "normal day"):
-                special = "Weekend"
+            if special.casefold() in ("", NORMAL_DAY.casefold()):
+                special = WEEKEND_DAY
             row_color = (
-                ROW_COLOR_KEYS["weekend_today"]
+                DayStatus.WEEKEND_TODAY
                 if entry_is_today
-                else ROW_COLOR_KEYS["weekend"]
+                else DayStatus.WEEKEND
             )
-        elif special and special.lower() != "normal day":
+        elif special and special.casefold() != NORMAL_DAY.casefold():
             row_color = (
-                ROW_COLOR_KEYS["special_day_today"]
+                DayStatus.SPECIAL_DAY_TODAY
                 if entry_is_today
-                else ROW_COLOR_KEYS["special_day"]
+                else DayStatus.SPECIAL_DAY
             )
 
         if not date_is_valid:
             daily_ot = 0.0
-        elif entry.start == "00:00" or entry.end == "00:00":
+        elif entry.start == UNSET_TIME or entry.end == UNSET_TIME:
             if row_color:
                 daily_ot = 0.0
             else:
                 row_color = (
-                    ROW_COLOR_KEYS["missing_times_today"]
+                    DayStatus.MISSING_TIMES_TODAY
                     if entry_is_today
-                    else ROW_COLOR_KEYS["missing_times"]
+                    else DayStatus.MISSING_TIMES
                 )
         else:
             try:
@@ -120,28 +115,28 @@ def recalculate(
                 )
                 if not row_color and interruption_is_invalid:
                     row_color = (
-                        ROW_COLOR_KEYS["missing_times_today"]
+                        DayStatus.MISSING_TIMES_TODAY
                         if entry_is_today
-                        else ROW_COLOR_KEYS["missing_times"]
+                        else DayStatus.MISSING_TIMES
                     )
                 elif not row_color:
                     row_color = (
-                        ROW_COLOR_KEYS["valid_day_today"]
+                        DayStatus.VALID_DAY_TODAY
                         if entry_is_today
-                        else ROW_COLOR_KEYS["valid_day"]
+                        else DayStatus.VALID_DAY
                     )
             except Exception:
                 row_color = (
-                    ROW_COLOR_KEYS["missing_times_today"]
+                    DayStatus.MISSING_TIMES_TODAY
                     if entry_is_today
-                    else ROW_COLOR_KEYS["missing_times"]
+                    else DayStatus.MISSING_TIMES
                 )
 
         if month_closed:
             row_color = (
-                ROW_COLOR_KEYS["special_day_today"]
+                DayStatus.SPECIAL_DAY_TODAY
                 if entry_is_today
-                else ROW_COLOR_KEYS["special_day"]
+                else DayStatus.SPECIAL_DAY
             )
 
         monthly_balance += daily_ot

@@ -17,10 +17,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from znactime.config import DEFAULT_DAY_HOURS, DEFAULT_SHOW_EXPECTED_END
 from znactime.core.calendar_utils import build_calendar_week_text
+from znactime.core.constants import UNSET_TIME
 from znactime.storage import csv_store
+from znactime.ui.table_schema import Column
 from znactime.ui.qt import QApplication
 from znactime.ui.qt.app import TimeTrackerApp
+from znactime.ui.qt.player import WorkdayState
+from znactime.ui.qt.table_contract import InterruptionAction
 from znactime.ui.qt.theme import LIGHT_THEME
 
 
@@ -42,7 +47,7 @@ def _demo_entries():
         },
         "05.08.2026": {
             "start": "08:15",
-            "end": "00:00",
+            "end": UNSET_TIME,
             "interruption": "12:30-13:00;15:10-15:20",
         },
     }
@@ -65,9 +70,9 @@ def _configure_demo(window, closed=False):
         year=DEMO_YEAR,
         month=DEMO_MONTH,
         carry_over=window.carry_over,
-        day_hours=8.0,
+        day_hours=DEFAULT_DAY_HOURS,
         month_closed=closed,
-        show_expected_end=True,
+        show_expected_end=DEFAULT_SHOW_EXPECTED_END,
     )
     window.table.set_entries(_demo_entries())
     window.table.recalculate(today=DEMO_TODAY, autosave=False)
@@ -77,12 +82,12 @@ def _configure_demo(window, closed=False):
     window.workday_bar.clock.stop()
     if closed:
         window.workday_bar.set_state(
-            "unavailable",
+            WorkdayState.UNAVAILABLE,
             message="This month is closed and available for review",
         )
     else:
         window.workday_bar.set_state(
-            "paused",
+            WorkdayState.PAUSED,
             start="08:15",
             pause_start="15:10",
             message="Paused since 15:10 · 00:20",
@@ -117,11 +122,11 @@ def main():
     window.table.view.scrollToTop()
     _save(window, "dashboard.png")
 
-    interruption_index = window.table.model.index(4, 5)
+    interruption_index = window.table.model.index(4, Column.INTERRUPTION)
     delegate = window.table.view.itemDelegateForIndex(interruption_index)
     delegate.set_interruption_edit_target(
         interruption_index,
-        {"action": "edit", "period_index": 0},
+        {"action": InterruptionAction.EDIT, "period_index": 0},
     )
     window.table.view.setCurrentIndex(interruption_index)
     window.table.view.edit(interruption_index)

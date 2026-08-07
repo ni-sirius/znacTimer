@@ -1,3 +1,4 @@
+from znactime.config import APP_NAME
 from znactime.ui.qt import (
     QApplication,
     QColor,
@@ -24,8 +25,8 @@ class ThemeController(QObject):
         super().__init__()
         self.app = app or QApplication.instance()
         self.settings = settings if settings is not None else QSettings(
-            "znacTime",
-            "znacTime",
+            APP_NAME,
+            APP_NAME,
         )
         self.system_palette = QPalette(self.app.palette())
         self.system_color_scheme = self.app.styleHints().colorScheme()

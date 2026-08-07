@@ -1,9 +1,11 @@
 import calendar
 from datetime import date, datetime
 
+from znactime.core.constants import CALENDAR_WEEK_PREFIX, DATE_FORMAT
+
 
 def _parse_date(date_str):
-    return datetime.strptime(date_str, "%d.%m.%Y").date()
+    return datetime.strptime(date_str, DATE_FORMAT).date()
 
 
 def is_weekend(date_str):
@@ -12,7 +14,7 @@ def is_weekend(date_str):
 
 def calendar_week_tag(date_str):
     parsed_date = _parse_date(date_str)
-    return f"CW-{parsed_date.isocalendar().week}"
+    return f"{CALENDAR_WEEK_PREFIX}{parsed_date.isocalendar().week}"
 
 
 def build_calendar_week_text(year, month, today=None):

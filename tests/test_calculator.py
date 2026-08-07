@@ -1,7 +1,8 @@
 import unittest
 from datetime import date
 
-from znactime.core.calculator import ROW_COLOR_KEYS, recalculate
+from znactime.core.calculator import recalculate
+from znactime.core.constants import DayStatus
 from znactime.core.models import DayEntry
 
 
@@ -23,7 +24,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].cw, "CW-25")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["valid_day_today"])
+        self.assertEqual(result[0].row_color, DayStatus.VALID_DAY_TODAY)
 
     def test_recalculate_accumulates_carry_over_across_valid_days(self):
         entries = [
@@ -87,7 +88,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].end, "08:00")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+        self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_marks_reversed_interruption_period_missing(self):
         entries = [
@@ -106,7 +107,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].interruption, "14:00-13:00")
         self.assertEqual(result[0].daily_ot, "01:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+        self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_marks_day_missing_when_any_pause_is_outside_workday(self):
         entries = [
@@ -128,7 +129,7 @@ class CalculatorTest(unittest.TestCase):
             result[0].interruption,
             "07:45-08:00;12:00-12:30",
         )
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+        self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_normalizes_malformed_time_values_to_zero(self):
         entries = [
@@ -149,7 +150,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].interruption, "00:00")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+        self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_handles_malformed_date_without_crashing(self):
         entries = [
@@ -169,7 +170,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].cw, "")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+        self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_incomplete_interruption_is_not_subtracted_and_marks_day_missing(self):
         entries = [
@@ -186,7 +187,7 @@ class CalculatorTest(unittest.TestCase):
         result = recalculate(entries, 0.0, 8.0, date(2024, 6, 18), False)
 
         self.assertEqual(result[0].daily_ot, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+        self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_weekend_auto_marks_special(self):
         entries = [
@@ -205,7 +206,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].special, "Weekend")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "00:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["weekend"])
+        self.assertEqual(result[0].row_color, DayStatus.WEEKEND)
 
     def test_recalculate_weekend_with_times_counts_like_normal_day(self):
         entries = [
@@ -224,7 +225,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].special, "Weekend")
         self.assertEqual(result[0].daily_ot, "01:00")
         self.assertEqual(result[0].monthly_balance, "02:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["weekend"])
+        self.assertEqual(result[0].row_color, DayStatus.WEEKEND)
 
     def test_recalculate_special_day_with_times_counts_like_normal_day(self):
         entries = [
@@ -242,7 +243,7 @@ class CalculatorTest(unittest.TestCase):
 
         self.assertEqual(result[0].daily_ot, "01:00")
         self.assertEqual(result[0].monthly_balance, "02:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["special_day"])
+        self.assertEqual(result[0].row_color, DayStatus.SPECIAL_DAY)
 
     def test_recalculate_missing_times_have_no_daily_overtime(self):
         entries = [
@@ -260,7 +261,7 @@ class CalculatorTest(unittest.TestCase):
 
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "01:00")
-        self.assertEqual(result[0].row_color, ROW_COLOR_KEYS["missing_times"])
+        self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_returns_new_entries(self):
         entry = DayEntry(

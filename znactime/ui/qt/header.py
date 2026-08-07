@@ -1,6 +1,7 @@
 from html import escape
 from pathlib import Path
 
+from znactime.core.constants import ZERO_DURATION
 from znactime.ui.constants import MONTHS, overtime_text_color_hex
 from znactime.ui.qt import (
     QApplication,
@@ -31,9 +32,9 @@ class HeaderWidget(QWidget):
         self.month_box.setObjectName("periodControl")
         self.month_box.addItems(MONTHS)
 
-        self.carry_over_label = QLabel("Carry over: 00:00", self)
+        self.carry_over_label = QLabel(f"Carry over: {ZERO_DURATION}", self)
         self.carry_over_label.setObjectName("summaryBadge")
-        self._overtime_text = "Overtime: 00:00"
+        self._overtime_text = f"Overtime: {ZERO_DURATION}"
         self._month_closed = False
         self.overtime_label = QLabel(self._overtime_text, self)
         self.overtime_label.setObjectName("summaryBadge")

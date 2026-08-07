@@ -1,4 +1,4 @@
-from znactime.config import DEFAULT_DAY_HOURS
+from znactime.config import DEFAULT_DAY_HOURS, DEFAULT_SHOW_EXPECTED_END
 from znactime.ui.qt import (
     QButtonGroup,
     QCheckBox,
@@ -30,7 +30,6 @@ MAX_INITIAL_HEIGHT = 2160
 WORKDAY_MINUTES_KEY = "work_schedule/day_minutes"
 SHOW_EXPECTED_END_KEY = "work_schedule/show_expected_end"
 DEFAULT_WORKDAY_MINUTES = round(DEFAULT_DAY_HOURS * 60)
-DEFAULT_SHOW_EXPECTED_END = True
 MIN_WORKDAY_MINUTES = 1
 MAX_WORKDAY_MINUTES = 23 * 60 + 59
 

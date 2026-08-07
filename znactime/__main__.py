@@ -1,11 +1,12 @@
 import ctypes
 import sys
 
+from znactime.config import APP_NAME
 from znactime.ui.qt import QApplication, QIcon
 from znactime.ui.qt.app import APP_ICON_PATH, TimeTrackerApp
 
 
-APP_USER_MODEL_ID = "znactime.desktop"
+APP_USER_MODEL_ID = f"{APP_NAME.casefold()}.desktop"
 
 
 def _set_windows_app_user_model_id():

@@ -2,10 +2,17 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
+from znactime.core.constants import (
+    INTERRUPTION_SEPARATOR,
+    OPEN_END_MARKER,
+    PERIOD_SEPARATOR,
+    TIME_FORMAT,
+    UNSET_TIME,
+    ZERO_DURATION,
+)
+
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-INTERRUPTION_SEPARATOR = ";"
-PERIOD_SEPARATOR = "-"
 
 
 @dataclass(frozen=True)
@@ -15,6 +22,7 @@ class InterruptionValue:
     earliest_start: str | None = None
     latest_end: str | None = None
     has_incomplete: bool = False
+    open_start: str | None = None
 
 
 def coerce_time_input(value):
@@ -30,18 +38,18 @@ def coerce_time_input(value):
         elif len(value) == 1:
             hours, minutes = "00", "0" + value
         else:
-            return "00:00"
+            return UNSET_TIME
 
         try:
             hour_value = int(hours)
             minute_value = int(minutes)
         except ValueError:
-            return "00:00"
+            return UNSET_TIME
 
         if 0 <= hour_value <= 23 and 0 <= minute_value <= 59:
             value = f"{hour_value:02d}:{minute_value:02d}"
         else:
-            value = "00:00"
+            value = UNSET_TIME
 
     if not TIME_RE.match(value):
         return None
@@ -49,14 +57,14 @@ def coerce_time_input(value):
 
 
 def _minutes_from_hhmm(value):
-    parsed = datetime.strptime(value, "%H:%M")
+    parsed = datetime.strptime(value, TIME_FORMAT)
     return parsed.hour * 60 + parsed.minute
 
 
 def parse_interruption_input(value):
     value = str(value).strip()
     if not value:
-        value = "00:00"
+        value = ZERO_DURATION
 
     if PERIOD_SEPARATOR not in value:
         normalized = coerce_time_input(value)
@@ -77,15 +85,17 @@ def parse_interruption_input(value):
         raw_start, raw_end = raw_period.split(PERIOD_SEPARATOR)
         start = coerce_time_input(raw_start.strip())
         end_text = raw_end.strip()
-        end = None if end_text == "..." else coerce_time_input(end_text)
-        if start is None or (end is None and end_text != "..."):
+        end = None if end_text == OPEN_END_MARKER else coerce_time_input(end_text)
+        if start is None or (end is None and end_text != OPEN_END_MARKER):
             return None
 
         start_minutes = _minutes_from_hhmm(start)
         end_minutes = None if end is None else _minutes_from_hhmm(end)
         if end is None:
             incomplete_count += 1
-        periods.append((start_minutes, end_minutes, start, end or "..."))
+        periods.append(
+            (start_minutes, end_minutes, start, end or OPEN_END_MARKER)
+        )
 
     if incomplete_count > 1:
         return None
@@ -109,12 +119,21 @@ def parse_interruption_input(value):
     ]
     return InterruptionValue(
         normalized=INTERRUPTION_SEPARATOR.join(
-            f"{start}-{end}" for _start_minutes, _end_minutes, start, end in periods
+            f"{start}{PERIOD_SEPARATOR}{end}"
+            for _start_minutes, _end_minutes, start, end in periods
         ),
         hours=total_minutes / 60,
         earliest_start=valid_periods[0][2] if valid_periods else None,
         latest_end=max(completed_ends)[1] if completed_ends else None,
         has_incomplete=bool(incomplete_count),
+        open_start=next(
+            (
+                start
+                for _start_minutes, end_minutes, start, _end in periods
+                if end_minutes is None
+            ),
+            None,
+        ),
     )
 
 
@@ -124,11 +143,23 @@ def coerce_interruption_input(value):
 
 
 def time_input_or_zero(value):
-    return coerce_time_input(value) or "00:00"
+    return coerce_time_input(value) or UNSET_TIME
 
 
 def interruption_input_or_zero(value):
-    return coerce_interruption_input(value) or "00:00"
+    return coerce_interruption_input(value) or ZERO_DURATION
+
+
+def open_interruption_start(value):
+    """Return the start of the single open interruption, if present."""
+    parsed = parse_interruption_input(value)
+    return None if parsed is None else parsed.open_start
+
+
+def is_open_interruption_period(value):
+    """Return whether a normalized interruption period has an open end."""
+    suffix = f"{PERIOD_SEPARATOR}{OPEN_END_MARKER}"
+    return str(value).strip().endswith(suffix)
 
 
 def interruption_hours(value):
@@ -142,7 +173,7 @@ def expected_end_time(start, interruption, workday_hours):
     """Return a display-only expected end time for a started workday."""
     start = coerce_time_input(start)
     parsed_interruption = parse_interruption_input(interruption)
-    if start in (None, "00:00") or parsed_interruption is None:
+    if start in (None, UNSET_TIME) or parsed_interruption is None:
         return None
 
     start_minutes = _minutes_from_hhmm(start)
@@ -164,8 +195,8 @@ def interruption_has_outside_workday_period(value, workday_start, workday_end):
     workday_end = coerce_time_input(workday_end)
     if (
         parsed is None
-        or workday_start in (None, "00:00")
-        or workday_end in (None, "00:00")
+        or workday_start in (None, UNSET_TIME)
+        or workday_end in (None, UNSET_TIME)
     ):
         return False
     if PERIOD_SEPARATOR not in parsed.normalized:
@@ -175,7 +206,7 @@ def interruption_has_outside_workday_period(value, workday_start, workday_end):
         period_start, period_end = period.split(PERIOD_SEPARATOR, 1)
         if period_start < workday_start:
             return True
-        if period_end == "...":
+        if period_end == OPEN_END_MARKER:
             if period_start >= workday_end:
                 return True
             continue
@@ -185,9 +216,9 @@ def interruption_has_outside_workday_period(value, workday_start, workday_end):
 
 
 def append_interruption_period(value, start, end):
-    period = f"{start}-{end}"
+    period = f"{start}{PERIOD_SEPARATOR}{end}"
     existing = str(value).strip()
-    if existing in ("", "00:00"):
+    if existing in ("", ZERO_DURATION):
         combined = period
     elif PERIOD_SEPARATOR in existing:
         combined = f"{existing}{INTERRUPTION_SEPARATOR}{period}"
@@ -212,14 +243,14 @@ def finish_interruption_period(value, start, end):
     if parsed is None:
         raise ValueError("The interruption period is invalid")
     if PERIOD_SEPARATOR not in parsed.normalized:
-        if parsed.normalized == "00:00":
+        if parsed.normalized == ZERO_DURATION:
             if end <= start:
                 return parsed.normalized
             return append_interruption_period(parsed.normalized, start, end)
         raise ValueError("The interruption period is invalid")
 
     periods = parsed.normalized.split(INTERRUPTION_SEPARATOR)
-    open_period = f"{start}-..."
+    open_period = f"{start}{PERIOD_SEPARATOR}{OPEN_END_MARKER}"
     try:
         period_index = periods.index(open_period)
     except ValueError:
@@ -230,9 +261,9 @@ def finish_interruption_period(value, start, end):
     if end <= start:
         periods.pop(period_index)
     else:
-        periods[period_index] = f"{start}-{end}"
+        periods[period_index] = f"{start}{PERIOD_SEPARATOR}{end}"
 
-    candidate = INTERRUPTION_SEPARATOR.join(periods) or "00:00"
+    candidate = INTERRUPTION_SEPARATOR.join(periods) or ZERO_DURATION
     finished = parse_interruption_input(candidate)
     if finished is None:
         raise ValueError("The interruption period is invalid")

@@ -3,7 +3,8 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox
 
-from znactime.config import DEFAULT_DAY_HOURS, VERSION
+from znactime.config import APP_NAME, DEFAULT_DAY_HOURS, VERSION
+from znactime.core.constants import ZERO_DURATION
 from znactime.core.calendar_utils import build_calendar_week_text
 from znactime.core.models import MonthStats
 from znactime.core.time_utils import hours_to_hhmm
@@ -17,7 +18,7 @@ from znactime.ui.tk.table import SheetFrame
 class TimeTrackerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"znacTime v{VERSION}")
+        self.title(f"{APP_NAME} v{VERSION}")
         self.geometry("1250x900")
 
         self.current_year = tk.IntVar(value=datetime.now().year)
@@ -26,8 +27,12 @@ class TimeTrackerApp(tk.Tk):
         self.month_closed = False
         self.carry_over = 0.0
         self.current_overtime = 0.0
-        self.carry_over_text = tk.StringVar(value="Carry over: 00:00")
-        self.current_overtime_text = tk.StringVar(value="Overtime: 00:00")
+        self.carry_over_text = tk.StringVar(
+            value=f"Carry over: {ZERO_DURATION}"
+        )
+        self.current_overtime_text = tk.StringVar(
+            value=f"Overtime: {ZERO_DURATION}"
+        )
         self.calendar_week_text = tk.StringVar(
             value="Calendar week 00, This month 00-00, This year 00"
         )

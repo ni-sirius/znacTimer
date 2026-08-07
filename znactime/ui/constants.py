@@ -1,42 +1,31 @@
 import calendar
 
+from znactime.core.constants import DayStatus, ZERO_DURATION
+from znactime.ui.table_schema import COLUMNS
 
 MONTHS = list(calendar.month_name)[1:]
 
-COLUMNS = [
-    "CW",
-    "Date",
-    "Special day",
-    "Start",
-    "End",
-    "Interruption",
-    "Daily OT",
-    "Monthly",
-]
-
 LIGHT_ROW_COLORS = {
-    "weekend": "#e1edff",
-    "weekend_today": "#bcd6ff",
-    "special_day": "#eee6fa",
-    "special_day_today": "#d5c4f0",
-    "missing_times": "#fde4e9",
-    "missing_times_today": "#f8c4ce",
-    "valid_day": "#e0f5e8",
-    "valid_day_today": "#bce8cc",
+    DayStatus.WEEKEND: "#e1edff",
+    DayStatus.WEEKEND_TODAY: "#bcd6ff",
+    DayStatus.SPECIAL_DAY: "#eee6fa",
+    DayStatus.SPECIAL_DAY_TODAY: "#d5c4f0",
+    DayStatus.MISSING_TIMES: "#fde4e9",
+    DayStatus.MISSING_TIMES_TODAY: "#f8c4ce",
+    DayStatus.VALID_DAY: "#e0f5e8",
+    DayStatus.VALID_DAY_TODAY: "#bce8cc",
 }
 
 DARK_ROW_COLORS = {
-    "weekend": "#2b3d5b",
-    "weekend_today": "#3a5d8d",
-    "special_day": "#3d3150",
-    "special_day_today": "#594477",
-    "missing_times": "#512e3a",
-    "missing_times_today": "#743b4b",
-    "valid_day": "#2a4938",
-    "valid_day_today": "#396b4e",
+    DayStatus.WEEKEND: "#2b3d5b",
+    DayStatus.WEEKEND_TODAY: "#3a5d8d",
+    DayStatus.SPECIAL_DAY: "#3d3150",
+    DayStatus.SPECIAL_DAY_TODAY: "#594477",
+    DayStatus.MISSING_TIMES: "#512e3a",
+    DayStatus.MISSING_TIMES_TODAY: "#743b4b",
+    DayStatus.VALID_DAY: "#2a4938",
+    DayStatus.VALID_DAY_TODAY: "#396b4e",
 }
-
-COLORS = LIGHT_ROW_COLORS
 
 LIGHT_CURRENT_ROW_ACCENT = "#6941c6"
 DARK_CURRENT_ROW_ACCENT = "#c58af9"
@@ -87,7 +76,7 @@ def overtime_text_color_hex(value, dark=False):
     try:
         if str(value).strip().startswith("-"):
             state = "negative"
-        elif str(value).strip() not in ("", "00:00"):
+        elif str(value).strip() not in ("", ZERO_DURATION):
             state = "positive"
         else:
             return ""

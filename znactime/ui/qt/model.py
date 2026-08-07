@@ -1,22 +1,42 @@
 from dataclasses import replace
 from datetime import date, datetime
 
-from znactime.config import DEFAULT_DAY_HOURS
+from znactime.config import DEFAULT_DAY_HOURS, DEFAULT_SHOW_EXPECTED_END
 from znactime.core.calculator import recalculate as recalculate_entries
+from znactime.core.constants import (
+    DATE_FORMAT,
+    END_OF_DAY,
+    INTERRUPTION_SEPARATOR,
+    NORMAL_DAY,
+    OPEN_END_MARKER,
+    PERIOD_SEPARATOR,
+    UNSET_TIME,
+    ZERO_DURATION,
+    DayStatus,
+)
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import (
     coerce_interruption_input,
     coerce_time_input,
     hhmm_to_hours,
     hours_to_hhmm,
+    is_open_interruption_period,
     expected_end_time,
     parse_interruption_input,
 )
 from znactime.storage import csv_store
 from znactime.ui.constants import (
-    COLUMNS,
     calendar_week_text_color_hex,
     overtime_text_color_hex,
+)
+from znactime.ui.table_schema import (
+    BADGE_COLUMNS,
+    CENTERED_COLUMNS,
+    COLUMNS,
+    EDITABLE_COLUMNS,
+    ENTRY_FIELDS,
+    TIME_COLUMNS,
+    Column,
 )
 from znactime.ui.qt import (
     QAbstractTableModel,
@@ -27,26 +47,16 @@ from znactime.ui.qt import (
     Signal,
     Qt,
 )
-
-
-ENTRY_FIELDS = (
-    "cw",
-    "date",
-    "special",
-    "start",
-    "end",
-    "interruption",
-    "daily_ot",
-    "monthly_balance",
+from znactime.ui.qt.table_contract import (
+    BADGE_ROLE,
+    CELL_EDITING_ROLE,
+    CURRENT_ROW_ROLE,
+    ROW_TEXTURE_ROLE,
+    BadgeKind,
+    BadgeState,
+    InterruptionAction,
+    RowTextureState,
 )
-EDITABLE_COLUMNS = {2, 3, 4, 5}
-TIME_COLUMNS = {3, 4}
-CENTERED_COLUMNS = {0, 1, 3, 4, 5, 6, 7}
-BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
-CURRENT_ROW_ROLE = Qt.ItemDataRole.UserRole + 2
-CELL_EDITING_ROLE = Qt.ItemDataRole.UserRole + 3
-ROW_TEXTURE_ROLE = Qt.ItemDataRole.UserRole + 4
-BADGE_COLUMNS = {2, 3, 4, 5}
 
 
 def _is_dark_theme():
@@ -67,7 +77,7 @@ class MonthTableModel(QAbstractTableModel):
         self.month = None
         self.carry_over = 0.0
         self.day_hours = DEFAULT_DAY_HOURS
-        self.show_expected_end = True
+        self.show_expected_end = DEFAULT_SHOW_EXPECTED_END
         self.month_closed = False
         self._today = date.today()
         self._editing_cells = set()
@@ -79,7 +89,7 @@ class MonthTableModel(QAbstractTableModel):
         carry_over,
         day_hours,
         month_closed,
-        show_expected_end=True,
+        show_expected_end=DEFAULT_SHOW_EXPECTED_END,
     ):
         self.year = year
         self.month = month
@@ -107,8 +117,11 @@ class MonthTableModel(QAbstractTableModel):
     def refresh_theme(self):
         if not self._entries:
             return
-        top_left = self.index(0, 0)
-        bottom_right = self.index(len(self._entries) - 1, len(COLUMNS) - 1)
+        top_left = self.index(0, Column.CALENDAR_WEEK)
+        bottom_right = self.index(
+            len(self._entries) - 1,
+            Column.MONTHLY_BALANCE,
+        )
         self.dataChanged.emit(
             top_left,
             bottom_right,
@@ -199,14 +212,14 @@ class MonthTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole:
             if (index.row(), index.column()) in self._editing_cells:
                 return QColor("#8b8d91" if _is_dark_theme() else "#7a7f87")
-            if column in (0, 1):
+            if column in (Column.CALENDAR_WEEK, Column.DATE):
                 return QColor(
                     calendar_week_text_color_hex(
                         entry.cw,
                         dark=_is_dark_theme(),
                     )
                 )
-            if column in (6, 7):
+            if column in (Column.DAILY_OVERTIME, Column.MONTHLY_BALANCE):
                 overtime_color = overtime_text_color_hex(
                     getattr(entry, ENTRY_FIELDS[column]),
                     dark=_is_dark_theme(),
@@ -243,57 +256,66 @@ class MonthTableModel(QAbstractTableModel):
         if not self._entries:
             return
 
-        top_left = self.index(0, 0)
-        bottom_right = self.index(len(self._entries) - 1, len(COLUMNS) - 1)
+        top_left = self.index(0, Column.CALENDAR_WEEK)
+        bottom_right = self.index(
+            len(self._entries) - 1,
+            Column.MONTHLY_BALANCE,
+        )
         self.dataChanged.emit(top_left, bottom_right, roles or [])
 
     def _row_texture_state(self, entry):
         if self.month_closed:
-            return "closed"
+            return RowTextureState.CLOSED
 
         try:
-            entry_date = datetime.strptime(entry.date, "%d.%m.%Y").date()
+            entry_date = datetime.strptime(entry.date, DATE_FORMAT).date()
         except (TypeError, ValueError):
             return ""
 
-        if entry.row_color == "missing_times" and entry_date > self._today:
-            return "missing_times"
+        if entry.row_color == DayStatus.MISSING_TIMES and entry_date > self._today:
+            return RowTextureState.MISSING_TIMES
         return ""
 
     def _badge_data(self, entry, column):
-        if column == 2:
+        if column == Column.SPECIAL_DAY:
             return {
-                "texts": [entry.special or "Normal day"],
-                "state": entry.row_color or "empty",
+                "texts": [entry.special or NORMAL_DAY],
+                "state": entry.row_color or BadgeState.EMPTY,
                 "full_width": True,
                 "plain": self.month_closed,
             }
 
-        if column == 5:
-            value = entry.interruption or "00:00"
+        if column == Column.INTERRUPTION:
+            value = entry.interruption or ZERO_DURATION
             parsed = parse_interruption_input(value)
             total_pause_time = (
-                hours_to_hhmm(parsed.hours) if parsed is not None else "00:00"
+                hours_to_hhmm(parsed.hours)
+                if parsed is not None
+                else ZERO_DURATION
             )
-            has_periods = "-" in value
+            has_periods = PERIOD_SEPARATOR in value
             if self.month_closed:
                 texts = (
-                    [part.strip() for part in value.split(";") if part.strip()]
+                    [
+                        part.strip()
+                        for part in value.split(INTERRUPTION_SEPARATOR)
+                        if part.strip()
+                    ]
                     if has_periods
                     else [value]
                 )
                 return {
-                    "kind": "interruption",
+                    "kind": BadgeKind.INTERRUPTION,
                     "texts": texts,
                     "items": [
                         {
                             "text": text,
-                            "state": "info",
-                            "complete": not text.endswith("-..."),
+                            "state": BadgeState.INFO,
+                            "complete": not is_open_interruption_period(text),
                         }
                         for text in texts
                     ],
-                    "state": "info",
+                    "state": BadgeState.INFO,
                     "total_pause_time": total_pause_time,
                     "plain": True,
                 }
@@ -301,49 +323,62 @@ class MonthTableModel(QAbstractTableModel):
             texts = []
             items = []
             if has_periods:
-                texts = [part.strip() for part in value.split(";") if part.strip()]
+                texts = [
+                    part.strip()
+                    for part in value.split(INTERRUPTION_SEPARATOR)
+                    if part.strip()
+                ]
                 items = [
                     {
                         "text": text,
-                        "state": "info",
-                        "complete": not text.endswith("-..."),
-                        "target": {"action": "edit", "period_index": position},
+                        "state": BadgeState.INFO,
+                        "complete": not is_open_interruption_period(text),
+                        "target": {
+                            "action": InterruptionAction.EDIT,
+                            "period_index": position,
+                        },
                     }
                     for position, text in enumerate(texts)
                 ]
-            elif value not in ("", "00:00"):
+            elif value not in ("", ZERO_DURATION):
                 texts = [value]
                 items = [
                     {
                         "text": value,
-                        "state": "info",
+                        "state": BadgeState.INFO,
                         "complete": True,
-                        "target": {"action": "replace", "period_index": 0},
+                        "target": {
+                            "action": InterruptionAction.REPLACE,
+                            "period_index": 0,
+                        },
                     }
                 ]
 
-            active = value not in ("", "00:00")
+            active = value not in ("", ZERO_DURATION)
             if parsed is None or not parsed.has_incomplete:
                 items.append(
                     {
                         "text": "+",
-                        "icon": "add",
-                        "state": "empty",
-                        "target": {"action": "add", "period_index": None},
+                        "icon": InterruptionAction.ADD,
+                        "state": BadgeState.EMPTY,
+                        "target": {
+                            "action": InterruptionAction.ADD,
+                            "period_index": None,
+                        },
                     }
                 )
             return {
-                "kind": "interruption",
+                "kind": BadgeKind.INTERRUPTION,
                 "texts": texts if texts else ["+"],
                 "items": items,
-                "state": "info" if active else "empty",
+                "state": BadgeState.INFO if active else BadgeState.EMPTY,
                 "total_pause_time": total_pause_time,
             }
 
-        value = getattr(entry, ENTRY_FIELDS[column]) or "00:00"
+        value = getattr(entry, ENTRY_FIELDS[column]) or UNSET_TIME
         if (
-            column == 4
-            and value == "00:00"
+            column == Column.END
+            and value == UNSET_TIME
             and not self.month_closed
             and self.show_expected_end
         ):
@@ -355,12 +390,14 @@ class MonthTableModel(QAbstractTableModel):
             if expected is not None:
                 return {
                     "texts": [expected],
-                    "state": "expected",
+                    "state": BadgeState.EXPECTED,
                     "outline": True,
                 }
         return {
             "texts": [value],
-            "state": "success" if value != "00:00" else "empty",
+            "state": (
+                BadgeState.SUCCESS if value != UNSET_TIME else BadgeState.EMPTY
+            ),
             "plain": self.month_closed,
         }
 
@@ -386,29 +423,30 @@ class MonthTableModel(QAbstractTableModel):
         value = str(value).strip()
 
         if column in TIME_COLUMNS:
-            value = "00:00" if value == "" else coerce_time_input(value)
+            value = UNSET_TIME if value == "" else coerce_time_input(value)
             if value is None:
                 QMessageBox.warning(
                     None,
                     "Invalid time",
-                    "Time must be HH:MM (00:00-23:59)",
+                    f"Time must be HH:MM ({UNSET_TIME}-{END_OF_DAY})",
                 )
                 return False
-        elif column == 5:
+        elif column == Column.INTERRUPTION:
             if parse_interruption_input(value) is None:
                 QMessageBox.warning(
                     None,
                     "Invalid interruption",
                     "Use HH:MM or periods such as "
-                    "12:30-13:00;14:00-16:42. Use 12:30-... for a "
+                    "12:30-13:00;14:00-16:42. Use "
+                    f"12:30-{OPEN_END_MARKER} for a "
                     "pause without an end.",
                 )
                 return False
 
             value = coerce_interruption_input(value)
 
-        if column == 2 and value == "":
-            value = "Normal day"
+        if column == Column.SPECIAL_DAY and value == "":
+            value = NORMAL_DAY
 
         self._entries[index.row()] = replace(
             self._entries[index.row()],
@@ -440,8 +478,11 @@ class MonthTableModel(QAbstractTableModel):
         self.overtimeChanged.emit(overtime)
 
         if self._entries:
-            top_left = self.index(0, 0)
-            bottom_right = self.index(len(self._entries) - 1, len(COLUMNS) - 1)
+            top_left = self.index(0, Column.CALENDAR_WEEK)
+            bottom_right = self.index(
+                len(self._entries) - 1,
+                Column.MONTHLY_BALANCE,
+            )
             self.dataChanged.emit(top_left, bottom_right)
         return self._entries
 
