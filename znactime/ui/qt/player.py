@@ -2,15 +2,18 @@ from datetime import datetime
 
 from znactime.core.constants import TIME_FORMAT
 from znactime.ui.qt import (
-    QApplication,
     QHBoxLayout,
     QLabel,
-    QPalette,
     QPushButton,
     QTimer,
     Signal,
     Qt,
     QWidget,
+)
+from znactime.ui.qt.color_scheme import (
+    is_dark_theme,
+    primary_hover_color,
+    theme_color,
 )
 from znactime.ui.qt.workday_session import (
     PAUSE_DATE_KEY,
@@ -135,32 +138,18 @@ class WorkdayBar(QWidget):
             )
 
     def apply_theme(self):
-        dark = (
-            QApplication.palette().color(QPalette.ColorRole.Window).lightness()
-            < 128
-        )
-        if dark:
-            surface = "#24222b"
-            border = "#3c3948"
-            text = "#f4f1f8"
-            muted = "#aaa5b4"
-            accent = "#9b83ef"
-            accent_hover = "#ab96f5"
-            stop = "#61343f"
-            stop_hover = "#74404d"
-            disabled = "#302d39"
-            disabled_text = "#77727f"
-        else:
-            surface = "#ffffff"
-            border = "#e3deec"
-            text = "#292531"
-            muted = "#716b7c"
-            accent = "#7657c4"
-            accent_hover = "#6848b5"
-            stop = "#f8dce2"
-            stop_hover = "#f2cbd4"
-            disabled = "#efedf2"
-            disabled_text = "#aaa5b0"
+        dark = is_dark_theme()
+        surface = theme_color("player.surface", dark)
+        border = theme_color("player.border", dark)
+        text = theme_color("player.text", dark)
+        muted = theme_color("player.muted", dark)
+        accent = theme_color("primary", dark)
+        accent_hover = primary_hover_color(dark)
+        on_primary = theme_color("on_primary", dark)
+        stop = theme_color("player.stop", dark)
+        stop_hover = theme_color("player.stop_hover", dark)
+        disabled = theme_color("player.disabled", dark)
+        disabled_text = theme_color("player.disabled_text", dark)
 
         self.setStyleSheet(
             "QWidget#workdayBar {"
@@ -183,7 +172,7 @@ class WorkdayBar(QWidget):
             "}"
             "QPushButton#primaryWorkdayButton {"
             f"background-color: {accent};"
-            "color: white;"
+            f"color: {on_primary};"
             "}"
             "QPushButton#primaryWorkdayButton:hover {"
             f"background-color: {accent_hover};"

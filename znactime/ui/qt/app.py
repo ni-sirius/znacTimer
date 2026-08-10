@@ -30,7 +30,6 @@ from znactime.ui.qt import (
     QIcon,
     QMainWindow,
     QMessageBox,
-    QPalette,
     QPixmap,
     QTimer,
     QVBoxLayout,
@@ -43,6 +42,7 @@ from znactime.ui.qt.player import (
     WorkdayBar,
     WorkdayState,
 )
+from znactime.ui.qt.color_scheme import is_dark_theme, theme_color
 from znactime.ui.qt.workday_session import (
     PAUSE_DATE_KEY,
     PAUSE_START_KEY,
@@ -242,11 +242,7 @@ class TimeTrackerApp(QMainWindow):
         self.workday_bar.apply_theme()
 
     def apply_shell_theme(self):
-        dark = (
-            QApplication.palette().color(QPalette.ColorRole.Window).lightness()
-            < 128
-        )
-        background = "#19171f" if dark else "#f1edf8"
+        background = theme_color("shell.background", is_dark_theme())
         self.setStyleSheet(
             "QWidget#appBackground {"
             f"background-color: {background};"

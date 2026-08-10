@@ -9,6 +9,7 @@ from znactime.ui.qt import (
     Signal,
     Qt,
 )
+from znactime.ui.qt.color_scheme import initialize_color_schemes
 
 
 SYSTEM_THEME = "system"
@@ -30,6 +31,15 @@ class ThemeController(QObject):
         )
         self.system_palette = QPalette(self.app.palette())
         self.system_color_scheme = self.app.styleHints().colorScheme()
+        self._changing_color_scheme = False
+        self.themes = initialize_color_schemes()
+        color_scheme_changed = getattr(
+            self.app.styleHints(),
+            "colorSchemeChanged",
+            None,
+        )
+        if color_scheme_changed is not None:
+            color_scheme_changed.connect(self._on_system_color_scheme_changed)
         application_font = QFont(self.app.font())
         application_font.setPointSize(10)
         self.app.setFont(application_font)
@@ -44,16 +54,15 @@ class ThemeController(QObject):
         self.mode = mode
         if mode == SYSTEM_THEME:
             self._set_color_scheme(self.system_color_scheme)
-            self.app.setPalette(self.system_palette)
+            theme_id = self._system_theme_id()
         elif mode == LIGHT_THEME:
             self._set_color_scheme(Qt.ColorScheme.Light)
-            self.app.setPalette(self._light_palette())
+            theme_id = LIGHT_THEME
         else:
             self._set_color_scheme(Qt.ColorScheme.Dark)
-            if self.system_color_scheme == Qt.ColorScheme.Dark:
-                self.app.setPalette(self.system_palette)
-            else:
-                self.app.setPalette(self._dark_palette())
+            theme_id = DARK_THEME
+
+        self.app.setPalette(self._palette(theme_id))
 
         if persist:
             self.settings.setValue(THEME_SETTING_KEY, mode)
@@ -65,13 +74,37 @@ class ThemeController(QObject):
             return True
         if self.mode == LIGHT_THEME:
             return False
-        return self._palette_is_dark(self.system_palette)
+        return self._system_theme_id() == DARK_THEME
 
     def _palette_is_dark(self, palette):
         return palette.color(QPalette.ColorRole.Window).lightness() < 128
 
     def _set_color_scheme(self, color_scheme):
-        self.app.styleHints().setColorScheme(color_scheme)
+        self._changing_color_scheme = True
+        try:
+            self.app.styleHints().setColorScheme(color_scheme)
+        finally:
+            self._changing_color_scheme = False
+
+    def _system_theme_id(self):
+        if self.system_color_scheme == Qt.ColorScheme.Dark:
+            return DARK_THEME
+        if self.system_color_scheme == Qt.ColorScheme.Light:
+            return LIGHT_THEME
+        return (
+            DARK_THEME
+            if self._palette_is_dark(self.system_palette)
+            else LIGHT_THEME
+        )
+
+    def _on_system_color_scheme_changed(self, color_scheme):
+        if self._changing_color_scheme:
+            return
+        self.system_color_scheme = color_scheme
+        if self.mode != SYSTEM_THEME:
+            return
+        self.app.setPalette(self._palette(self._system_theme_id()))
+        self.themeChanged.emit(SYSTEM_THEME)
 
     def _set_role(self, palette, role, active, disabled=None):
         if disabled is None:
@@ -80,40 +113,68 @@ class ThemeController(QObject):
             palette.setColor(group, role, QColor(active))
         palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(disabled))
 
-    def _light_palette(self):
+    def _palette(self, theme_id):
+        theme = self.themes[theme_id]
         palette = QPalette(self.system_palette)
-        self._set_role(palette, QPalette.ColorRole.Window, "#f5f5f5")
-        self._set_role(palette, QPalette.ColorRole.WindowText, "#202124", "#777777")
-        self._set_role(palette, QPalette.ColorRole.Base, "#ffffff", "#eeeeee")
-        self._set_role(palette, QPalette.ColorRole.AlternateBase, "#f0f2f5", "#e5e5e5")
-        self._set_role(palette, QPalette.ColorRole.Text, "#202124", "#777777")
-        self._set_role(palette, QPalette.ColorRole.BrightText, "#000000", "#777777")
-        self._set_role(palette, QPalette.ColorRole.PlaceholderText, "#6f7378", "#9a9a9a")
-        self._set_role(palette, QPalette.ColorRole.Button, "#f5f5f5", "#e8e8e8")
-        self._set_role(palette, QPalette.ColorRole.ButtonText, "#202124", "#777777")
-        self._set_role(palette, QPalette.ColorRole.Highlight, "#2f6fed", "#9ab5ef")
-        self._set_role(palette, QPalette.ColorRole.HighlightedText, "#ffffff", "#ffffff")
-        self._set_role(palette, QPalette.ColorRole.ToolTipBase, "#ffffff")
-        self._set_role(palette, QPalette.ColorRole.ToolTipText, "#202124")
-        self._set_role(palette, QPalette.ColorRole.Link, "#175cd3")
-        self._set_role(palette, QPalette.ColorRole.LinkVisited, "#6941c6")
-        return palette
-
-    def _dark_palette(self):
-        palette = QPalette(self.system_palette)
-        self._set_role(palette, QPalette.ColorRole.Window, "#202124")
-        self._set_role(palette, QPalette.ColorRole.WindowText, "#f1f3f4", "#8b8d91")
-        self._set_role(palette, QPalette.ColorRole.Base, "#151719", "#25272a")
-        self._set_role(palette, QPalette.ColorRole.AlternateBase, "#24272b", "#2b2e32")
-        self._set_role(palette, QPalette.ColorRole.Text, "#f1f3f4", "#8b8d91")
-        self._set_role(palette, QPalette.ColorRole.BrightText, "#ffffff", "#8b8d91")
-        self._set_role(palette, QPalette.ColorRole.PlaceholderText, "#a9adb3", "#777a80")
-        self._set_role(palette, QPalette.ColorRole.Button, "#2f3338", "#292c30")
-        self._set_role(palette, QPalette.ColorRole.ButtonText, "#f1f3f4", "#8b8d91")
-        self._set_role(palette, QPalette.ColorRole.Highlight, "#5b8def", "#435d91")
-        self._set_role(palette, QPalette.ColorRole.HighlightedText, "#ffffff", "#d7dbe0")
-        self._set_role(palette, QPalette.ColorRole.ToolTipBase, "#2f3338")
-        self._set_role(palette, QPalette.ColorRole.ToolTipText, "#f1f3f4")
-        self._set_role(palette, QPalette.ColorRole.Link, "#8ab4f8")
-        self._set_role(palette, QPalette.ColorRole.LinkVisited, "#c58af9")
+        roles = (
+            (QPalette.ColorRole.Window, "window", "window"),
+            (
+                QPalette.ColorRole.WindowText,
+                "window_text",
+                "window_text_disabled",
+            ),
+            (QPalette.ColorRole.Base, "base", "base_disabled"),
+            (
+                QPalette.ColorRole.AlternateBase,
+                "alternate_base",
+                "alternate_base_disabled",
+            ),
+            (QPalette.ColorRole.Text, "text", "text_disabled"),
+            (
+                QPalette.ColorRole.BrightText,
+                "bright_text",
+                "bright_text_disabled",
+            ),
+            (
+                QPalette.ColorRole.PlaceholderText,
+                "placeholder_text",
+                "placeholder_text_disabled",
+            ),
+            (QPalette.ColorRole.Button, "button", "button_disabled"),
+            (
+                QPalette.ColorRole.ButtonText,
+                "button_text",
+                "button_text_disabled",
+            ),
+        )
+        for role, active_key, disabled_key in roles:
+            self._set_role(
+                palette,
+                role,
+                theme.color(f"palette.{active_key}"),
+                theme.color(f"palette.{disabled_key}"),
+            )
+        self._set_role(
+            palette,
+            QPalette.ColorRole.Highlight,
+            theme.color("primary"),
+            theme.color("palette.highlight_disabled"),
+        )
+        self._set_role(
+            palette,
+            QPalette.ColorRole.HighlightedText,
+            theme.color("on_primary"),
+            theme.color("palette.highlighted_text_disabled"),
+        )
+        for role, key in (
+            (QPalette.ColorRole.ToolTipBase, "tooltip_base"),
+            (QPalette.ColorRole.ToolTipText, "tooltip_text"),
+            (QPalette.ColorRole.Link, "link"),
+        ):
+            self._set_role(palette, role, theme.color(f"palette.{key}"))
+        self._set_role(
+            palette,
+            QPalette.ColorRole.LinkVisited,
+            theme.color("primary"),
+        )
         return palette

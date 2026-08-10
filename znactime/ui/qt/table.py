@@ -11,7 +11,6 @@ from znactime.core.constants import (
     ZERO_DURATION,
 )
 from znactime.core.time_utils import hours_to_hhmm, parse_interruption_input
-from znactime.ui.constants import current_row_accent_hex, row_color_hex
 from znactime.ui.table_schema import COLUMNS, EDITABLE_COLUMNS, Column
 from znactime.ui.qt import (
     QAbstractItemDelegate,
@@ -30,7 +29,6 @@ from znactime.ui.qt import (
     QLineEdit,
     QKeySequence,
     QPainterPath,
-    QPalette,
     QPainter,
     QPixmap,
     QPen,
@@ -62,6 +60,12 @@ from znactime.ui.qt.table_contract import (
     InterruptionAction,
     RowTextureState,
 )
+from znactime.ui.qt.color_scheme import (
+    current_row_accent_hex,
+    is_dark_theme,
+    row_color_hex,
+    theme_color,
+)
 
 
 COLUMN_WEIGHTS = (1, 1, 2, 1, 1, 2, 1, 1)
@@ -79,8 +83,7 @@ ROW_STRIPE_SPACING = round(ROW_STRIPE_WIDTH * 2 * 1.41421356237)
 
 
 def _is_dark_theme():
-    window_color = QApplication.palette().color(QPalette.ColorRole.Window)
-    return window_color.lightness() < 128
+    return is_dark_theme()
 
 
 def _badge_text_color(fill, dark):
@@ -126,14 +129,15 @@ def _action_icon(action, color):
 
 
 def _row_texture_color(state, current=False):
+    dark = _is_dark_theme()
     if state == RowTextureState.CLOSED:
-        color = QColor("#929292" if _is_dark_theme() else "#c9c9c9")
+        color = QColor(theme_color("table.texture_closed", dark))
     else:
-        color = QColor(row_color_hex(state, dark=_is_dark_theme()))
+        color = QColor(row_color_hex(state, dark=dark))
     if not color.isValid():
         return QColor()
 
-    if _is_dark_theme():
+    if dark:
         color = color.lighter(145)
         alpha = 90 if current else 64
     else:
@@ -146,7 +150,7 @@ def _row_texture_color(state, current=False):
 
 
 def _row_texture_base_color():
-    return QColor("#1f2228" if _is_dark_theme() else "#ffffff")
+    return QColor(theme_color("table.texture_base", _is_dark_theme()))
 
 
 def _interruption_badge_rows(width, font, badge):
@@ -334,16 +338,12 @@ class IntervalEditor(QWidget):
             control.setFixedHeight(edit_height)
 
     def _apply_style(self):
-        if _is_dark_theme():
-            background = "#263f66"
-            text = "#d9e7ff"
-            border = "#c58af9"
-            separator = "#b8d4ff"
-        else:
-            background = "#e0edff"
-            text = "#1f4f8f"
-            border = "#6941c6"
-            separator = "#225ea8"
+        dark = _is_dark_theme()
+        background = theme_color("table.interval_background", dark)
+        text = theme_color("table.interval_text", dark)
+        border = theme_color("primary", dark)
+        on_primary = theme_color("on_primary", dark)
+        separator = theme_color("table.interval_separator", dark)
 
         self.remove_button.setIcon(_action_icon("remove", text))
 
@@ -354,7 +354,7 @@ class IntervalEditor(QWidget):
             f"border: {EDIT_BADGE_BORDER_WIDTH}px solid {border};"
             f"border-radius: {BADGE_CORNER_RADIUS}px;"
             f"selection-background-color: {border};"
-            "selection-color: white;"
+            f"selection-color: {on_primary};"
             "font-weight: 600;"
             "padding: 0 6px;"
             "}"
@@ -561,19 +561,15 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         )
 
     def _paint_cell_background(self, painter, option, index):
-        if _is_dark_theme():
-            divider_color = QColor("#343944")
-        else:
-            divider_color = QColor("#d8dce3")
+        dark = _is_dark_theme()
+        divider_color = QColor(theme_color("table.divider", dark))
 
         pixel_ratio = painter.device().devicePixelRatioF()
         separator_height = 1.0 / max(1.0, pixel_ratio)
         is_current_row = bool(index.data(CURRENT_ROW_ROLE))
         row_texture_state = index.data(ROW_TEXTURE_ROLE)
         if is_current_row:
-            divider_color = QColor(
-                current_row_accent_hex(dark=_is_dark_theme())
-            )
+            divider_color = QColor(current_row_accent_hex(dark=dark))
         cell_rect = QRectF(option.rect)
         expanded_rect = QRectF(
             cell_rect.x() - 1.0,
@@ -722,62 +718,39 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _badge_colors(self, state, hovered=False):
+        dark = _is_dark_theme()
         if hovered:
-            accent = current_row_accent_hex(dark=_is_dark_theme())
             return {
-                "fill": QColor(accent),
-                "text": QColor("#202124" if _is_dark_theme() else "#ffffff"),
+                "fill": QColor(theme_color("primary", dark)),
+                "text": QColor(theme_color("on_primary", dark)),
             }
 
         if state == BadgeState.EXPECTED:
-            if _is_dark_theme():
-                background = "#1f2228"
-                expected = "#ff8796"
-            else:
-                background = "#ffffff"
-                expected = "#c23b4d"
+            background = theme_color("table.expected_background", dark)
+            expected = theme_color("table.expected_text", dark)
             return {
                 "fill": QColor(background),
                 "text": QColor(expected),
                 "border": QColor(expected),
             }
 
-        if _is_dark_theme():
-            palette = {
-                BadgeState.SUCCESS: {
-                    "fill": QColor("#244d36"),
-                    "text": QColor("#a8f0c1"),
-                },
-                BadgeState.INFO: {
-                    "fill": QColor("#263f66"),
-                    "text": QColor("#b8d4ff"),
-                },
-                BadgeState.EMPTY: {
-                    "fill": QColor("#303540"),
-                    "text": QColor("#b9c0ca"),
-                },
+        palette = {
+            badge_state: {
+                "fill": QColor(theme_color(f"table.{prefix}_fill", dark)),
+                "text": QColor(theme_color(f"table.{prefix}_text", dark)),
             }
-        else:
-            palette = {
-                BadgeState.SUCCESS: {
-                    "fill": QColor("#ddf8e7"),
-                    "text": QColor("#146c43"),
-                },
-                BadgeState.INFO: {
-                    "fill": QColor("#e0edff"),
-                    "text": QColor("#225ea8"),
-                },
-                BadgeState.EMPTY: {
-                    "fill": QColor("#f0f2f5"),
-                    "text": QColor("#68717d"),
-                },
-            }
-        row_color = row_color_hex(state, dark=_is_dark_theme())
+            for badge_state, prefix in (
+                (BadgeState.SUCCESS, "success"),
+                (BadgeState.INFO, "info"),
+                (BadgeState.EMPTY, "empty"),
+            )
+        }
+        row_color = row_color_hex(state, dark=dark)
         if row_color:
             fill = QColor(row_color)
             return {
                 "fill": fill,
-                "text": _badge_text_color(fill, dark=_is_dark_theme()),
+                "text": _badge_text_color(fill, dark=dark),
             }
         return palette.get(state, palette[BadgeState.EMPTY])
 
@@ -977,7 +950,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             )
             background = colors["fill"].name()
             text = colors["text"].name()
-            accent = current_row_accent_hex(dark=_is_dark_theme())
+            dark = _is_dark_theme()
+            accent = theme_color("primary", dark)
+            on_primary = theme_color("on_primary", dark)
 
             editor.setAutoFillBackground(False)
             editor.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -991,7 +966,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 f"border: {EDIT_BADGE_BORDER_WIDTH}px solid {accent};"
                 f"border-radius: {BADGE_CORNER_RADIUS}px;"
                 f"selection-background-color: {accent};"
-                "selection-color: white;"
+                f"selection-color: {on_primary};"
                 "font-weight: 600;"
                 "padding: 0 8px;"
                 "}"
@@ -1134,22 +1109,14 @@ class MonthTableView(QTableView):
         self.apply_modern_style()
 
     def apply_modern_style(self):
-        if _is_dark_theme():
-            table_background = "#1f2228"
-            border = "#353a44"
-            header_background = "#343944"
-            header_text = "#eef0f4"
-            scrollbar_track = "#252932"
-            scrollbar_handle = "#555c69"
-            scrollbar_hover = "#686f7d"
-        else:
-            table_background = "#ffffff"
-            border = "#e3e6eb"
-            header_background = "#C5C8CC"
-            header_text = "#262934"
-            scrollbar_track = "#eef0f3"
-            scrollbar_handle = "#c2c6ce"
-            scrollbar_hover = "#aeb3bd"
+        dark = _is_dark_theme()
+        table_background = theme_color("table.background", dark)
+        border = theme_color("table.border", dark)
+        header_background = theme_color("table.header_background", dark)
+        header_text = theme_color("table.header_text", dark)
+        scrollbar_track = theme_color("table.scrollbar_track", dark)
+        scrollbar_handle = theme_color("table.scrollbar_handle", dark)
+        scrollbar_hover = theme_color("table.scrollbar_hover", dark)
 
         self.setStyleSheet(
             "QTableView {"
@@ -1544,10 +1511,9 @@ class TableWidget(QWidget):
         layout.addWidget(self.view)
 
     def _apply_shadow_theme(self):
-        if _is_dark_theme():
-            self.shadow.setColor(QColor(0, 0, 0, 135))
-        else:
-            self.shadow.setColor(QColor(63, 49, 91, 55))
+        self.shadow.setColor(
+            QColor(theme_color("table.shadow", _is_dark_theme()))
+        )
 
     def _update_content_height(self, view_height):
         layout = self.layout()

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "id": "dark",
+  "appearance": "dark",
+  "colors": {
+    "primary": "#c58af9",
+    "on_primary": "#202124",
+    "tokens": {
+      "content_text": "#f1f3f4",
+      "disabled_text": "#8b8d91",
+      "table_surface": "#1f2228",
+      "panel_surface": "#24222b",
+      "panel_border": "#3c3948",
+      "panel_text": "#f4f1f8",
+      "panel_muted": "#aaa5b4",
+      "danger_text": "#ff8796",
+      "info_surface": "#263f66",
+      "info_text": "#b8d4ff"
+    },
+    "palette": {
+      "window": "#202124",
+      "window_text": "@tokens.content_text",
+      "window_text_disabled": "@tokens.disabled_text",
+      "base": "#151719",
+      "base_disabled": "#25272a",
+      "alternate_base": "#24272b",
+      "alternate_base_disabled": "#2b2e32",
+      "text": "@tokens.content_text",
+      "text_disabled": "@tokens.disabled_text",
+      "bright_text": "#ffffff",
+      "bright_text_disabled": "@tokens.disabled_text",
+      "placeholder_text": "#a9adb3",
+      "placeholder_text_disabled": "#777a80",
+      "button": "#2f3338",
+      "button_disabled": "#292c30",
+      "button_text": "@tokens.content_text",
+      "button_text_disabled": "@tokens.disabled_text",
+      "highlight_disabled": "#435d91",
+      "highlighted_text_disabled": "#d7dbe0",
+      "tooltip_base": "#2f3338",
+      "tooltip_text": "@tokens.content_text",
+      "link": "#8ab4f8"
+    },
+    "shell": {
+      "background": "#19171f"
+    },
+    "header": {
+      "surface": "@tokens.panel_surface",
+      "border": "@tokens.panel_border",
+      "text": "@tokens.panel_text",
+      "muted": "@tokens.panel_muted",
+      "control": "#302d39",
+      "control_hover": "#393543",
+      "badge": "#302b43"
+    },
+    "menu": {
+      "surface": "#1e1c24",
+      "surface_hover": "#302b3b",
+      "border": "#393542",
+      "text": "@tokens.panel_text",
+      "muted": "#817a8d"
+    },
+    "player": {
+      "surface": "@tokens.panel_surface",
+      "border": "@tokens.panel_border",
+      "text": "@tokens.panel_text",
+      "muted": "@tokens.panel_muted",
+      "stop": "#61343f",
+      "stop_hover": "#74404d",
+      "disabled": "#302d39",
+      "disabled_text": "#77727f"
+    },
+    "model": {
+      "editing_text": "#8b8d91",
+      "read_only_text": "#bdc1c6",
+      "text": "@tokens.content_text",
+      "calendar_week_primary": "@tokens.content_text",
+      "calendar_week_alternate": "#7f8b9b",
+      "overtime_positive": "#78d99c",
+      "overtime_negative": "@tokens.danger_text"
+    },
+    "row": {
+      "weekend": "#2b3d5b",
+      "weekend_today": "#3a5d8d",
+      "special_day": "#3d3150",
+      "special_day_today": "#594477",
+      "missing_times": "#512e3a",
+      "missing_times_today": "#743b4b",
+      "valid_day": "#2a4938",
+      "valid_day_today": "#396b4e"
+    },
+    "table": {
+      "background": "@tokens.table_surface",
+      "border": "#353a44",
+      "header_background": "#343944",
+      "header_text": "#eef0f4",
+      "scrollbar_track": "#252932",
+      "scrollbar_handle": "#555c69",
+      "scrollbar_hover": "#686f7d",
+      "divider": "#343944",
+      "texture_closed": "#929292",
+      "texture_base": "@tokens.table_surface",
+      "shadow": "#87000000",
+      "interval_background": "@tokens.info_surface",
+      "interval_text": "#d9e7ff",
+      "interval_separator": "@tokens.info_text",
+      "expected_background": "@tokens.table_surface",
+      "expected_text": "@tokens.danger_text",
+      "success_fill": "#244d36",
+      "success_text": "#a8f0c1",
+      "info_fill": "@tokens.info_surface",
+      "info_text": "@tokens.info_text",
+      "empty_fill": "#303540",
+      "empty_text": "#b9c0ca"
+    }
+  }
+}

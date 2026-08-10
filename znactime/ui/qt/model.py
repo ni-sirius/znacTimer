@@ -25,9 +25,11 @@ from znactime.core.time_utils import (
     parse_interruption_input,
 )
 from znactime.storage import csv_store
-from znactime.ui.constants import (
+from znactime.ui.qt.color_scheme import (
     calendar_week_text_color_hex,
+    is_dark_theme,
     overtime_text_color_hex,
+    theme_color,
 )
 from znactime.ui.table_schema import (
     BADGE_COLUMNS,
@@ -60,11 +62,7 @@ from znactime.ui.qt.table_contract import (
 
 
 def _is_dark_theme():
-    app = QApplication.instance()
-    if app is None:
-        return False
-    window_color = app.palette().color(app.palette().ColorRole.Window)
-    return window_color.lightness() < 128
+    return is_dark_theme()
 
 
 class MonthTableModel(QAbstractTableModel):
@@ -210,25 +208,26 @@ class MonthTableModel(QAbstractTableModel):
         is_current_row = entry.row_color.endswith("_today")
 
         if role == Qt.ItemDataRole.ForegroundRole:
+            dark = _is_dark_theme()
             if (index.row(), index.column()) in self._editing_cells:
-                return QColor("#8b8d91" if _is_dark_theme() else "#7a7f87")
+                return QColor(theme_color("model.editing_text", dark))
             if column in (Column.CALENDAR_WEEK, Column.DATE):
                 return QColor(
                     calendar_week_text_color_hex(
                         entry.cw,
-                        dark=_is_dark_theme(),
+                        dark=dark,
                     )
                 )
             if column in (Column.DAILY_OVERTIME, Column.MONTHLY_BALANCE):
                 overtime_color = overtime_text_color_hex(
                     getattr(entry, ENTRY_FIELDS[column]),
-                    dark=_is_dark_theme(),
+                    dark=dark,
                 )
                 if overtime_color:
                     return QColor(overtime_color)
             if not is_editable:
-                return QColor("#bdc1c6" if _is_dark_theme() else "#5f6368")
-            return QColor("#f1f3f4" if _is_dark_theme() else "#202124")
+                return QColor(theme_color("model.read_only_text", dark))
+            return QColor(theme_color("model.text", dark))
 
         if role == Qt.ItemDataRole.FontRole and not is_editable:
             font = QApplication.font()

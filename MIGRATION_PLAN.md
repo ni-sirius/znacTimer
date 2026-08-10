@@ -380,7 +380,8 @@ upgraded without risking existing time data, and rolled back independently of us
 2. Add a checked-in PyInstaller spec and a build script. The build must:
    - start from a clean virtual environment;
    - use `znactime.__main__:main` as the application entry point;
-   - include Qt platform/image plugins and `ui/qt/assets/*.svg`;
+   - include Qt platform/image plugins, `ui/qt/assets/app_icon.png`, and
+     `ui/qt/themes/*.json`;
    - fail when a required asset or dependency is missing; and
    - write generated files only below `build/` and `dist/`.
 3. Run the same build from CI and from a documented local command. Do not hand-edit the

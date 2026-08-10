@@ -1,5 +1,6 @@
 from znactime.config import APP_NAME
-from znactime.ui.qt import QAction, QApplication, QMenuBar, QPalette
+from znactime.ui.qt import QAction, QApplication, QMenuBar
+from znactime.ui.qt.color_scheme import is_dark_theme, theme_color
 
 
 class MenuBar(QMenuBar):
@@ -39,24 +40,13 @@ class MenuBar(QMenuBar):
         self.apply_theme()
 
     def apply_theme(self):
-        dark = (
-            QApplication.palette().color(QPalette.ColorRole.Window).lightness()
-            < 128
-        )
-        if dark:
-            surface = "#1e1c24"
-            surface_hover = "#302b3b"
-            border = "#393542"
-            text = "#f4f1f8"
-            muted = "#817a8d"
-            accent = "#b7a2ff"
-        else:
-            surface = "#ffffff"
-            surface_hover = "#f1ecfa"
-            border = "#e3deec"
-            text = "#292531"
-            muted = "#b7b0c1"
-            accent = "#6f52b5"
+        dark = is_dark_theme()
+        surface = theme_color("menu.surface", dark)
+        surface_hover = theme_color("menu.surface_hover", dark)
+        border = theme_color("menu.border", dark)
+        text = theme_color("menu.text", dark)
+        muted = theme_color("menu.muted", dark)
+        accent = theme_color("primary", dark)
 
         self.setStyleSheet(
             "QMenuBar#mainMenu {"

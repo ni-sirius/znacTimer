@@ -1,19 +1,22 @@
 from html import escape
-from pathlib import Path
 
 from znactime.core.constants import ZERO_DURATION
-from znactime.ui.constants import MONTHS, overtime_text_color_hex
+from znactime.ui.constants import MONTHS
 from znactime.ui.qt import (
-    QApplication,
     QComboBox,
     QHBoxLayout,
     QLabel,
-    QPalette,
     QSpinBox,
     Signal,
     Qt,
     QWidget,
 )
+from znactime.ui.qt.color_scheme import (
+    is_dark_theme,
+    overtime_text_color_hex,
+    theme_color,
+)
+from znactime.ui.qt.theme_assets import themed_chevron_paths
 
 
 class HeaderWidget(QWidget):
@@ -73,31 +76,20 @@ class HeaderWidget(QWidget):
         )
 
     def apply_theme(self):
-        assets_dir = Path(__file__).with_name("assets").as_posix()
-        up_arrow = f"{assets_dir}/chevron_up.svg"
-        down_arrow = f"{assets_dir}/chevron_down.svg"
-        dark = (
-            QApplication.palette().color(QPalette.ColorRole.Window).lightness()
-            < 128
+        dark = is_dark_theme()
+        surface = theme_color("header.surface", dark)
+        border = theme_color("header.border", dark)
+        text = theme_color("header.text", dark)
+        muted = theme_color("header.muted", dark)
+        control = theme_color("header.control", dark)
+        control_hover = theme_color("header.control_hover", dark)
+        badge = theme_color("header.badge", dark)
+        accent = theme_color("primary", dark)
+        up_arrow, down_arrow = themed_chevron_paths(dark)
+        pressed_up_arrow, pressed_down_arrow = themed_chevron_paths(
+            dark,
+            inverted=True,
         )
-        if dark:
-            surface = "#24222b"
-            border = "#3c3948"
-            text = "#f4f1f8"
-            muted = "#aaa5b4"
-            control = "#302d39"
-            control_hover = "#393543"
-            badge = "#302b43"
-            accent = "#b7a2ff"
-        else:
-            surface = "#ffffff"
-            border = "#e3deec"
-            text = "#24212d"
-            muted = "#716b7c"
-            control = "#f7f5fa"
-            control_hover = "#f0ecf7"
-            badge = "#f0ebfa"
-            accent = "#6f52b5"
 
         self.setStyleSheet(
             "QWidget#monthHeader {"
@@ -158,10 +150,16 @@ class HeaderWidget(QWidget):
             "height: 12px;"
             "}"
             "QSpinBox#periodControl::up-arrow {"
-            f"image: url({up_arrow});"
+            f'image: url("{up_arrow}");'
             "}"
             "QSpinBox#periodControl::down-arrow {"
-            f"image: url({down_arrow});"
+            f'image: url("{down_arrow}");'
+            "}"
+            "QSpinBox#periodControl::up-arrow:pressed {"
+            f'image: url("{pressed_up_arrow}");'
+            "}"
+            "QSpinBox#periodControl::down-arrow:pressed {"
+            f'image: url("{pressed_down_arrow}");'
             "}"
             "QComboBox#periodControl {"
             "padding-right: 34px;"
@@ -176,13 +174,18 @@ class HeaderWidget(QWidget):
             "QComboBox#periodControl::drop-down:hover {"
             f"background-color: {badge};"
             "}"
-            "QComboBox#periodControl::drop-down:pressed {"
+            "QComboBox#periodControl::drop-down:pressed,"
+            "QComboBox#periodControl::drop-down:on {"
             f"background-color: {accent};"
             "}"
             "QComboBox#periodControl::down-arrow {"
-            f"image: url({down_arrow});"
+            f'image: url("{down_arrow}");'
             "width: 12px;"
             "height: 12px;"
+            "}"
+            "QComboBox#periodControl::down-arrow:pressed,"
+            "QComboBox#periodControl::down-arrow:on {"
+            f'image: url("{pressed_down_arrow}");'
             "}"
             "QComboBox#periodControl QAbstractItemView {"
             f"background-color: {surface};"
@@ -235,10 +238,7 @@ class HeaderWidget(QWidget):
     def set_overtime_text(self, text, closed=False):
         self._overtime_text = str(text)
         self._month_closed = bool(closed)
-        dark = (
-            QApplication.palette().color(QPalette.ColorRole.Window).lightness()
-            < 128
-        )
+        dark = is_dark_theme()
         self._render_overtime_text(dark)
 
     def _render_overtime_text(self, dark):

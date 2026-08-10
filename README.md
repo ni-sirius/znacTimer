@@ -110,6 +110,16 @@ Use the **Settings** menu to configure:
 - expected workday duration;
 - whether projected end times are shown.
 
+### Theme colors
+
+The complete color schemes live in `znactime/ui/qt/themes/light.json` and
+`znactime/ui/qt/themes/dark.json`. Both files expose the same properties and
+are loaded when the application starts. Within each theme, change `primary`
+once to update the shared accent used by controls, focus states, and badges.
+Other shared values are defined under `tokens` and reused with references such
+as `@tokens.panel_surface`. System appearance automatically selects the light
+or dark file.
+
 ## Development
 
 The application separates its calculation, storage, and UI layers:
