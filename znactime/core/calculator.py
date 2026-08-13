@@ -12,6 +12,7 @@ from znactime.core.constants import (
 )
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import (
+    hhmm_to_hours,
     hours_to_hhmm,
     interruption_has_outside_workday_period,
     interruption_input_or_zero,
@@ -19,6 +20,7 @@ from znactime.core.time_utils import (
     parse_interruption_input,
     time_input_or_zero,
 )
+
 
 def _is_today(date_str, today):
     try:
@@ -103,7 +105,12 @@ def recalculate(
                     entry.end,
                     entry.interruption,
                 )
-                daily_ot = worked - day_hours
+                expected_hours = (
+                    entry.expected_work_minutes / 60
+                    if entry.expected_work_minutes is not None
+                    else day_hours
+                )
+                daily_ot = worked - expected_hours
                 interruption = parse_interruption_input(entry.interruption)
                 interruption_is_invalid = (
                     interruption.has_incomplete
@@ -138,8 +145,13 @@ def recalculate(
                 if entry_is_today
                 else DayStatus.SPECIAL_DAY
             )
-
-        monthly_balance += daily_ot
+            if entry.daily_ot and entry.monthly_balance:
+                daily_ot = hhmm_to_hours(entry.daily_ot)
+                monthly_balance = hhmm_to_hours(entry.monthly_balance)
+            else:
+                monthly_balance += daily_ot
+        else:
+            monthly_balance += daily_ot
 
         calculated_entries.append(
             replace(

@@ -24,7 +24,7 @@ from znactime.core.time_utils import (
     expected_end_time,
     parse_interruption_input,
 )
-from znactime.storage import csv_store
+from znactime.storage.errors import StorageError
 from znactime.ui.qt.color_scheme import (
     calendar_week_text_color_hex,
     is_dark_theme,
@@ -59,6 +59,12 @@ from znactime.ui.qt.table_contract import (
     InterruptionAction,
     RowTextureState,
 )
+from znactime.ui.qt.repository_mapper import (
+    day_record_to_entry,
+    interruption_records,
+    parse_clock,
+    parse_display_date,
+)
 
 
 def _is_dark_theme():
@@ -68,8 +74,10 @@ def _is_dark_theme():
 class MonthTableModel(QAbstractTableModel):
     overtimeChanged = Signal(float)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, repository=None):
         super().__init__(parent)
+        self.repository = repository
+        self._records = {}
         self._entries: list[DayEntry] = []
         self.year = None
         self.month = None
@@ -110,6 +118,13 @@ class MonthTableModel(QAbstractTableModel):
     def set_entries(self, entries):
         self.beginResetModel()
         self._entries = list(entries)
+        self._records = {}
+        self.endResetModel()
+
+    def set_month_record(self, month_record):
+        self.beginResetModel()
+        self._records = {item.work_date: item for item in month_record.days}
+        self._entries = [day_record_to_entry(item) for item in month_record.days]
         self.endResetModel()
 
     def refresh_theme(self):
@@ -165,6 +180,8 @@ class MonthTableModel(QAbstractTableModel):
         for row, entry in enumerate(self._entries):
             if entry.date != date_text:
                 continue
+            if self.repository is not None and not self._persist_changes(entry, changes):
+                return False
             self._entries[row] = replace(entry, **changes)
             self.recalculate(autosave=True)
             return True
@@ -384,7 +401,11 @@ class MonthTableModel(QAbstractTableModel):
             expected = expected_end_time(
                 entry.start,
                 entry.interruption,
-                self.day_hours,
+                (
+                    entry.expected_work_minutes / 60
+                    if entry.expected_work_minutes is not None
+                    else self.day_hours
+                ),
             )
             if expected is not None:
                 return {
@@ -447,11 +468,73 @@ class MonthTableModel(QAbstractTableModel):
         if column == Column.SPECIAL_DAY and value == "":
             value = NORMAL_DAY
 
-        self._entries[index.row()] = replace(
-            self._entries[index.row()],
-            **{ENTRY_FIELDS[column]: value},
-        )
+        current = self._entries[index.row()]
+        changes = {ENTRY_FIELDS[column]: value}
+        if self.repository is not None and not self._persist_changes(current, changes):
+            return False
+        self._entries[index.row()] = replace(current, **changes)
         self.recalculate(autosave=True)
+        return True
+
+    def _persist_changes(self, entry, changes):
+        work_date = parse_display_date(entry.date)
+        record = self._records.get(work_date)
+        if record is None:
+            QMessageBox.warning(None, "Save failed", "The selected day is not loaded from SQLite.")
+            return False
+        fields = set()
+        values = {}
+        if "special" in changes:
+            fields.add("special_day")
+            values["special_day"] = changes["special"]
+        if "start" in changes:
+            fields.add("start_minute")
+            values["start_minute"] = parse_clock(changes["start"])
+        if "end" in changes:
+            fields.add("end_minute")
+            values["end_minute"] = parse_clock(changes["end"])
+        if "interruption" in changes:
+            duration, breaks = interruption_records(changes["interruption"])
+            if breaks:
+                available = list(record.breaks)
+                identified = []
+                for position, pause in enumerate(breaks):
+                    matching = next(
+                        (
+                            item for item in available
+                            if item.start_minute == pause.start_minute
+                            and item.end_minute == pause.end_minute
+                        ),
+                        None,
+                    )
+                    if matching is None and position < len(record.breaks):
+                        positional = record.breaks[position]
+                        matching = positional if positional in available else None
+                    if matching is not None:
+                        available.remove(matching)
+                    identified.append(
+                        replace(
+                            pause,
+                            public_id=matching.public_id if matching else "",
+                            revision=matching.revision if matching else 1,
+                        )
+                    )
+                fields.add("breaks")
+                values["breaks"] = tuple(identified)
+            else:
+                fields.add("break_duration_minutes")
+                values["break_duration_minutes"] = duration
+        try:
+            committed = self.repository.update_day(
+                work_date,
+                expected_revision=record.revision,
+                fields=frozenset(fields),
+                **values,
+            )
+        except (StorageError, ValueError) as error:
+            QMessageBox.warning(None, "Save failed", str(error))
+            return False
+        self._records[work_date] = committed
         return True
 
     def recalculate(self, today=None, autosave=True):
@@ -466,9 +549,6 @@ class MonthTableModel(QAbstractTableModel):
             today=today,
             month_closed=self.month_closed,
         )
-
-        if autosave and not self.month_closed and self.year is not None and self.month is not None:
-            csv_store.save_month(self.year, self.month, self._entries)
 
         if self._entries:
             overtime = hhmm_to_hours(self._entries[-1].monthly_balance)

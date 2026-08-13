@@ -263,6 +263,26 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].monthly_balance, "01:00")
         self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
+    def test_recalculate_closed_month_preserves_snapshot_results(self):
+        entries = [
+            DayEntry(
+                cw="",
+                date="17.06.2024",
+                special="Normal day",
+                start="08:00",
+                end="17:00",
+                interruption="01:00",
+                daily_ot="-01:30",
+                monthly_balance="-03:15",
+            )
+        ]
+
+        result = recalculate(entries, 10.0, 8.0, date(2024, 6, 18), True)
+
+        self.assertEqual(result[0].daily_ot, "-01:30")
+        self.assertEqual(result[0].monthly_balance, "-03:15")
+        self.assertEqual(result[0].row_color, DayStatus.SPECIAL_DAY)
+
     def test_recalculate_returns_new_entries(self):
         entry = DayEntry(
             cw="",

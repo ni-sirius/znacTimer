@@ -106,12 +106,7 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     app = QApplication.instance() or QApplication([])
 
-    with (
-        patch.object(TimeTrackerApp, "_finalize_stale_session", return_value=False),
-        patch("znactime.ui.qt.app.csv_store.is_month_closed", return_value=False),
-        patch("znactime.ui.qt.app.csv_store.get_carry_over", return_value=0.0),
-        patch("znactime.ui.qt.app.csv_store.load_month", return_value=[]),
-    ):
+    with patch.object(TimeTrackerApp, "_finalize_stale_session", return_value=False):
         window = TimeTrackerApp()
 
     window.theme_controller.set_mode(LIGHT_THEME, persist=False)

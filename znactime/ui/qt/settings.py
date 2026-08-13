@@ -244,9 +244,17 @@ class AppearanceDialog(SettingsDialog):
 
 
 class WorkScheduleWidget(QWidget):
-    def __init__(self, settings, parent=None):
+    def __init__(
+        self,
+        settings,
+        parent=None,
+        *,
+        initial_workday_minutes=None,
+        persist_workday=True,
+    ):
         super().__init__(parent)
         self.settings = settings
+        self.persist_workday = persist_workday
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -289,7 +297,11 @@ class WorkScheduleWidget(QWidget):
         day_hours, show_expected_end = load_work_schedule_settings(
             self.settings
         )
-        total_minutes = round(day_hours * 60)
+        total_minutes = (
+            round(day_hours * 60)
+            if initial_workday_minutes is None
+            else initial_workday_minutes
+        )
         self.workday_hours_box.setValue(total_minutes // 60)
         self.workday_minutes_box.setValue(total_minutes % 60)
         self.expected_end_checkbox.setChecked(show_expected_end)
@@ -312,16 +324,30 @@ class WorkScheduleWidget(QWidget):
             self.workday_minutes_box.blockSignals(was_blocked)
             total_minutes = MIN_WORKDAY_MINUTES
 
-        self.settings.setValue(WORKDAY_MINUTES_KEY, total_minutes)
+        if self.persist_workday:
+            self.settings.setValue(WORKDAY_MINUTES_KEY, total_minutes)
         self.settings.setValue(
             SHOW_EXPECTED_END_KEY,
             self.expected_end_checkbox.isChecked(),
         )
         self.settings.sync()
 
+    def day_minutes(self):
+        return self.workday_hours_box.value() * 60 + self.workday_minutes_box.value()
+
+    def show_expected_end(self):
+        return self.expected_end_checkbox.isChecked()
+
 
 class WorkScheduleDialog(SettingsDialog):
-    def __init__(self, parent, settings):
+    def __init__(
+        self,
+        parent,
+        settings,
+        *,
+        initial_workday_minutes=None,
+        persist_workday=True,
+    ):
         super().__init__(
             parent,
             "Work schedule",
@@ -329,5 +355,10 @@ class WorkScheduleDialog(SettingsDialog):
             height=300,
         )
 
-        self.schedule_widget = WorkScheduleWidget(settings, self)
+        self.schedule_widget = WorkScheduleWidget(
+            settings,
+            self,
+            initial_workday_minutes=initial_workday_minutes,
+            persist_workday=persist_workday,
+        )
         self.add_section("Work schedule", self.schedule_widget)

@@ -11,32 +11,73 @@ class MenuBar(QMenuBar):
         appearance_command,
         work_schedule_command,
         about_command,
+        export_month_command=None,
+        export_pdf_command=None,
+        backup_command=None,
+        import_csv_command=None,
     ):
         super().__init__(parent)
         self.setObjectName("mainMenu")
-        month_menu = self.addMenu("Month")
+        self.month_menu = self.addMenu("Month")
 
         self.close_month_action = QAction("Close Month", self)
         self.close_month_action.triggered.connect(close_month_command)
-        month_menu.addAction(self.close_month_action)
-        month_menu.addSeparator()
+        self.month_menu.addAction(self.close_month_action)
+        self.month_menu.addSeparator()
 
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(QApplication.quit)
-        month_menu.addAction(exit_action)
+        self.month_menu.addAction(exit_action)
 
-        settings_menu = self.addMenu("Settings")
+        data_commands = (
+            import_csv_command,
+            export_month_command,
+            export_pdf_command,
+            backup_command,
+        )
+        self.data_menu = None
+        if any(command is not None for command in data_commands):
+            self.data_menu = self.addMenu("Data")
+            if import_csv_command is not None:
+                import_csv_action = QAction("Import CSV Data...", self)
+                import_csv_action.triggered.connect(import_csv_command)
+                self.data_menu.addAction(import_csv_action)
+                if any(
+                    command is not None
+                    for command in (
+                        export_month_command,
+                        export_pdf_command,
+                        backup_command,
+                    )
+                ):
+                    self.data_menu.addSeparator()
+            if export_month_command is not None:
+                export_month_action = QAction("Export Month CSV", self)
+                export_month_action.triggered.connect(export_month_command)
+                self.data_menu.addAction(export_month_action)
+            if export_pdf_command is not None:
+                export_pdf_action = QAction("Export PDF", self)
+                export_pdf_action.triggered.connect(export_pdf_command)
+                self.data_menu.addAction(export_pdf_action)
+            if backup_command is not None:
+                if export_month_command is not None or export_pdf_command is not None:
+                    self.data_menu.addSeparator()
+                backup_action = QAction("Back Up Database", self)
+                backup_action.triggered.connect(backup_command)
+                self.data_menu.addAction(backup_action)
+
+        self.settings_menu = self.addMenu("Settings")
         appearance_action = QAction("Appearance", self)
         appearance_action.triggered.connect(appearance_command)
-        settings_menu.addAction(appearance_action)
+        self.settings_menu.addAction(appearance_action)
         work_schedule_action = QAction("Work schedule", self)
         work_schedule_action.triggered.connect(work_schedule_command)
-        settings_menu.addAction(work_schedule_action)
+        self.settings_menu.addAction(work_schedule_action)
 
-        help_menu = self.addMenu("Help")
+        self.help_menu = self.addMenu("Help")
         self.about_action = QAction(f"About {APP_NAME}", self)
         self.about_action.triggered.connect(about_command)
-        help_menu.addAction(self.about_action)
+        self.help_menu.addAction(self.about_action)
         self.apply_theme()
 
     def apply_theme(self):

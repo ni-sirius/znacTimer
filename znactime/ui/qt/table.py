@@ -1481,11 +1481,11 @@ class TableWidget(QWidget):
     contentHeightChanged = Signal(int)
     entriesChanged = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, repository=None):
         super().__init__(parent)
         self.setMinimumHeight(0)
         self._content_height = 0
-        self.model = MonthTableModel(self)
+        self.model = MonthTableModel(self, repository=repository)
         self.view = MonthTableView(self)
         self.view.setMinimumHeight(0)
         self.view.setModel(self.model)
@@ -1564,6 +1564,10 @@ class TableWidget(QWidget):
 
     def set_entries(self, entries):
         self.model.set_entries(entries)
+        QTimer.singleShot(0, self._update_view_geometry)
+
+    def set_month_record(self, month_record):
+        self.model.set_month_record(month_record)
         QTimer.singleShot(0, self._update_view_geometry)
 
     def refresh_theme(self):

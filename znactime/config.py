@@ -1,4 +1,5 @@
 APP_NAME = "znacTime"
+ORGANIZATION_NAME = "znac"
 VERSION = "0.5.3"
 DATA_DIR = "data"
 DEFAULT_DAY_HOURS = 8.0

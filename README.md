@@ -24,7 +24,8 @@ znacTime keeps time tracking close to the actual workday. Start, pause, resume,
 and stop from one compact control bar while the monthly view calculates daily
 overtime, running balance, calendar weeks, and carry-over automatically.
 
-- **Local-first:** monthly records stay in simple CSV files on your computer.
+- **Local-first:** SQLite is the authoritative data store on your computer;
+  CSV and PDF are explicit export formats.
 - **Fast daily controls:** start, pause, resume, and finish a workday without
   navigating away from the month.
 - **Flexible breaks:** record a duration or multiple interruption intervals,
@@ -92,14 +93,21 @@ python tracker.py
 
 ## Data and privacy
 
-znacTime does not require an account or cloud service. It stores working data
-under `data/<year>/`:
+znacTime does not require an account or cloud service. Its authoritative
+`znactime.db` SQLite database lives in the operating system's application-local
+data directory. On first launch, choose either a new empty database or a
+non-destructive import of the legacy `data/<year>/*.csv` tree. The importer
+validates all files before committing and never modifies the source files.
 
-- monthly CSV files contain the editable time records;
-- closed-month flags make archived months read-only;
-- annual summaries and generated PDF reports stay alongside the local data.
+Month status, immutable closed-month results, work schedules, per-day work
+limits, breaks, and the active timer are stored transactionally in the same
+database. Use **Month > Export Month CSV** or **Export PDF** for portable
+outputs; exports are not read back as live application state.
 
-Back up the `data/` directory to preserve your history.
+Use **Month > Back Up Database** to create a verified SQLite backup of the full
+working history. A normal filesystem copy of `znactime.db` should only be made
+while znacTime is closed. Keep the original legacy `data/` directory until the
+imported records have been reviewed.
 
 ## Settings
 
@@ -126,16 +134,32 @@ The application separates its calculation, storage, and UI layers:
 
 ```text
 znactime/
-├── core/        # time calculations, calendar logic, and models
-├── storage/     # CSV persistence and PDF export
+├── core/        # time calculations, calendar logic, and semantic models
+├── storage/     # SQLite repository, legacy import, and explicit exports
 └── ui/qt/       # PySide6 desktop interface
 ```
+
+See the [SQLite database dictionary](docs/DATABASE_SCHEMA.md) for the purpose of every
+table and column, identity/revision rules, and the CSV merge conflict policy.
 
 Run the complete test suite with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+After importing legacy CSV files, verify the current Qt AppData database against
+the `data` folder with:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_legacy_import.py
+```
+
+The verifier opens SQLite read-only, checks the recorded source manifest,
+database integrity, every CSV-representable day field and break, month balances,
+and immutable closed-month results. Use `--database PATH` for a non-default
+database. Exit code `0` means exact parity, `1` means a structural/import error,
+and `2` means the import is complete but current SQLite values differ from CSV.
 
 Regenerate the README screenshots with:
 

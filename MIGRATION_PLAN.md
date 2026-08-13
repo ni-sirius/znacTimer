@@ -352,18 +352,27 @@ this step is purely a binding swap.
 
 > **Prerequisite:** Phases 1–5 are complete and the Phase 4.7 parity checklist has been
 > signed off. Delivery must package the migrated PySide6 application without moving
-> business logic back into the UI or changing the existing CSV, `.flag`, or yearly-summary
-> formats.
+> business logic back into the UI. The SQLite cutover and legacy compatibility behavior
+> are governed by `SQLITE_MIGRATION_PLAN.md`.
+>
+> **Superseded data contract:** the later requirement to make SQLite the sole source of
+> truth is specified in `SQLITE_MIGRATION_PLAN.md`. Complete that plan before the packaged
+> release. Its storage-location, CSV/export, migration, security, and rollback rules
+> supersede conflicting rules in Phase 6.2, Phase 6.5, and the historical “What Not to
+> Touch” list below.
 
-**Goal:** produce a repeatable Windows release that can be tested in a clean environment,
-upgraded without risking existing time data, and rolled back independently of user data.
+**Goal:** produce repeatable Windows and macOS releases that can be tested in clean
+environments, upgraded without risking existing time data, and rolled back independently
+of user data.
 
 ### 6.0 — Delivery contract
 
 - The production UI is the PySide6 backend launched by `python -m znactime`; `tracker.py`
   remains a compatibility entry point.
-- The first delivery target is a Windows x64 portable bundle. Name the release artifact
-  `znacTime-<VERSION>-windows-x64.zip`.
+- Delivery targets are a Windows x64 bundle named
+  `znacTime-<VERSION>-windows-x64.zip` and a signed/notarized macOS application. Prefer
+  `znacTime-<VERSION>-macos-universal2.dmg`; if native dependencies prevent a universal
+  build, publish separately named `arm64` and `x86_64` artifacts.
 - The bundle contains the application executable, required Qt runtime/plugins, the SVG
   assets under `ui/qt/assets/`, third-party license notices, and a short launch/upgrade
   guide. It must never contain development or real user data.
@@ -384,29 +393,34 @@ upgraded without risking existing time data, and rolled back independently of us
      `ui/qt/themes/*.json`;
    - fail when a required asset or dependency is missing; and
    - write generated files only below `build/` and `dist/`.
-3. Run the same build from CI and from a documented local command. Do not hand-edit the
-   generated bundle after the build.
-4. Publish a SHA-256 checksum beside every release artifact.
+3. Add a macOS build job that sets a stable bundle identifier, signs nested binaries in
+   the correct order with Developer ID, enables Hardened Runtime, notarizes with
+   `notarytool`, and staples the result. Do not use ad-hoc signing for a release.
+4. Build each platform on its native OS in CI and from a documented local command. Do not
+   hand-edit generated bundles after signing/building.
+5. Publish a SHA-256 checksum beside every release artifact.
 
 ### 6.2 — Data location, compatibility, and upgrade safety
 
-- Preserve the current `data/<year>/` structure, CSV column order, file names, and
-  `closed_<month>.flag` behavior exactly.
-- Make the data root independent of the process working directory. For the portable
-  release, resolve `data/` beside the executable; keep an explicit path override for tests
-  and controlled migrations.
-- Before an upgrade rehearsal, copy the complete existing `data/` directory to a
-  timestamped backup. Never delete or rewrite the backup automatically.
-- Test the new build against a copy of production-like data containing:
+- SQLite is the sole source of truth and lives under the per-user app-local data path
+  resolved by `QStandardPaths` on Windows and macOS. It must never live in the installed
+  application directory.
+- The initial release uses standard unencrypted SQLite with restricted per-user file
+  permissions. SQLCipher/DPAPI/Keychain work is the non-blocking future task defined in
+  `SQLITE_MIGRATION_PLAN.md`; release notes must not claim app-level encryption.
+- Treat the current `data/<year>/` CSV, `.flag`, summary, and PDF structure as read-only
+  legacy migration input. Preserve it unchanged and keep a timestamped backup during
+  upgrade rehearsal.
+- Test migration against copies of production-like data containing:
   - an open month;
   - a closed month and its `.flag`;
   - a year summary;
   - a generated PDF; and
   - a December-to-January carry-over.
-- Opening and saving an unchanged month must not reorder columns or alter unrelated rows.
-  Byte-compare representative CSV output with the pre-delivery version.
-- A future data-format change is a separate migration and blocks release until forward
-  migration, validation, backup, and rollback behavior are documented and tested.
+- Preserve the current CSV v2 marker and column order for explicit compatibility exports.
+  Byte-compare representative exports with the pre-delivery version.
+- Any later SQLite schema change requires a separate forward migration, validation,
+  verified backup, and recovery rehearsal on both platforms.
 
 ### 6.3 — Release verification
 
@@ -419,39 +433,47 @@ Run verification in a clean environment, not only in the development checkout:
    validation.
 3. Verify the PySide6-specific Phase 5.4 pass; the packaged application must not import or
    require PyQt6.
-4. Smoke-test the unpacked bundle on a clean supported Windows x64 machine with no Python
-   installation:
-   - launch from Explorer and from a working directory different from the app directory;
+4. Smoke-test the packages on clean supported Windows x64 and macOS machines with no
+   Python installation:
+   - launch from Explorer on Windows and Finder on macOS, and from a working directory
+     different from the app directory;
+   - with no database, verify first launch offers import from a detected or manually
+     selected legacy `data/` folder, create-new, and exit without changes;
+   - verify corrupt-database and interrupted-migration states enter recovery
+     instead of silently creating a replacement database;
    - switch month and year;
    - edit and autosave an entry;
    - start, pause/resume, and stop a workday;
    - restart and verify settings/session recovery;
    - close a test month and open the generated PDF; and
    - verify light, dark, and system themes at common display-scaling settings.
-5. Confirm that no test data, local settings, caches, credentials, or developer paths are
+5. On macOS, verify Gatekeeper acceptance, the stapled notarization ticket, native launch
+   on every supported architecture, app-local storage access, and continuity across a
+   same-identity upgrade.
+6. Confirm that no test data, local settings, caches, credentials, or developer paths are
    present in the artifact.
 
 ### 6.4 — Rollout
 
 1. Create a release-candidate tag from a clean commit and build the candidate only from
    that tag.
-2. Pilot the candidate with a copy of existing user data. Record the app version, Windows
-   version, test result, and any deviation from the parity checklist.
+2. Pilot each candidate with a copy of existing user data. Record the app version, OS
+   version and architecture, test result, and any deviation from the parity checklist.
 3. After sign-off, promote the exact tested artifact; do not rebuild it for the final
    release.
 4. Publish the artifact, checksum, dependency/license notices, release notes, known
-   limitations, backup instructions, and the path used for portable `data/`.
+   limitations, backup instructions, and platform-specific app-local data/export paths.
 5. Keep the previous supported artifact available for rollback. Automatic update behavior
    is out of scope until its trust, signing, and rollback model are designed.
 
 ### 6.5 — Rollback
 
-- Roll back the executable by replacing the application bundle with the previous release;
-  do not roll back or delete user data by default.
-- Because Phase 6 does not change the persisted format, the previous release must be able
-  to open data saved by the new release. Verify this during the upgrade rehearsal.
-- Restore the timestamped data backup only when validation shows that files were changed
-  incorrectly, and preserve the failed data set for diagnosis.
+- Roll back the executable or app bundle without deleting or downgrading the SQLite
+  database.
+- A pre-SQLite release cannot read post-cutover changes. Export legacy-compatible CSV
+  before reverting to it, and preserve both the database and original legacy data.
+- Restore a verified database backup only through the documented recovery flow; preserve
+  the failed data set for diagnosis. Initial-release backups are not app-encrypted.
 - Document the exact last-known-good version and checksum in the release record.
 
 ### 6.6 — Definition of done
@@ -461,9 +483,14 @@ Run verification in a clean environment, not only in the development checkout:
 - [ ] The automated tests pass headlessly.
 - [ ] Every Phase 4.7 parity item passes against the packaged executable.
 - [ ] The PySide6-only binding check passes.
-- [ ] The portable bundle runs on clean Windows x64 without Python installed.
-- [ ] Existing open/closed month data, carry-over, yearly summary, and PDF export survive
-      the upgrade rehearsal unchanged.
+- [ ] The Windows bundle and signed/notarized macOS app run on clean supported machines
+      without Python installed.
+- [ ] Every supported macOS architecture passes launch, storage, export, and
+      same-identity upgrade tests.
+- [ ] First launch and recovery behavior pass on Windows and macOS for both create-new and
+      legacy-folder import paths.
+- [ ] Existing open/closed month data, carry-over, yearly summary evidence, and PDF export
+      survive validated migration on Windows and macOS.
 - [ ] Artifact contents, version, checksum, licenses, release notes, backup steps, and
       rollback steps are verified.
 - [ ] The exact release candidate tested is the artifact published.
@@ -475,7 +502,7 @@ Run verification in a clean environment, not only in the development checkout:
 | Layer | Owns | Can change without breaking |
 |---|---|---|
 | `core/` | domain logic | storage, UI |
-| `storage/` | CSV, PDF, paths | core, UI |
+| `storage/` | SQLite, key protection, legacy import, CSV/PDF export | core, UI |
 | `ui/qt/` | Qt widgets | core, storage |
 | `tests/` | all of core + storage | UI (headless) |
 

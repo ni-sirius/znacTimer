@@ -15,14 +15,6 @@ from znactime.ui.qt.color_scheme import (
     primary_hover_color,
     theme_color,
 )
-from znactime.ui.qt.workday_session import (
-    PAUSE_DATE_KEY,
-    PAUSE_START_KEY,
-    SESSION_DATE_KEY,
-    SESSION_START_KEY,
-)
-
-
 class WorkdayState:
     UNAVAILABLE = "unavailable"
     IDLE = "idle"
