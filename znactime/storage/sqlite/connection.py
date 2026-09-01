@@ -74,6 +74,23 @@ def transaction(connection: sqlite3.Connection):
         raise
 
 
+@contextmanager
+def read_transaction(connection: sqlite3.Connection):
+    """Keep a multi-query materialization on one SQLite read snapshot."""
+    try:
+        connection.execute("BEGIN")
+        yield connection
+        connection.execute("COMMIT")
+    except sqlite3.Error as error:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise translate_error(error) from error
+    except Exception:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+
+
 def require_changed(cursor: sqlite3.Cursor, message: str):
     if cursor.rowcount != 1:
         raise StorageConflict(message)

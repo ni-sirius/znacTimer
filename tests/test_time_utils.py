@@ -31,6 +31,8 @@ class TimeUtilsTest(unittest.TestCase):
         self.assertEqual(coerce_time_input("45"), "00:45")
         self.assertEqual(coerce_time_input("8"), "00:08")
         self.assertEqual(coerce_time_input("25:00"), None)
+        self.assertEqual(coerce_time_input("2500"), None)
+        self.assertEqual(coerce_time_input("12345"), None)
         self.assertEqual(coerce_time_input("invalid"), None)
 
     def test_interruption_accepts_duration_or_periods(self):
@@ -109,7 +111,8 @@ class TimeUtilsTest(unittest.TestCase):
         )
 
     def test_expected_end_requires_a_start_and_wraps_at_midnight(self):
-        self.assertIsNone(expected_end_time("00:00", "01:00", 8))
+        self.assertIsNone(expected_end_time("--:--", "01:00", 8))
+        self.assertEqual(expected_end_time("00:00", "01:00", 8), "09:00")
         self.assertEqual(
             expected_end_time("20:00", "01:00", 8),
             "05:00",

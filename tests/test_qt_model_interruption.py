@@ -65,7 +65,7 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         model.recalculate(today=date(2024, 6, 18), autosave=False)
 
-        self.assertEqual(model.index(0, 3).data(), "00:00")
+        self.assertEqual(model.index(0, 3).data(), "--:--")
         self.assertEqual(model.index(0, 4).data(), "17:00")
         self.assertEqual(model.index(0, 5).data(), "00:00")
         self.assertEqual(
@@ -135,13 +135,13 @@ class QtModelInterruptionTest(unittest.TestCase):
         model = MonthTableModel()
         model.set_entries(
             [
-                DayEntry("", "17.06.2024", "", "00:00", "00:00", "00:00"),
-                DayEntry("", "18.06.2024", "", "00:00", "00:00", "00:00"),
+                DayEntry("", "17.06.2024", "", "--:--", "--:--", "00:00"),
+                DayEntry("", "18.06.2024", "", "--:--", "--:--", "00:00"),
                 DayEntry("", "19.06.2024", "", "08:00", "17:00", "00:00"),
-                DayEntry("", "20.06.2024", "", "00:00", "00:00", "00:00"),
-                DayEntry("", "22.06.2024", "Weekend", "00:00", "00:00", "00:00",
+                DayEntry("", "20.06.2024", "", "--:--", "--:--", "00:00"),
+                DayEntry("", "22.06.2024", "Weekend", "--:--", "--:--", "00:00",
                          row_color="weekend"),
-                DayEntry("", "24.06.2024", "Vacation", "00:00", "00:00", "00:00",
+                DayEntry("", "24.06.2024", "Vacation", "--:--", "--:--", "00:00",
                          row_color="special_day"),
             ]
         )
@@ -198,7 +198,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertIsNone(model.index(0, 6).data(BADGE_ROLE))
         self.assertIsNone(model.index(0, 7).data(BADGE_ROLE))
 
-    def test_clearing_start_or_end_resets_time_to_zero(self):
+    def test_clearing_start_or_end_sets_visible_unset_placeholder(self):
         model = self.make_model()
 
         start_changed = model.setData(
@@ -214,8 +214,8 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         self.assertTrue(start_changed)
         self.assertTrue(end_changed)
-        self.assertEqual(model.entries()[0].start, "00:00")
-        self.assertEqual(model.entries()[0].end, "00:00")
+        self.assertEqual(model.entries()[0].start, "--:--")
+        self.assertEqual(model.entries()[0].end, "--:--")
 
     def test_missing_end_shows_non_persisted_expected_badge(self):
         model = MonthTableModel()
@@ -234,7 +234,7 @@ class QtModelInterruptionTest(unittest.TestCase):
                     date="17.06.2024",
                     special="Normal day",
                     start="08:00",
-                    end="00:00",
+                    end="--:--",
                     interruption="12:00-12:30;15:00-15:15",
                 )
             ]
@@ -245,8 +245,8 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(badge["texts"], ["16:45"])
         self.assertEqual(badge["state"], "expected")
         self.assertTrue(badge["outline"])
-        self.assertEqual(model.index(0, 4).data(), "00:00")
-        self.assertEqual(model.entries()[0].end, "00:00")
+        self.assertEqual(model.index(0, 4).data(), "--:--")
+        self.assertEqual(model.entries()[0].end, "--:--")
 
     def test_expected_end_badge_can_be_disabled(self):
         model = MonthTableModel()
@@ -265,7 +265,7 @@ class QtModelInterruptionTest(unittest.TestCase):
                     date="17.06.2024",
                     special="Normal day",
                     start="08:00",
-                    end="00:00",
+                    end="--:--",
                     interruption="01:00",
                 )
             ]
@@ -273,7 +273,7 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         badge = model.index(0, 4).data(BADGE_ROLE)
 
-        self.assertEqual(badge["texts"], ["00:00"])
+        self.assertEqual(badge["texts"], ["--:--"])
         self.assertEqual(badge["state"], "empty")
 
     def test_expected_badge_uses_red_outline_colors(self):
@@ -345,7 +345,7 @@ class QtModelInterruptionTest(unittest.TestCase):
                     date="17.06.2024",
                     special="Normal day",
                     start="08:00",
-                    end="00:00",
+                    end="--:--",
                     interruption="12:30-13:00",
                     row_color="valid_day",
                 ),
@@ -353,8 +353,8 @@ class QtModelInterruptionTest(unittest.TestCase):
                     cw="",
                     date="18.06.2024",
                     special="Normal day",
-                    start="00:00",
-                    end="00:00",
+                    start="--:--",
+                    end="--:--",
                     interruption="00:00",
                     row_color="missing_times",
                 ),
@@ -371,7 +371,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(day["state"], "valid_day")
         self.assertEqual(start["state"], "success")
         self.assertEqual(end["state"], "empty")
-        self.assertEqual(end["texts"], ["00:00"])
+        self.assertEqual(end["texts"], ["--:--"])
         self.assertNotEqual(end["state"], "expected")
         self.assertEqual(interruption["state"], "info")
         self.assertEqual(interruption["texts"], ["12:30-13:00"])
@@ -798,11 +798,11 @@ class QtModelInterruptionTest(unittest.TestCase):
         model = MonthTableModel()
         model.set_entries(
             [
-                DayEntry("", "17.06.2024", "", "00:00", "00:00", "00:00",
+                DayEntry("", "17.06.2024", "", "--:--", "--:--", "00:00",
                          daily_ot="01:15", monthly_balance="-00:30"),
-                DayEntry("", "18.06.2024", "", "00:00", "00:00", "00:00",
+                DayEntry("", "18.06.2024", "", "--:--", "--:--", "00:00",
                          daily_ot="-00:30", monthly_balance="01:15"),
-                DayEntry("", "19.06.2024", "", "00:00", "00:00", "00:00",
+                DayEntry("", "19.06.2024", "", "--:--", "--:--", "00:00",
                          daily_ot="00:00", monthly_balance="00:00"),
             ]
         )
@@ -831,9 +831,9 @@ class QtModelInterruptionTest(unittest.TestCase):
         model = MonthTableModel()
         model.set_entries(
             [
-                DayEntry("", "17.06.2024", "", "00:00", "00:00", "00:00",
+                DayEntry("", "17.06.2024", "", "--:--", "--:--", "00:00",
                          row_color="valid_day_today"),
-                DayEntry("", "18.06.2024", "", "00:00", "00:00", "00:00",
+                DayEntry("", "18.06.2024", "", "--:--", "--:--", "00:00",
                          row_color="valid_day"),
             ]
         )
@@ -870,16 +870,16 @@ class QtModelInterruptionTest(unittest.TestCase):
                     "CW-25",
                     "21.06.2024",
                     "",
-                    "00:00",
-                    "00:00",
+                    "--:--",
+                    "--:--",
                     "00:00",
                 ),
                 DayEntry(
                     "CW-26",
                     "24.06.2024",
                     "",
-                    "00:00",
-                    "00:00",
+                    "--:--",
+                    "--:--",
                     "00:00",
                 ),
             ]
@@ -953,7 +953,7 @@ class QtModelInterruptionTest(unittest.TestCase):
                     date="17.06.2024",
                     special="Normal day",
                     start="08:00",
-                    end="00:00",
+                    end="--:--",
                     interruption="00:00",
                 )
             ]
@@ -968,7 +968,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertTrue(changed)
         entry = model.entries()[0]
         self.assertEqual(entry.start, "08:00")
-        self.assertEqual(entry.end, "00:00")
+        self.assertEqual(entry.end, "--:--")
         self.assertEqual(entry.interruption, "17:00-18:00")
         self.assertEqual(entry.row_color, "missing_times")
         self.assertEqual(

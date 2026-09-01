@@ -66,10 +66,3 @@ class WorkSchedulePeriod:
     effective_to: date | None
     weekday_minutes: tuple[int, int, int, int, int, int, int]
     revision: int
-
-
-@dataclass(frozen=True)
-class ActiveWorkdayRecord:
-    work_date: date
-    started_at_utc: str
-    revision: int

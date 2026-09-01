@@ -11,7 +11,6 @@ from pathlib import Path
 from znactime.config import VERSION
 from znactime.core.constants import NORMAL_DAY
 from znactime.core.models import (
-    ActiveWorkdayRecord,
     BreakRecord,
     DayRecord,
     MonthRecord,
@@ -26,10 +25,12 @@ from znactime.storage.errors import (
 )
 from znactime.storage.sqlite.connection import (
     connect_database,
+    read_transaction,
     require_changed,
     transaction,
     translate_error,
 )
+from znactime.storage.sqlite.migrations import MIGRATIONS
 from znactime.storage.sqlite.schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
@@ -74,12 +75,28 @@ def _validate_minute(value: int | None, *, allow_1440: bool = False):
         raise StorageValidationError(f"Minute value must be between 0 and {upper}.")
 
 
+def _migration_statements(script: str):
+    """Yield complete SQLite statements without breaking trigger bodies."""
+    pending: list[str] = []
+    for line in script.splitlines(keepends=True):
+        pending.append(line)
+        candidate = "".join(pending)
+        if sqlite3.complete_statement(candidate):
+            statement = candidate.strip()
+            if statement:
+                yield statement
+            pending.clear()
+    if "".join(pending).strip():
+        raise StorageValidationError("Database migration contains incomplete SQL.")
+
+
 class SQLiteRepository:
     def __init__(self, path: str | Path):
         self._require_supported_sqlite()
         self.path = Path(path)
         self._connection = connect_database(self.path)
         try:
+            self._upgrade_schema()
             self._verify_version()
         except Exception:
             self._connection.close()
@@ -163,6 +180,64 @@ class SQLiteRepository:
                 f"Database schema {version!r}/{migration!r} is not supported."
             )
 
+    def _upgrade_schema(self):
+        try:
+            version = self._connection.execute("PRAGMA user_version").fetchone()[0]
+            migration = self._connection.execute(
+                "SELECT MAX(version) FROM schema_migrations"
+            ).fetchone()[0]
+        except sqlite3.Error as error:
+            raise translate_error(error) from error
+
+        if version == SCHEMA_VERSION and migration == SCHEMA_VERSION:
+            return
+        if version != migration or version not in MIGRATIONS:
+            return
+
+        while version < SCHEMA_VERSION:
+            migration_sql = MIGRATIONS.get(version)
+            if migration_sql is None:
+                return
+            self._validate_migration_source(version)
+            with transaction(self._connection) as db:
+                for statement in _migration_statements(migration_sql):
+                    db.execute(statement)
+                version += 1
+                db.execute(
+                    "INSERT INTO schema_migrations(version, applied_at, app_version) "
+                    "VALUES (?, ?, ?)",
+                    (version, _utc_text(), VERSION),
+                )
+                db.execute(f"PRAGMA user_version = {version}")
+
+    def _validate_migration_source(self, version: int) -> None:
+        if version != 2:
+            return
+        invalid_schedule = self._connection.execute(
+            """
+            SELECT 1 FROM work_schedule_periods
+            WHERE date(effective_from, '+0 days') IS NULL
+               OR effective_from != date(effective_from, '+0 days')
+               OR (effective_to IS NOT NULL AND (
+                   date(effective_to, '+0 days') IS NULL
+                   OR effective_to != date(effective_to, '+0 days')
+               ))
+            LIMIT 1
+            """
+        ).fetchone()
+        invalid_day = self._connection.execute(
+            """
+            SELECT 1 FROM day_entries
+            WHERE date(work_date, '+0 days') IS NULL
+               OR work_date != date(work_date, '+0 days')
+            LIMIT 1
+            """
+        ).fetchone()
+        if invalid_schedule is not None or invalid_day is not None:
+            raise StorageCorrupt(
+                "The database contains a malformed calendar date and cannot be upgraded."
+            )
+
     def _dataset_id(self, connection=None) -> int:
         db = connection or self._connection
         rows = db.execute("SELECT id FROM datasets ORDER BY id").fetchall()
@@ -239,32 +314,33 @@ class SQLiteRepository:
         return result
 
     def load_month(self, year: int, month: int) -> MonthRecord | None:
-        row = self._connection.execute(
-            """
-            SELECT id, year, month, status, opening_balance_minutes,
-                   closing_balance_minutes, revision
-            FROM months WHERE dataset_id = ? AND year = ? AND month = ?
-            """,
-            (self._dataset_id(), year, month),
-        ).fetchone()
-        if row is None:
-            return None
-        days = tuple(
-            self._day_from_row(day)
-            for day in self._connection.execute(
-                "SELECT * FROM day_entries WHERE month_id = ? ORDER BY work_date",
-                (row["id"],),
-            ).fetchall()
-        )
-        return MonthRecord(
-            year=row["year"],
-            month=row["month"],
-            status=row["status"],
-            opening_balance_minutes=row["opening_balance_minutes"],
-            closing_balance_minutes=row["closing_balance_minutes"],
-            revision=row["revision"],
-            days=days,
-        )
+        with read_transaction(self._connection) as db:
+            row = db.execute(
+                """
+                SELECT id, year, month, status, opening_balance_minutes,
+                       closing_balance_minutes, revision
+                FROM months WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (self._dataset_id(db), year, month),
+            ).fetchone()
+            if row is None:
+                return None
+            days = tuple(
+                self._day_from_row(day)
+                for day in db.execute(
+                    "SELECT * FROM day_entries WHERE month_id = ? ORDER BY work_date",
+                    (row["id"],),
+                ).fetchall()
+            )
+            return MonthRecord(
+                year=row["year"],
+                month=row["month"],
+                status=row["status"],
+                opening_balance_minutes=row["opening_balance_minutes"],
+                closing_balance_minutes=row["closing_balance_minutes"],
+                revision=row["revision"],
+                days=days,
+            )
 
     def list_months(self, year: int | None = None) -> tuple[MonthRecord, ...]:
         if year is None:
@@ -673,29 +749,13 @@ class SQLiteRepository:
             fields=frozenset(("expected_work_minutes", "expected_minutes_overridden")),
         )
 
-    def load_active_workday(self) -> ActiveWorkdayRecord | None:
-        row = self._connection.execute(
-            """
-            SELECT day.work_date, active.started_at_utc, active.revision
-            FROM active_workday active JOIN day_entries day ON day.id = active.day_entry_id
-            WHERE active.singleton_id = 1
-            """
-        ).fetchone()
-        if row is None:
-            return None
-        return ActiveWorkdayRecord(
-            work_date=date.fromisoformat(row["work_date"]),
-            started_at_utc=row["started_at_utc"],
-            revision=row["revision"],
-        )
-
     def start_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord:
         _validate_minute(minute)
         self.get_or_create_month(work_date.year, work_date.month)
         with transaction(self._connection) as db:
-            if db.execute("SELECT 1 FROM active_workday").fetchone():
-                raise StorageConflict("Another workday is already active.")
             day = self._day_row(work_date, db)
+            if day["start_minute"] is not None:
+                raise StorageConflict("The workday already has a start time.")
             timestamp = _utc_text(now)
             db.execute(
                 """
@@ -704,33 +764,20 @@ class SQLiteRepository:
                 """,
                 (minute, timestamp, day["id"]),
             )
-            db.execute(
-                """
-                INSERT INTO active_workday(
-                    singleton_id, day_entry_id, started_at_utc, updated_at
-                ) VALUES (1, ?, ?, ?)
-                """,
-                (day["id"], timestamp, timestamp),
-            )
         return self._load_day(work_date)
 
-    def _active_day(self, work_date: date, db):
-        row = db.execute(
-            """
-            SELECT day.* FROM active_workday active
-            JOIN day_entries day ON day.id = active.day_entry_id
-            WHERE active.singleton_id = 1 AND day.work_date = ?
-            """,
-            (work_date.isoformat(),),
-        ).fetchone()
-        if row is None:
-            raise StorageConflict("The requested workday is not active.")
+    def _running_day(self, work_date: date, db):
+        row = self._day_row(work_date, db)
+        if row["start_minute"] is None or row["end_minute"] is not None:
+            raise StorageConflict(
+                "The workday must have a start and no end time for this action."
+            )
         return row
 
     def start_pause(self, work_date: date, minute: int, now: datetime) -> DayRecord:
         _validate_minute(minute)
         with transaction(self._connection) as db:
-            day = self._active_day(work_date, db)
+            day = self._running_day(work_date, db)
             if db.execute(
                 "SELECT 1 FROM break_periods WHERE day_entry_id = ? AND end_minute IS NULL",
                 (day["id"],),
@@ -754,16 +801,12 @@ class SQLiteRepository:
                 """,
                 (_uuid4(), day["id"], position, minute, timestamp, timestamp),
             )
-            db.execute(
-                "UPDATE active_workday SET updated_at = ?, revision = revision + 1 WHERE singleton_id = 1",
-                (timestamp,),
-            )
         return self._load_day(work_date)
 
     def resume_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord:
         _validate_minute(minute)
         with transaction(self._connection) as db:
-            day = self._active_day(work_date, db)
+            day = self._running_day(work_date, db)
             pause = db.execute(
                 "SELECT * FROM break_periods WHERE day_entry_id = ? AND end_minute IS NULL",
                 (day["id"],),
@@ -782,16 +825,12 @@ class SQLiteRepository:
                 "UPDATE day_entries SET updated_at = ?, revision = revision + 1 WHERE id = ?",
                 (timestamp, day["id"]),
             )
-            db.execute(
-                "UPDATE active_workday SET updated_at = ?, revision = revision + 1 WHERE singleton_id = 1",
-                (timestamp,),
-            )
         return self._load_day(work_date)
 
     def stop_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord:
         _validate_minute(minute)
         with transaction(self._connection) as db:
-            day = self._active_day(work_date, db)
+            day = self._running_day(work_date, db)
             timestamp = _utc_text(now)
             pause = db.execute(
                 "SELECT * FROM break_periods WHERE day_entry_id = ? AND end_minute IS NULL",
@@ -809,16 +848,22 @@ class SQLiteRepository:
                 "UPDATE day_entries SET end_minute = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
                 (minute, timestamp, day["id"]),
             )
-            db.execute("DELETE FROM active_workday WHERE singleton_id = 1")
         return self._load_day(work_date)
 
-    def finalize_stale_workday(self, today: date, now: datetime) -> DayRecord | None:
-        active = self.load_active_workday()
-        if active is None or active.work_date >= today:
-            return None
-        return self.stop_workday(active.work_date, 1439, now)
+    def backup_to(
+        self,
+        destination: str | Path,
+        *,
+        overwrite: bool = False,
+        progress=None,
+        cancelled=None,
+    ) -> None:
+        from znactime.storage.legacy_csv_import import (
+            _cancel_if_requested,
+            _report_progress,
+        )
 
-    def backup_to(self, destination: str | Path, *, overwrite: bool = False) -> None:
+        _cancel_if_requested(cancelled)
         target = Path(destination)
         if target.exists() and not overwrite:
             raise StorageConflict("The backup destination already exists.")
@@ -830,18 +875,41 @@ class SQLiteRepository:
         Path(temporary_name).unlink()
         backup = None
         succeeded = False
+
+        def report_backup(_status, remaining, total):
+            _cancel_if_requested(cancelled)
+            _report_progress(
+                progress,
+                "Backing up database",
+                total - remaining,
+                total,
+            )
+
         try:
             backup = connect_database(temporary_name)
-            self._connection.backup(backup)
+            self._connection.backup(
+                backup,
+                pages=128,
+                progress=report_backup,
+                sleep=0.05,
+            )
+            _cancel_if_requested(cancelled)
+            _report_progress(progress, "Validating database backup", 0, 0)
+            backup.set_progress_handler(
+                lambda: int(bool(cancelled and cancelled())),
+                1_000,
+            )
             if backup.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise StorageValidationError("The database backup failed integrity validation.")
             if backup.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise StorageValidationError("The database backup has invalid relationships.")
+            backup.set_progress_handler(None, 0)
             backup.close()
             backup = None
             os.replace(temporary_name, target)
             succeeded = True
         except sqlite3.Error as error:
+            _cancel_if_requested(cancelled)
             raise translate_error(error) from error
         finally:
             if backup is not None:
@@ -852,10 +920,15 @@ class SQLiteRepository:
                 except OSError:
                     pass
 
-    def merge_legacy(self, preflight):
+    def merge_legacy(self, preflight, *, progress=None, cancelled=None):
         from znactime.storage.sqlite.legacy_import import merge_preflight
 
-        return merge_preflight(self, preflight)
+        return merge_preflight(
+            self,
+            preflight,
+            progress=progress,
+            cancelled=cancelled,
+        )
 
     def close(self) -> None:
         self._connection.close()

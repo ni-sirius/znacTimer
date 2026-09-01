@@ -443,12 +443,16 @@ class MonthTableModel(QAbstractTableModel):
         value = str(value).strip()
 
         if column in TIME_COLUMNS:
-            value = UNSET_TIME if value == "" else coerce_time_input(value)
+            value = (
+                UNSET_TIME
+                if value in ("", UNSET_TIME)
+                else coerce_time_input(value)
+            )
             if value is None:
                 QMessageBox.warning(
                     None,
                     "Invalid time",
-                    f"Time must be HH:MM ({UNSET_TIME}-{END_OF_DAY})",
+                    f"Time must be HH:MM (00:00-{END_OF_DAY}), or blank to clear.",
                 )
                 return False
         elif column == Column.INTERRUPTION:

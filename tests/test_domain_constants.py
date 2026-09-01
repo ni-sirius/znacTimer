@@ -22,7 +22,7 @@ class DomainConstantsTest(unittest.TestCase):
     def test_persisted_domain_values_remain_compatible(self):
         self.assertEqual(DATE_FORMAT, "%d.%m.%Y")
         self.assertEqual(TIME_FORMAT, "%H:%M")
-        self.assertEqual(UNSET_TIME, "00:00")
+        self.assertEqual(UNSET_TIME, "--:--")
         self.assertEqual(ZERO_DURATION, "00:00")
         self.assertEqual(NORMAL_DAY, "Normal day")
         self.assertEqual(WEEKEND_DAY, "Weekend")

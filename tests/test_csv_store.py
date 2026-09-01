@@ -2,6 +2,7 @@ import csv
 import tempfile
 import unittest
 
+from znactime.core.constants import UNSET_TIME
 from znactime.core.models import DayEntry, MonthStats
 from znactime.storage import csv_store, paths
 
@@ -103,7 +104,7 @@ class CsvStoreTest(unittest.TestCase):
 
         entries = csv_store.load_month(2024, 6, data_dir=self.data_dir)
 
-        self.assertEqual(entries[0].start, "00:00")
+        self.assertEqual(entries[0].start, UNSET_TIME)
         self.assertEqual(entries[0].end, "17:00")
         self.assertEqual(entries[0].interruption, "00:00")
         self.assertEqual(entries[1].start, "17:00")
@@ -129,7 +130,7 @@ class CsvStoreTest(unittest.TestCase):
         self.assertEqual(len(entries), 29)
         self.assertEqual(entries[0].date, "01.02.2024")
         self.assertEqual(entries[0].special, "Normal day")
-        self.assertEqual(entries[0].start, "00:00")
+        self.assertEqual(entries[0].start, UNSET_TIME)
         self.assertEqual(entries[-1].date, "29.02.2024")
 
     def test_get_carry_over_uses_closed_previous_month_across_year_boundary(self):
@@ -141,8 +142,8 @@ class CsvStoreTest(unittest.TestCase):
                     cw="CW-52",
                     date="31.12.2023",
                     special="Weekend",
-                    start="00:00",
-                    end="00:00",
+                    start=UNSET_TIME,
+                    end=UNSET_TIME,
                     interruption="00:00",
                     daily_ot="00:00",
                     monthly_balance="-01:15",

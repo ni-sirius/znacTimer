@@ -8,7 +8,6 @@ from znactime.config import APP_NAME, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
 from znactime.core.constants import (
     DATE_FORMAT,
-    END_OF_DAY,
     OPEN_END_MARKER,
     PERIOD_SEPARATOR,
     TIME_FORMAT,
@@ -23,7 +22,11 @@ from znactime.core.time_utils import (
     open_interruption_start,
 )
 from znactime.storage.errors import StorageError
-from znactime.storage.legacy_csv_import import preflight_legacy_data
+from znactime.storage.legacy_csv_import import (
+    LegacyImportCancelled,
+    preflight_legacy_data,
+)
+from znactime.storage.sqlite.repository import SQLiteRepository
 from znactime.ui.qt import (
     QApplication,
     QFileDialog,
@@ -44,7 +47,8 @@ from znactime.ui.qt.player import (
     WorkdayState,
 )
 from znactime.ui.qt.color_scheme import is_dark_theme, theme_color
-from znactime.ui.qt.repository_mapper import minute_text, parse_display_date
+from znactime.ui.qt.background import run_background_task
+from znactime.ui.qt.repository_mapper import parse_display_date
 from znactime.ui.qt.settings import (
     AppearanceDialog,
     WorkScheduleDialog,
@@ -170,7 +174,6 @@ class TimeTrackerApp(QMainWindow):
         central_widget.setFocus(Qt.FocusReason.OtherFocusReason)
         self.apply_shell_theme()
 
-        self._finalize_stale_session(now)
         self.load_month()
         self._today_rollover_timer = QTimer(self)
         self._today_rollover_timer.setInterval(60 * 1000)
@@ -304,7 +307,6 @@ class TimeTrackerApp(QMainWindow):
         if today == self._current_date:
             return
 
-        self._finalize_stale_session(now)
         self._current_date = today
 
         if self.header.year() != now.year or self.header.month() != now.month:
@@ -359,85 +361,10 @@ class TimeTrackerApp(QMainWindow):
         return self.table.entry_for_date(now.strftime(DATE_FORMAT))
 
     def _active_pause(self, now=None):
-        if getattr(self, "repository", None) is not None:
-            active = self.repository.load_active_workday()
-            if active is None:
-                return None
-            record = self.repository.load_month(active.work_date.year, active.work_date.month)
-            day = next(item for item in record.days if item.work_date == active.work_date)
-            pause = next((item for item in day.breaks if item.end_minute is None), None)
-            return minute_text(pause.start_minute) if pause else None
-        return None
-
-    def _set_active_pause(self, date_text, start_text):
-        return None
-
-    def _clear_active_pause(self):
-        return None
-
-    def _active_session(self, now=None):
-        if getattr(self, "repository", None) is not None:
-            active = self.repository.load_active_workday()
-            if active is None:
-                return None
-            record = self.repository.load_month(active.work_date.year, active.work_date.month)
-            day = next(item for item in record.days if item.work_date == active.work_date)
-            return minute_text(day.start_minute)
-        return None
-
-    def _set_active_session(self, date_text, start_text):
-        return None
-
-    def _clear_active_session(self):
-        return None
-
-    def _finalize_stale_session(self, now=None):
-        if now is None:
-            now = datetime.now()
-        if getattr(self, "repository", None) is not None:
-            try:
-                updated = self.repository.finalize_stale_workday(now.date(), now)
-            except StorageError as error:
-                QMessageBox.warning(self, "Workday recovery failed", str(error))
-                return False
-            if updated is not None:
-                self.load_month()
-                return True
-            return False
-        return False
-
-    def _stale_session_changes(
-        self,
-        entry,
-        session_start,
-        pause_date,
-        pause_start,
-    ):
-        if entry.end != UNSET_TIME:
-            return {}
-
-        changes = {
-            "start": entry.start if entry.start != UNSET_TIME else session_start,
-            "end": END_OF_DAY,
-        }
-        if pause_date != entry.date or not pause_start or pause_start >= END_OF_DAY:
-            return changes
-
-        interruption = entry.interruption
-        if (
-            interruption not in ("", ZERO_DURATION)
-            and PERIOD_SEPARATOR not in interruption
-        ):
-            return changes
-        try:
-            changes["interruption"] = finish_interruption_period(
-                interruption,
-                pause_start,
-                END_OF_DAY,
-            )
-        except ValueError:
-            pass
-        return changes
+        entry = self._today_entry(now)
+        if entry is None or entry.start == UNSET_TIME or entry.end != UNSET_TIME:
+            return None
+        return open_interruption_start(entry.interruption)
 
     def refresh_workday_bar(self, now=None):
         if now is None:
@@ -451,33 +378,15 @@ class TimeTrackerApp(QMainWindow):
             return
 
         pause_start = self._active_pause(now)
-        session_start = self._active_session(now)
         if entry.start == UNSET_TIME:
-            self._clear_active_session()
             self.workday_bar.set_state(WorkdayState.IDLE)
         elif entry.end != UNSET_TIME:
-            self._clear_active_session()
             self.workday_bar.set_state(
                 WorkdayState.COMPLETE,
                 start=entry.start,
                 end=entry.end,
             )
         else:
-            if session_start != entry.start:
-                self._clear_active_session()
-                self._set_active_session(entry.date, entry.start)
-                pause_start = None
-
-            if pause_start:
-                open_pause_start = open_interruption_start(entry.interruption)
-
-                if open_pause_start is None:
-                    self._clear_active_pause()
-                    pause_start = None
-                elif open_pause_start != pause_start:
-                    self._set_active_pause(entry.date, open_pause_start)
-                    pause_start = open_pause_start
-
             if pause_start:
                 self.workday_bar.set_state(
                     WorkdayState.PAUSED,
@@ -539,8 +448,6 @@ class TimeTrackerApp(QMainWindow):
                 )
                 if answer != QMessageBox.StandardButton.Yes:
                     return
-            self._clear_active_session()
-            self._set_active_session(date_text, time_text)
             self.table.update_entry_for_date(
                 date_text,
                 start=time_text,
@@ -587,8 +494,6 @@ class TimeTrackerApp(QMainWindow):
             entry.date,
             interruption=interruption,
         )
-        if updated:
-            self._set_active_pause(date_text, start_text)
         return updated
 
     def _finish_active_pause(self, entry, end_text):
@@ -596,7 +501,6 @@ class TimeTrackerApp(QMainWindow):
         if pause_start is None:
             return True
         if entry is None:
-            self._clear_active_pause()
             return True
 
         interruption = entry.interruption
@@ -630,8 +534,6 @@ class TimeTrackerApp(QMainWindow):
             entry.date,
             interruption=interruption,
         )
-        if updated:
-            self._clear_active_pause()
         return updated
 
     def stop_workday(self):
@@ -663,7 +565,6 @@ class TimeTrackerApp(QMainWindow):
             entry = self._today_entry(now)
 
         self.table.update_entry_for_date(entry.date, end=end_text)
-        self._clear_active_session()
         self.refresh_workday_bar(now)
 
     def close_month(self):
@@ -746,8 +647,14 @@ class TimeTrackerApp(QMainWindow):
         try:
             from znactime.storage.csv_export import export_month
 
-            export_month(self._month_record, target, overwrite=True)
-        except OSError as error:
+            month = self.repository.load_month(
+                self.header.year(),
+                self.header.month(),
+            )
+            if month is None:
+                raise StorageError("The selected month no longer exists.")
+            export_month(month, target, overwrite=True)
+        except (OSError, StorageError) as error:
             QMessageBox.warning(self, "Export failed", str(error))
 
     def import_csv_data(self):
@@ -762,7 +669,17 @@ class TimeTrackerApp(QMainWindow):
         if not source:
             return
         try:
-            preflight = preflight_legacy_data(source)
+            preflight = run_background_task(
+                self,
+                "Inspecting legacy data",
+                lambda *, progress, cancelled: preflight_legacy_data(
+                    source,
+                    progress=progress,
+                    cancelled=cancelled,
+                ),
+            )
+        except LegacyImportCancelled:
+            return
         except (OSError, ValueError) as error:
             QMessageBox.critical(self, "CSV import cannot continue", str(error))
             return
@@ -775,7 +692,7 @@ class TimeTrackerApp(QMainWindow):
             "Confirm CSV import",
             f"Source: {preflight.source_root}\n\n{summary}\n\n"
             "SQLite remains authoritative. Existing local day data, closed months, "
-            "per-day work limits, and active timer state will not be overwritten. "
+            "per-day work limits, and current table data will not be overwritten. "
             "Only untouched calendar-day placeholders and missing months may receive "
             "CSV data. Source files will not be changed.\n\nContinue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -784,7 +701,26 @@ class TimeTrackerApp(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            result = self.repository.merge_legacy(preflight)
+            database_path = self.repository.path
+
+            def merge(*, progress, cancelled):
+                worker_repository = SQLiteRepository(database_path)
+                try:
+                    return worker_repository.merge_legacy(
+                        preflight,
+                        progress=progress,
+                        cancelled=cancelled,
+                    )
+                finally:
+                    worker_repository.close()
+
+            result = run_background_task(
+                self,
+                "Importing legacy data",
+                merge,
+            )
+        except LegacyImportCancelled:
+            return
         except (OSError, StorageError, ValueError) as error:
             QMessageBox.critical(self, "CSV import failed", str(error))
             return
@@ -842,7 +778,23 @@ class TimeTrackerApp(QMainWindow):
         if target is None:
             return
         try:
-            self.repository.backup_to(target, overwrite=True)
+            database_path = self.repository.path
+
+            def backup(*, progress, cancelled):
+                worker_repository = SQLiteRepository(database_path)
+                try:
+                    worker_repository.backup_to(
+                        target,
+                        overwrite=True,
+                        progress=progress,
+                        cancelled=cancelled,
+                    )
+                finally:
+                    worker_repository.close()
+
+            run_background_task(self, "Backing up database", backup)
+        except LegacyImportCancelled:
+            return
         except (OSError, StorageError) as error:
             QMessageBox.warning(self, "Backup failed", str(error))
             return

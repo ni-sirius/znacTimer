@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 SCHEMA_SQL = r"""
@@ -51,8 +51,16 @@ CREATE TABLE work_schedule_periods (
     updated_at TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
     UNIQUE (dataset_id, effective_from),
-    CHECK (effective_from = date(effective_from, '+0 days')),
-    CHECK (effective_to IS NULL OR effective_to = date(effective_to, '+0 days')),
+    CHECK (
+        date(effective_from, '+0 days') IS NOT NULL
+        AND effective_from = date(effective_from, '+0 days')
+    ),
+    CHECK (
+        effective_to IS NULL OR (
+            date(effective_to, '+0 days') IS NOT NULL
+            AND effective_to = date(effective_to, '+0 days')
+        )
+    ),
     CHECK (effective_to IS NULL OR effective_to >= effective_from)
 ) STRICT;
 
@@ -91,7 +99,10 @@ CREATE TABLE day_entries (
     updated_at TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
     UNIQUE (month_id, work_date),
-    CHECK (work_date = date(work_date, '+0 days'))
+    CHECK (
+        date(work_date, '+0 days') IS NOT NULL
+        AND work_date = date(work_date, '+0 days')
+    )
 ) STRICT;
 
 CREATE TABLE break_periods (
@@ -127,14 +138,6 @@ CREATE TABLE closed_day_results (
     running_balance_minutes INTEGER NOT NULL
 ) STRICT;
 
-CREATE TABLE active_workday (
-    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
-    day_entry_id INTEGER NOT NULL UNIQUE REFERENCES day_entries(id) ON DELETE RESTRICT,
-    started_at_utc TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
-) STRICT;
-
 CREATE TABLE legacy_imports (
     id INTEGER PRIMARY KEY,
     source_fingerprint TEXT NOT NULL UNIQUE,
@@ -157,6 +160,26 @@ CREATE TRIGGER schedule_identity_immutable
 BEFORE UPDATE OF public_id ON work_schedule_periods
 WHEN NEW.public_id != OLD.public_id
 BEGIN SELECT RAISE(ABORT, 'schedule public identity is immutable'); END;
+
+CREATE TRIGGER schedule_dates_valid_insert
+BEFORE INSERT ON work_schedule_periods
+WHEN date(NEW.effective_from, '+0 days') IS NULL
+  OR NEW.effective_from != date(NEW.effective_from, '+0 days')
+  OR (NEW.effective_to IS NOT NULL AND (
+      date(NEW.effective_to, '+0 days') IS NULL
+      OR NEW.effective_to != date(NEW.effective_to, '+0 days')
+  ))
+BEGIN SELECT RAISE(ABORT, 'work schedule dates must be canonical calendar dates'); END;
+
+CREATE TRIGGER schedule_dates_valid_update
+BEFORE UPDATE OF effective_from, effective_to ON work_schedule_periods
+WHEN date(NEW.effective_from, '+0 days') IS NULL
+  OR NEW.effective_from != date(NEW.effective_from, '+0 days')
+  OR (NEW.effective_to IS NOT NULL AND (
+      date(NEW.effective_to, '+0 days') IS NULL
+      OR NEW.effective_to != date(NEW.effective_to, '+0 days')
+  ))
+BEGIN SELECT RAISE(ABORT, 'work schedule dates must be canonical calendar dates'); END;
 
 CREATE TRIGGER schedule_no_overlap_insert
 BEFORE INSERT ON work_schedule_periods
@@ -202,11 +225,6 @@ WHEN OLD.status = 'open' AND NEW.status = 'closed' AND (
           AND successor.status = 'closed'
           AND successor.year = CASE WHEN OLD.month = 12 THEN OLD.year + 1 ELSE OLD.year END
           AND successor.month = CASE WHEN OLD.month = 12 THEN 1 ELSE OLD.month + 1 END
-    )
-    OR EXISTS (
-        SELECT 1 FROM active_workday active
-        JOIN day_entries day ON day.id = active.day_entry_id
-        WHERE day.month_id = OLD.id
     )
     OR EXISTS (
         SELECT 1 FROM break_periods pause
@@ -287,6 +305,18 @@ WHEN EXISTS (
 )
 BEGIN SELECT RAISE(ABORT, 'day violates month state or date'); END;
 
+CREATE TRIGGER day_date_valid_insert
+BEFORE INSERT ON day_entries
+WHEN date(NEW.work_date, '+0 days') IS NULL
+  OR NEW.work_date != date(NEW.work_date, '+0 days')
+BEGIN SELECT RAISE(ABORT, 'work date must be a canonical calendar date'); END;
+
+CREATE TRIGGER day_date_valid_update
+BEFORE UPDATE OF work_date ON day_entries
+WHEN date(NEW.work_date, '+0 days') IS NULL
+  OR NEW.work_date != date(NEW.work_date, '+0 days')
+BEGIN SELECT RAISE(ABORT, 'work date must be a canonical calendar date'); END;
+
 CREATE TRIGGER day_guard_update
 BEFORE UPDATE ON day_entries
 WHEN NEW.work_date != OLD.work_date OR NEW.month_id != OLD.month_id
@@ -347,22 +377,6 @@ WHEN EXISTS (
     WHERE day.id = OLD.day_entry_id AND month.status = 'closed'
 )
 BEGIN SELECT RAISE(ABORT, 'closed month break is immutable'); END;
-
-CREATE TRIGGER active_workday_guard_insert
-BEFORE INSERT ON active_workday
-WHEN NOT EXISTS (
-    SELECT 1 FROM day_entries day JOIN months month ON month.id = day.month_id
-    WHERE day.id = NEW.day_entry_id AND month.status = 'open'
-)
-BEGIN SELECT RAISE(ABORT, 'active workday must belong to an editable month'); END;
-
-CREATE TRIGGER active_workday_guard_update
-BEFORE UPDATE OF day_entry_id ON active_workday
-WHEN NEW.day_entry_id != OLD.day_entry_id OR NOT EXISTS (
-    SELECT 1 FROM day_entries day JOIN months month ON month.id = day.month_id
-    WHERE day.id = NEW.day_entry_id AND month.status = 'open'
-)
-BEGIN SELECT RAISE(ABORT, 'active workday identity is immutable or protected'); END;
 
 CREATE TRIGGER result_guard_insert
 BEFORE INSERT ON closed_day_results

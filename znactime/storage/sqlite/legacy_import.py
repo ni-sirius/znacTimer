@@ -10,10 +10,14 @@ from znactime.config import VERSION
 from znactime.core.constants import NORMAL_DAY
 from znactime.storage.errors import StorageValidationError
 from znactime.storage.legacy_csv_import import (
+    CancellationCallback,
     LegacyDay,
     LegacyMergeResult,
     LegacyMonth,
     LegacyPreflight,
+    ProgressCallback,
+    _cancel_if_requested,
+    _report_progress,
 )
 from znactime.storage.sqlite.connection import transaction, translate_error
 from znactime.storage.sqlite.repository import SQLiteRepository, _utc_text
@@ -61,11 +65,7 @@ def _local_day_has_data(db, day_row) -> bool:
         "SELECT 1 FROM break_periods WHERE day_entry_id = ?", (day_row["id"],)
     ).fetchone():
         return True
-    return bool(
-        db.execute(
-            "SELECT 1 FROM active_workday WHERE day_entry_id = ?", (day_row["id"],)
-        ).fetchone()
-    )
+    return False
 
 
 def _ensure_month(repository: SQLiteRepository, db, year: int, month: int, now: str):
@@ -163,7 +163,15 @@ def _legacy_opening(month: LegacyMonth, fallback: int) -> int:
     return first.running_balance_minutes - first.daily_overtime_minutes
 
 
-def _close_legacy_month(db, month_row, legacy_month: LegacyMonth, opening: int, now: str):
+def _close_legacy_month(
+    db,
+    month_row,
+    legacy_month: LegacyMonth,
+    opening: int,
+    now: str,
+    *,
+    cancelled: CancellationCallback | None,
+):
     source_days = {item.work_date.isoformat(): item for item in legacy_month.days}
     running = opening
     all_days = db.execute(
@@ -171,6 +179,7 @@ def _close_legacy_month(db, month_row, legacy_month: LegacyMonth, opening: int, 
         (month_row["id"],),
     ).fetchall()
     for day_row in all_days:
+        _cancel_if_requested(cancelled)
         source_day = source_days.get(day_row["work_date"])
         if source_day is None:
             daily_overtime = 0
@@ -270,28 +279,20 @@ def _validate_import(db):
 def merge_preflight(
     repository: SQLiteRepository,
     preflight: LegacyPreflight,
+    *,
+    progress: ProgressCallback | None = None,
+    cancelled: CancellationCallback | None = None,
 ) -> LegacyMergeResult:
     """Merge CSV history without replacing any authoritative local day."""
     if preflight.blocking_errors:
         raise StorageValidationError(
             f"Legacy import has {len(preflight.blocking_errors)} blocking error(s)."
         )
-    if repository._connection.execute(
-        "SELECT 1 FROM legacy_imports WHERE source_fingerprint = ?",
-        (preflight.source_fingerprint,),
-    ).fetchone():
-        return LegacyMergeResult(
-            preflight.source_root,
-            True,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            len(preflight.warnings),
-        )
+    _cancel_if_requested(cancelled)
+    repository._connection.set_progress_handler(
+        lambda: int(bool(cancelled and cancelled())),
+        1_000,
+    )
 
     months_created = 0
     months_merged = 0
@@ -302,6 +303,22 @@ def merge_preflight(
     days_unchanged = 0
     now = _utc_text()
     try:
+        if repository._connection.execute(
+            "SELECT 1 FROM legacy_imports WHERE source_fingerprint = ?",
+            (preflight.source_fingerprint,),
+        ).fetchone():
+            return LegacyMergeResult(
+                preflight.source_root,
+                True,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                len(preflight.warnings),
+            )
         with transaction(repository._connection) as db:
             if db.execute(
                 "SELECT 1 FROM legacy_imports WHERE source_fingerprint = ?",
@@ -309,7 +326,8 @@ def merge_preflight(
             ).fetchone():
                 raise StorageValidationError("This exact CSV snapshot was already imported.")
 
-            for legacy_month in preflight.months:
+            for month_index, legacy_month in enumerate(preflight.months, 1):
+                _cancel_if_requested(cancelled)
                 month_row, created = _ensure_month(
                     repository, db, legacy_month.year, legacy_month.month, now
                 )
@@ -340,6 +358,7 @@ def merge_preflight(
                     item.work_date.isoformat(): item for item in legacy_month.days
                 }
                 for day_row in local_rows:
+                    _cancel_if_requested(cancelled)
                     legacy_day = source_by_date.get(day_row["work_date"])
                     if legacy_day is None:
                         days_unchanged += 1
@@ -384,13 +403,29 @@ def merge_preflight(
                             legacy_month,
                             month_row["opening_balance_minutes"],
                             now,
+                            cancelled=cancelled,
                         )
                         months_closed += 1
 
+                _report_progress(
+                    progress,
+                    "Importing legacy months",
+                    month_index,
+                    len(preflight.months),
+                )
+
+            _cancel_if_requested(cancelled)
+            _report_progress(progress, "Validating imported database", 0, 0)
             _record_import(db, preflight, now)
             _validate_import(db)
     except sqlite3.Error as error:
+        _cancel_if_requested(cancelled)
         raise translate_error(error) from error
+    except Exception:
+        _cancel_if_requested(cancelled)
+        raise
+    finally:
+        repository._connection.set_progress_handler(None, 0)
 
     return LegacyMergeResult(
         preflight.source_root,
@@ -411,6 +446,8 @@ def import_preflight(
     destination: str | Path,
     *,
     default_workday_minutes: int = 480,
+    progress: ProgressCallback | None = None,
+    cancelled: CancellationCallback | None = None,
 ) -> SQLiteRepository:
     if preflight.blocking_errors:
         raise StorageValidationError(
@@ -421,7 +458,12 @@ def import_preflight(
         default_workday_minutes=default_workday_minutes,
     )
     try:
-        merge_preflight(repository, preflight)
+        merge_preflight(
+            repository,
+            preflight,
+            progress=progress,
+            cancelled=cancelled,
+        )
         return repository
     except Exception:
         repository.close()

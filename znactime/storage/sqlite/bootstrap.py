@@ -8,6 +8,11 @@ from pathlib import Path
 
 from znactime.storage.errors import StorageConflict, StorageLocked
 from znactime.storage.legacy_csv_import import LegacyPreflight
+from znactime.storage.legacy_csv_import import (
+    CancellationCallback,
+    LegacyImportCancelled,
+    ProgressCallback,
+)
 from znactime.storage.sqlite.legacy_import import import_preflight
 from znactime.storage.sqlite.repository import SQLiteRepository
 
@@ -43,48 +48,56 @@ def inspect_bootstrap(database_path: str | Path) -> BootstrapInspection:
 def startup_lock(database_path: str | Path):
     lock_path = Path(database_path).with_name(Path(database_path).name + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = None
-    for attempt in range(2):
-        try:
-            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError as error:
-            if attempt or _lock_owner_running(lock_path):
-                raise StorageLocked("Another database setup is already running.") from error
-            try:
-                lock_path.unlink()
-            except FileNotFoundError:
-                pass
-    if descriptor is None:
-        raise StorageLocked("Unable to acquire the database setup lock.")
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    acquired = False
     try:
-        os.write(descriptor, str(os.getpid()).encode("ascii"))
-        os.close(descriptor)
-        descriptor = None
+        if os.fstat(descriptor).st_size == 0:
+            os.write(descriptor, b"\0")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        _acquire_file_lock(descriptor)
+        acquired = True
+        owner = f"{os.getpid()}\n".encode("ascii").ljust(32, b" ")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        os.write(descriptor, owner)
+        os.ftruncate(descriptor, len(owner))
+        os.fsync(descriptor)
         yield
     finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+        if acquired:
+            try:
+                _release_file_lock(descriptor)
+            except OSError:
+                # Closing the descriptor also releases an advisory lock. Do not
+                # replace an exception from the protected setup operation.
+                pass
+        os.close(descriptor)
 
 
-def _lock_owner_running(lock_path: Path) -> bool:
+def _acquire_file_lock(descriptor: int) -> None:
     try:
-        process_id = int(lock_path.read_text(encoding="ascii").strip())
-    except (OSError, ValueError):
-        return True
-    if process_id == os.getpid():
-        return True
-    try:
-        os.kill(process_id, 0)
-    except ProcessLookupError:
-        return False
-    except (OSError, PermissionError):
-        return True
-    return True
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as error:
+        raise StorageLocked("Another database setup is already running.") from error
+
+
+def _release_file_lock(descriptor: int) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
 
 
 def _promote(staging: Path, target: Path) -> SQLiteRepository:
@@ -114,16 +127,32 @@ def migrate_legacy_database(
     database_path: str | Path,
     *,
     default_workday_minutes: int = 480,
+    progress: ProgressCallback | None = None,
+    cancelled: CancellationCallback | None = None,
 ) -> SQLiteRepository:
     target = Path(database_path)
     staging = target.with_name(target.name + ".migrating")
     with startup_lock(target):
         if target.exists() or staging.exists():
             raise StorageConflict("Database or migration staging file already exists.")
-        repository = import_preflight(
-            preflight,
-            staging,
-            default_workday_minutes=default_workday_minutes,
-        )
+        try:
+            repository = import_preflight(
+                preflight,
+                staging,
+                default_workday_minutes=default_workday_minutes,
+                progress=progress,
+                cancelled=cancelled,
+            )
+        except LegacyImportCancelled:
+            for candidate in (
+                staging,
+                staging.with_name(staging.name + "-wal"),
+                staging.with_name(staging.name + "-shm"),
+            ):
+                try:
+                    candidate.unlink()
+                except FileNotFoundError:
+                    pass
+            raise
         repository.close()
         return _promote(staging, target)

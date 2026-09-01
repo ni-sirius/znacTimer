@@ -6,7 +6,10 @@ from PySide6.QtCore import QStandardPaths
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton
 
 from znactime.storage.errors import StorageError
-from znactime.storage.legacy_csv_import import preflight_legacy_data
+from znactime.storage.legacy_csv_import import (
+    LegacyImportCancelled,
+    preflight_legacy_data,
+)
 from znactime.storage.sqlite.bootstrap import (
     BootstrapState,
     create_new_database,
@@ -14,6 +17,7 @@ from znactime.storage.sqlite.bootstrap import (
     migrate_legacy_database,
 )
 from znactime.storage.sqlite.repository import SQLiteRepository
+from znactime.ui.qt.background import run_background_task
 
 
 def database_path() -> Path:
@@ -119,7 +123,15 @@ def open_or_initialize_repository(parent=None, *, default_workday_minutes=480):
             )
             if not source:
                 continue
-            preflight = preflight_legacy_data(source)
+            preflight = run_background_task(
+                parent,
+                "Inspecting legacy data",
+                lambda *, progress, cancelled: preflight_legacy_data(
+                    source,
+                    progress=progress,
+                    cancelled=cancelled,
+                ),
+            )
             summary = format_preflight_summary(preflight)
             if preflight.blocking_errors:
                 QMessageBox.critical(parent, "Import cannot continue", summary)
@@ -134,10 +146,20 @@ def open_or_initialize_repository(parent=None, *, default_workday_minutes=480):
             )
             if confirmation != QMessageBox.StandardButton.Yes:
                 continue
-            repository = migrate_legacy_database(
-                preflight,
-                target,
-                default_workday_minutes=default_workday_minutes,
+            def migrate(*, progress, cancelled):
+                worker_repository = migrate_legacy_database(
+                    preflight,
+                    target,
+                    default_workday_minutes=default_workday_minutes,
+                    progress=progress,
+                    cancelled=cancelled,
+                )
+                worker_repository.close()
+
+            run_background_task(
+                parent,
+                "Importing legacy data",
+                migrate,
             )
             QMessageBox.information(
                 parent,
@@ -146,6 +168,8 @@ def open_or_initialize_repository(parent=None, *, default_workday_minutes=480):
                 f"{sum(len(item.days) for item in preflight.months)} day rows.\n\n"
                 f"Legacy source preserved at:\n{preflight.source_root}",
             )
-            return repository
+            return SQLiteRepository(target)
+        except LegacyImportCancelled:
+            continue
         except (StorageError, OSError, ValueError, RuntimeError) as error:
             QMessageBox.critical(parent, "Database setup failed", str(error))

@@ -1254,7 +1254,13 @@ class MonthTableView(QTableView):
         )
 
     def ensure_today_visible(self):
-        model = self.model()
+        try:
+            model = self.model()
+        except RuntimeError:
+            # A queued geometry callback can outlive a short-lived test/dialog
+            # view. The underlying Qt object is already gone, so there is no
+            # visibility work left to perform.
+            return
         if model is None:
             return
 

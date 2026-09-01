@@ -3,13 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from znactime.core.calendar_utils import calendar_week_tag
-from znactime.core.constants import NORMAL_DAY, OPEN_END_MARKER, ZERO_DURATION
+from znactime.core.constants import (
+    NORMAL_DAY,
+    OPEN_END_MARKER,
+    UNSET_TIME,
+    ZERO_DURATION,
+)
 from znactime.core.models import BreakRecord, DayEntry, DayRecord
 
 
 def minute_text(value: int | None) -> str:
     if value is None:
-        return "00:00"
+        return UNSET_TIME
     return f"{value // 60:02d}:{value % 60:02d}"
 
 
@@ -27,7 +32,7 @@ def parse_display_date(value: str) -> date:
 
 def parse_clock(value: str) -> int | None:
     token = str(value).strip()
-    if token in ("", "00:00"):
+    if token in ("", UNSET_TIME):
         return None
     parsed = datetime.strptime(token, "%H:%M")
     return parsed.hour * 60 + parsed.minute

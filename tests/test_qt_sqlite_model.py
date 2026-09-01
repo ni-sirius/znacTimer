@@ -41,6 +41,25 @@ class QtSQLiteModelTest(unittest.TestCase):
         self.assertEqual(stored.start_minute, 510)
         self.assertEqual(self.model.index(0, Column.START).data(), "08:30")
 
+    def test_midnight_and_unset_round_trip_without_conflation(self):
+        index = self.model.index(0, Column.START)
+
+        self.assertEqual(index.data(), "--:--")
+        self.assertTrue(
+            self.model.setData(index, "00:00", Qt.ItemDataRole.EditRole)
+        )
+        self.assertEqual(
+            self.repository.load_month(2024, 6).days[0].start_minute,
+            0,
+        )
+        self.assertEqual(index.data(), "00:00")
+
+        self.assertTrue(self.model.setData(index, "", Qt.ItemDataRole.EditRole))
+        self.assertIsNone(
+            self.repository.load_month(2024, 6).days[0].start_minute
+        )
+        self.assertEqual(index.data(), "--:--")
+
     def test_interruption_periods_are_normalized_into_rows(self):
         index = self.model.index(0, Column.INTERRUPTION)
         changed = self.model.setData(

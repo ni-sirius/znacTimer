@@ -6,7 +6,10 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from znactime.storage.legacy_csv_import import preflight_legacy_data
+from znactime.storage.legacy_csv_import import (
+    LegacyImportCancelled,
+    preflight_legacy_data,
+)
 from znactime.storage.sqlite.bootstrap import migrate_legacy_database
 from znactime.storage.sqlite.legacy_verify import verify_legacy_import
 from znactime.storage.sqlite.repository import SQLiteRepository
@@ -168,6 +171,24 @@ class LegacyImportVerificationTest(unittest.TestCase):
                 for issue in report.errors
             )
         )
+
+    def test_verification_can_be_cancelled_during_database_checks(self):
+        self._write_month(2)
+        self._import()
+        cancel = False
+
+        def progress(phase, _completed, _total):
+            nonlocal cancel
+            if phase == "Checking SQLite integrity":
+                cancel = True
+
+        with self.assertRaises(LegacyImportCancelled):
+            verify_legacy_import(
+                self.root,
+                self.database,
+                progress=progress,
+                cancelled=lambda: cancel,
+            )
 
 
 if __name__ == "__main__":

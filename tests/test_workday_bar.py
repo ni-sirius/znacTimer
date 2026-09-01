@@ -44,7 +44,6 @@ class WorkdayBarTest(unittest.TestCase):
     def test_sub_minute_pause_resumes_without_recording(self):
         fake_app = SimpleNamespace(
             _active_pause=Mock(return_value="12:30"),
-            _clear_active_pause=Mock(),
         )
 
         resumed = TimeTrackerApp._finish_active_pause(
@@ -54,7 +53,6 @@ class WorkdayBarTest(unittest.TestCase):
         )
 
         self.assertTrue(resumed)
-        fake_app._clear_active_pause.assert_called_once_with()
 
     def test_starting_pause_immediately_adds_open_interruption(self):
         entry = DayEntry(
@@ -62,14 +60,13 @@ class WorkdayBarTest(unittest.TestCase):
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="10:00-10:30",
         )
         fake_app = SimpleNamespace(
             table=SimpleNamespace(
                 update_entry_for_date=Mock(return_value=True),
             ),
-            _set_active_pause=Mock(),
         )
 
         started = TimeTrackerApp._start_active_pause(
@@ -84,10 +81,6 @@ class WorkdayBarTest(unittest.TestCase):
             "17.06.2024",
             interruption="10:00-10:30;12:30-...",
         )
-        fake_app._set_active_pause.assert_called_once_with(
-            "17.06.2024",
-            "12:30",
-        )
 
     def test_resuming_pause_finishes_existing_open_interruption(self):
         entry = DayEntry(
@@ -95,7 +88,7 @@ class WorkdayBarTest(unittest.TestCase):
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="10:00-10:30;12:30-...",
         )
         fake_app = SimpleNamespace(
@@ -103,7 +96,6 @@ class WorkdayBarTest(unittest.TestCase):
             table=SimpleNamespace(
                 update_entry_for_date=Mock(return_value=True),
             ),
-            _clear_active_pause=Mock(),
         )
 
         resumed = TimeTrackerApp._finish_active_pause(
@@ -117,7 +109,6 @@ class WorkdayBarTest(unittest.TestCase):
             "17.06.2024",
             interruption="10:00-10:30;12:30-13:00",
         )
-        fake_app._clear_active_pause.assert_called_once_with()
 
     def test_zero_length_pause_removes_open_interruption(self):
         entry = DayEntry(
@@ -125,7 +116,7 @@ class WorkdayBarTest(unittest.TestCase):
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="10:00-10:30;12:30-...",
         )
         fake_app = SimpleNamespace(
@@ -133,7 +124,6 @@ class WorkdayBarTest(unittest.TestCase):
             table=SimpleNamespace(
                 update_entry_for_date=Mock(return_value=True),
             ),
-            _clear_active_pause=Mock(),
         )
 
         resumed = TimeTrackerApp._finish_active_pause(
@@ -147,7 +137,6 @@ class WorkdayBarTest(unittest.TestCase):
             "17.06.2024",
             interruption="10:00-10:30",
         )
-        fake_app._clear_active_pause.assert_called_once_with()
 
     @patch("znactime.ui.qt.app.datetime")
     def test_stop_workday_accepts_same_start_and_end_time(self, mock_datetime):
@@ -163,7 +152,7 @@ class WorkdayBarTest(unittest.TestCase):
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="00:00",
         )
         fake_app = SimpleNamespace(
@@ -171,7 +160,6 @@ class WorkdayBarTest(unittest.TestCase):
             _today_entry=Mock(return_value=entry),
             _active_pause=Mock(return_value=None),
             table=SimpleNamespace(update_entry_for_date=Mock(return_value=True)),
-            _clear_active_session=Mock(),
             refresh_workday_bar=Mock(),
         )
 
@@ -199,7 +187,7 @@ class WorkdayBarTest(unittest.TestCase):
             cw="",
             date="17.06.2024",
             special="Normal day",
-            start="00:00",
+            start="--:--",
             end="17:00",
             interruption="00:00",
         )
@@ -207,8 +195,6 @@ class WorkdayBarTest(unittest.TestCase):
             month_closed=False,
             _today_entry=Mock(return_value=entry),
             _active_pause=Mock(return_value=None),
-            _clear_active_session=Mock(),
-            _set_active_session=Mock(),
             table=SimpleNamespace(update_entry_for_date=Mock(return_value=True)),
             refresh_workday_bar=Mock(),
         )
@@ -224,49 +210,43 @@ class WorkdayBarTest(unittest.TestCase):
         fake_app.table.update_entry_for_date.assert_called_once_with(
             "17.06.2024",
             start="08:00",
-            end="00:00",
+            end="--:--",
         )
 
-    def test_stale_active_pause_is_finalized_by_repository(self):
-        repository = Mock()
-        repository.finalize_stale_workday.return_value = object()
+    def test_active_pause_is_derived_from_current_table_entry(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="--:--",
+            interruption="12:30-...",
+        )
         fake_app = SimpleNamespace(
-            repository=repository,
-            load_month=Mock(),
-        )
-        now = datetime(2024, 6, 18, 0, 0)
-
-        updated = TimeTrackerApp._finalize_stale_session(
-            fake_app,
-            now,
+            _today_entry=Mock(return_value=entry),
         )
 
-        self.assertTrue(updated)
-        repository.finalize_stale_workday.assert_called_once_with(now.date(), now)
-        fake_app.load_month.assert_called_once_with()
+        self.assertEqual(TimeTrackerApp._active_pause(fake_app), "12:30")
 
-    def test_stale_session_from_previous_month_is_closed_on_startup(self):
-        repository = Mock()
-        repository.finalize_stale_workday.return_value = object()
+    def test_completed_day_has_no_active_pause_even_with_open_period(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="17:00",
+            interruption="12:30-...",
+        )
         fake_app = SimpleNamespace(
-            repository=repository,
-            load_month=Mock(),
+            _today_entry=Mock(return_value=entry),
         )
 
-        updated = TimeTrackerApp._finalize_stale_session(
-            fake_app,
-            datetime(2024, 7, 1, 8, 0),
-        )
+        self.assertIsNone(TimeTrackerApp._active_pause(fake_app))
 
-        self.assertTrue(updated)
-        repository.finalize_stale_workday.assert_called_once()
-        fake_app.load_month.assert_called_once_with()
-
-    def test_today_rollover_recalculates_current_month_and_stops_session(self):
+    def test_today_rollover_recalculates_current_month(self):
         now = datetime(2024, 6, 18, 0, 0)
         fake_app = SimpleNamespace(
             _current_date=date(2024, 6, 17),
-            _finalize_stale_session=Mock(),
             header=SimpleNamespace(
                 year=Mock(return_value=2024),
                 month=Mock(return_value=6),
@@ -281,7 +261,6 @@ class WorkdayBarTest(unittest.TestCase):
         TimeTrackerApp._check_today_rollover(fake_app, now)
 
         self.assertEqual(fake_app._current_date, date(2024, 6, 18))
-        fake_app._finalize_stale_session.assert_called_once_with(now)
         fake_app.header.set_period.assert_not_called()
         fake_app.load_month.assert_not_called()
         fake_app.table.recalculate.assert_called_once_with(
@@ -294,7 +273,6 @@ class WorkdayBarTest(unittest.TestCase):
         now = datetime(2024, 7, 1, 0, 0)
         fake_app = SimpleNamespace(
             _current_date=date(2024, 6, 30),
-            _finalize_stale_session=Mock(),
             header=SimpleNamespace(
                 year=Mock(return_value=2024),
                 month=Mock(return_value=6),
@@ -308,7 +286,6 @@ class WorkdayBarTest(unittest.TestCase):
         TimeTrackerApp._check_today_rollover(fake_app, now)
 
         self.assertEqual(fake_app._current_date, date(2024, 7, 1))
-        fake_app._finalize_stale_session.assert_called_once_with(now)
         fake_app.header.set_period.assert_called_once_with(2024, 7)
         fake_app.load_month.assert_called_once_with()
         fake_app.table.recalculate.assert_not_called()
@@ -323,8 +300,8 @@ class WorkdayBarTest(unittest.TestCase):
                     cw="",
                     date=today_text,
                     special="Normal day",
-                    start="00:00",
-                    end="00:00",
+                    start="--:--",
+                    end="--:--",
                     interruption="00:00",
                 )
             ]
@@ -341,17 +318,41 @@ class WorkdayBarTest(unittest.TestCase):
         self.assertTrue(changed)
         self.assertTrue(changes)
 
-    def _refresh_fake_app(self, entry, session_start=None, pause_start=None):
+    @patch("znactime.storage.csv_export.export_month")
+    def test_csv_export_reloads_committed_month_instead_of_cached_snapshot(
+        self, export_month
+    ):
+        stale = object()
+        committed = object()
+        repository = Mock()
+        repository.load_month.return_value = committed
+        fake_app = SimpleNamespace(
+            repository=repository,
+            _month_record=stale,
+            header=SimpleNamespace(
+                year=Mock(return_value=2024),
+                month=Mock(return_value=6),
+            ),
+            _confirmed_export_path=Mock(return_value="month.csv"),
+        )
+
+        TimeTrackerApp.export_month_csv(fake_app)
+
+        repository.load_month.assert_called_once_with(2024, 6)
+        export_month.assert_called_once_with(
+            committed,
+            "month.csv",
+            overwrite=True,
+        )
+
+    def _refresh_fake_app(self, entry):
         fake_app = SimpleNamespace(
             month_closed=False,
             _today_entry=Mock(return_value=entry),
-            _active_pause=Mock(return_value=pause_start),
-            _active_session=Mock(return_value=session_start),
-            _clear_active_session=Mock(),
-            _clear_active_pause=Mock(),
-            _set_active_session=Mock(),
-            _set_active_pause=Mock(),
             workday_bar=SimpleNamespace(set_state=Mock()),
+        )
+        fake_app._active_pause = lambda now=None: TimeTrackerApp._active_pause(
+            fake_app, now
         )
         TimeTrackerApp.refresh_workday_bar(
             fake_app,
@@ -365,16 +366,12 @@ class WorkdayBarTest(unittest.TestCase):
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="00:00",
         )
 
         fake_app = self._refresh_fake_app(entry)
 
-        fake_app._set_active_session.assert_called_once_with(
-            "17.06.2024",
-            "08:00",
-        )
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="08:00",
@@ -390,9 +387,8 @@ class WorkdayBarTest(unittest.TestCase):
             interruption="00:00",
         )
 
-        fake_app = self._refresh_fake_app(entry, session_start="08:00")
+        fake_app = self._refresh_fake_app(entry)
 
-        fake_app._clear_active_session.assert_called_once_with()
         fake_app.workday_bar.set_state.assert_called_once_with(
             "complete",
             start="08:00",
@@ -405,59 +401,47 @@ class WorkdayBarTest(unittest.TestCase):
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="00:00",
         )
 
-        fake_app = self._refresh_fake_app(entry, session_start="08:00")
+        fake_app = self._refresh_fake_app(entry)
 
-        fake_app._clear_active_session.assert_not_called()
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="08:00",
         )
 
-    def test_matching_table_start_preserves_active_pause(self):
+    def test_open_pause_in_table_puts_player_in_paused_state(self):
         entry = DayEntry(
             cw="",
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="12:30-...",
         )
 
-        fake_app = self._refresh_fake_app(
-            entry,
-            session_start="08:00",
-            pause_start="12:30",
-        )
+        fake_app = self._refresh_fake_app(entry)
 
-        fake_app._clear_active_session.assert_not_called()
-        fake_app._clear_active_pause.assert_not_called()
         fake_app.workday_bar.set_state.assert_called_once_with(
             "paused",
             start="08:00",
             pause_start="12:30",
         )
 
-    def test_completing_active_pause_in_table_resumes_player(self):
+    def test_completed_pause_in_table_puts_player_in_working_state(self):
         entry = DayEntry(
             cw="",
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="12:30-13:00",
         )
 
-        fake_app = self._refresh_fake_app(
-            entry,
-            session_start="08:00",
-            pause_start="12:30",
-        )
+        fake_app = self._refresh_fake_app(entry)
 
-        fake_app._clear_active_pause.assert_called_once_with()
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="08:00",
@@ -469,20 +453,12 @@ class WorkdayBarTest(unittest.TestCase):
             date="17.06.2024",
             special="Normal day",
             start="08:00",
-            end="00:00",
+            end="--:--",
             interruption="12:45-...",
         )
 
-        fake_app = self._refresh_fake_app(
-            entry,
-            session_start="08:00",
-            pause_start="12:30",
-        )
+        fake_app = self._refresh_fake_app(entry)
 
-        fake_app._set_active_pause.assert_called_once_with(
-            "17.06.2024",
-            "12:45",
-        )
         fake_app.workday_bar.set_state.assert_called_once_with(
             "paused",
             start="08:00",
@@ -494,15 +470,55 @@ class WorkdayBarTest(unittest.TestCase):
             cw="",
             date="17.06.2024",
             special="Normal day",
-            start="00:00",
+            start="--:--",
             end="17:00",
             interruption="01:00",
         )
 
-        fake_app = self._refresh_fake_app(entry, session_start="08:00")
+        fake_app = self._refresh_fake_app(entry)
 
-        fake_app._clear_active_session.assert_called_once_with()
         fake_app.workday_bar.set_state.assert_called_once_with("idle")
+
+    def test_midnight_table_start_is_a_running_workday(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="00:00",
+            end="--:--",
+            interruption="00:00",
+        )
+
+        fake_app = self._refresh_fake_app(entry)
+
+        fake_app.workday_bar.set_state.assert_called_once_with(
+            "working",
+            start="00:00",
+        )
+
+    def _size_table_for_two_interruption_badges(self, table):
+        """Choose a DPI/font-independent width where two periods fit."""
+        index = table.model.index(0, 5)
+        single_line_height = table.view.rowHeight(0)
+        changed = table.model.setData(
+            index,
+            "12:30-13:00;14:00-14:30",
+            Qt.ItemDataRole.EditRole,
+        )
+        self.assertTrue(changed)
+
+        for _attempt in range(200):
+            self.app.processEvents()
+            if table.view.rowHeight(0) == single_line_height:
+                break
+            table.resize(table.width() + 10, table.height())
+        else:
+            self.fail("Could not find a table width that fits two interruption badges")
+
+        self.assertTrue(
+            table.model.setData(index, "00:00", Qt.ItemDataRole.EditRole)
+        )
+        self.app.processEvents()
 
     def test_interruption_badges_keep_single_line_row_height(self):
         table = TableWidget()
@@ -521,6 +537,7 @@ class WorkdayBarTest(unittest.TestCase):
             ]
         )
         self.app.processEvents()
+        self._size_table_for_two_interruption_badges(table)
         initial_height = table.view.rowHeight(0)
 
         changed = table.model.setData(
@@ -550,6 +567,7 @@ class WorkdayBarTest(unittest.TestCase):
             ]
         )
         self.app.processEvents()
+        self._size_table_for_two_interruption_badges(table)
         initial_height = table.view.rowHeight(0)
 
         changed = table.model.setData(

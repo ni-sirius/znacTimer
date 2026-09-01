@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 
 from znactime.core.calculator import recalculate
-from znactime.core.constants import DayStatus
+from znactime.core.constants import DayStatus, UNSET_TIME
 from znactime.core.models import DayEntry
 
 
@@ -145,7 +145,7 @@ class CalculatorTest(unittest.TestCase):
 
         result = recalculate(entries, 1.0, 8.0, date(2024, 6, 18), False)
 
-        self.assertEqual(result[0].start, "00:00")
+        self.assertEqual(result[0].start, UNSET_TIME)
         self.assertEqual(result[0].end, "17:00")
         self.assertEqual(result[0].interruption, "00:00")
         self.assertEqual(result[0].daily_ot, "00:00")
@@ -195,8 +195,8 @@ class CalculatorTest(unittest.TestCase):
                 cw="",
                 date="15.06.2024",
                 special="Normal day",
-                start="00:00",
-                end="00:00",
+                start=UNSET_TIME,
+                end=UNSET_TIME,
                 interruption="00:00",
             )
         ]
@@ -251,7 +251,7 @@ class CalculatorTest(unittest.TestCase):
                 cw="",
                 date="17.06.2024",
                 special="Normal day",
-                start="00:00",
+                start=UNSET_TIME,
                 end="17:00",
                 interruption="01:00",
             )
@@ -288,8 +288,8 @@ class CalculatorTest(unittest.TestCase):
             cw="",
             date="17.06.2024",
             special="Normal day",
-            start="00:00",
-            end="00:00",
+            start=UNSET_TIME,
+            end=UNSET_TIME,
             interruption="00:00",
         )
 

@@ -4,11 +4,10 @@
 DATE_FORMAT = "%d.%m.%Y"
 TIME_FORMAT = "%H:%M"
 
-# The persisted HH:MM format historically uses the same encoded value for an
-# unset clock time and a duration of zero. Semantic aliases keep call sites
-# readable while preserving that data contract.
+# Legacy CSV uses 00:00 for an absent clock, but the live UI must distinguish
+# that historical encoding from a real midnight value.
 ZERO_HHMM = "00:00"
-UNSET_TIME = ZERO_HHMM
+UNSET_TIME = "--:--"
 ZERO_DURATION = ZERO_HHMM
 
 NORMAL_DAY = "Normal day"
@@ -33,4 +32,3 @@ class DayStatus:
     MISSING_TIMES_TODAY = "missing_times_today"
     VALID_DAY = "valid_day"
     VALID_DAY_TODAY = "valid_day_today"
-

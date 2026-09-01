@@ -10,6 +10,7 @@ from znactime.core.constants import (
     NORMAL_DAY,
     UNSET_TIME,
     ZERO_DURATION,
+    ZERO_HHMM,
 )
 from znactime.core.models import DayEntry, MonthStats
 from znactime.core.time_utils import (
@@ -76,8 +77,8 @@ def _entry_from_csv_row(row):
         cw=cw,
         date=csv_row[0],
         special=csv_row[1],
-        start=time_input_or_zero(csv_row[2]),
-        end=time_input_or_zero(csv_row[3]),
+        start=_legacy_clock(csv_row[2]),
+        end=_legacy_clock(csv_row[3]),
         interruption=interruption_input_or_zero(csv_row[4]),
         daily_ot=csv_row[5],
         monthly_balance=csv_row[6],
@@ -88,12 +89,19 @@ def _entry_to_csv_row(entry):
     return [
         entry.date,
         entry.special,
-        entry.start,
-        entry.end,
+        ZERO_HHMM if entry.start == UNSET_TIME else entry.start,
+        ZERO_HHMM if entry.end == UNSET_TIME else entry.end,
         entry.interruption,
         entry.daily_ot,
         entry.monthly_balance,
     ]
+
+
+def _legacy_clock(value):
+    token = str(value).strip()
+    if token in ("", ZERO_HHMM):
+        return UNSET_TIME
+    return time_input_or_zero(token)
 
 
 def load_month(year, month, data_dir=None) -> list[DayEntry]:

@@ -97,12 +97,19 @@ znacTime does not require an account or cloud service. Its authoritative
 `znactime.db` SQLite database lives in the operating system's application-local
 data directory. On first launch, choose either a new empty database or a
 non-destructive import of the legacy `data/<year>/*.csv` tree. The importer
-validates all files before committing and never modifies the source files.
+validates all recognized files before committing and never modifies the source files.
 
 Month status, immutable closed-month results, work schedules, per-day work
-limits, breaks, and the active timer are stored transactionally in the same
-database. Use **Month > Export Month CSV** or **Export PDF** for portable
+limits, clocks, and breaks are stored transactionally in the same database. The timer
+pane has no independent state: it derives its state from today's table row and writes
+back to that row. Use **Month > Export Month CSV** or **Export PDF** for portable
 outputs; exports are not read back as live application state.
+
+Legacy import recognizes only `<root>/<YYYY>/<YYYY>_tmp_<MM>.csv` and matching
+`closed_<MM>.flag` files. Symlinks and Windows junctions are rejected. An import is
+limited to 2,400 recognized files, 1 MiB per CSV, 64 MiB total, 400 rows per CSV, and
+64 KiB per row. Inspection, import, validation, and backup run in cancellable background
+workers so the desktop interface remains responsive.
 
 Use **Month > Back Up Database** to create a verified SQLite backup of the full
 working history. A normal filesystem copy of `znactime.db` should only be made

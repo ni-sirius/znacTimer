@@ -38,18 +38,18 @@ def coerce_time_input(value):
         elif len(value) == 1:
             hours, minutes = "00", "0" + value
         else:
-            return UNSET_TIME
+            return None
 
         try:
             hour_value = int(hours)
             minute_value = int(minutes)
         except ValueError:
-            return UNSET_TIME
+            return None
 
         if 0 <= hour_value <= 23 and 0 <= minute_value <= 59:
             value = f"{hour_value:02d}:{minute_value:02d}"
         else:
-            value = UNSET_TIME
+            return None
 
     if not TIME_RE.match(value):
         return None

@@ -5,9 +5,13 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from znactime.storage.errors import ClosedPeriodError
-from znactime.storage.legacy_csv_import import preflight_legacy_data
+from znactime.storage.legacy_csv_import import (
+    LegacyImportCancelled,
+    preflight_legacy_data,
+)
 from znactime.storage.sqlite.bootstrap import (
     BootstrapState,
     inspect_bootstrap,
@@ -204,6 +208,82 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             any("Invalid year or month" in issue.message for issue in result.blocking_errors)
         )
 
+    def test_preflight_ignores_unrecognized_and_nested_files(self):
+        month = self._write_month(2024, 2)
+        before = preflight_legacy_data(self.root)
+        (self.root / "unrelated.bin").write_bytes(b"not part of the import")
+        nested = self.root / "archive" / "2024"
+        nested.mkdir(parents=True)
+        (nested / month.name).write_bytes(month.read_bytes())
+
+        after = preflight_legacy_data(self.root)
+
+        self.assertEqual(after.file_count, 1)
+        self.assertEqual(after.manifest_digest, before.manifest_digest)
+
+    def test_preflight_enforces_file_total_row_and_row_size_limits(self):
+        month = self._write_month(2024, 2)
+
+        with patch(
+            "znactime.storage.legacy_csv_import.MAX_CSV_BYTES",
+            month.stat().st_size - 1,
+        ), self.assertRaisesRegex(ValueError, "CSV exceeds"):
+            preflight_legacy_data(self.root)
+
+        with patch(
+            "znactime.storage.legacy_csv_import.MAX_TOTAL_BYTES",
+            month.stat().st_size - 1,
+        ), self.assertRaisesRegex(ValueError, "total limit"):
+            preflight_legacy_data(self.root)
+
+        with patch(
+            "znactime.storage.legacy_csv_import.MAX_CSV_ROWS",
+            2,
+        ), self.assertRaisesRegex(ValueError, "row limit"):
+            preflight_legacy_data(self.root)
+
+        with patch(
+            "znactime.storage.legacy_csv_import.MAX_CSV_ROW_BYTES",
+            12,
+        ), self.assertRaisesRegex(ValueError, "CSV row exceeds"):
+            preflight_legacy_data(self.root)
+
+    def test_preflight_enforces_recognized_file_limit(self):
+        self._write_month(2024, 2, closed=True)
+
+        with patch(
+            "znactime.storage.legacy_csv_import.MAX_RECOGNIZED_FILES",
+            1,
+        ), self.assertRaisesRegex(ValueError, "file limit"):
+            preflight_legacy_data(self.root)
+
+    def test_preflight_rejects_recognized_symlink(self):
+        target = self._write_month(2024, 2)
+        linked = target.parent / "2024_tmp_03.csv"
+        try:
+            linked.symlink_to(target)
+        except OSError as error:
+            self.skipTest(f"Symlinks are unavailable in this environment: {error}")
+
+        with self.assertRaisesRegex(ValueError, "does not allow links"):
+            preflight_legacy_data(self.root)
+
+    def test_preflight_supports_progress_and_cancellation(self):
+        self._write_month(2024, 2)
+        updates = []
+
+        preflight_legacy_data(
+            self.root,
+            progress=lambda phase, completed, total: updates.append(
+                (phase, completed, total)
+            ),
+        )
+
+        self.assertTrue(any(item[0] == "Hashing legacy files" for item in updates))
+        self.assertTrue(any(item[0] == "Parsing legacy months" for item in updates))
+        with self.assertRaises(LegacyImportCancelled):
+            preflight_legacy_data(self.root, cancelled=lambda: True)
+
     def test_merge_keeps_local_day_and_imports_untouched_day(self):
         path = self._write_month(2024, 2)
         with path.open(newline="", encoding="utf-8") as stream:
@@ -241,6 +321,56 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             self.assertEqual(repeated.days_imported, 0)
         finally:
             repository.close()
+
+    def test_cancelled_merge_rolls_back_all_database_changes(self):
+        self._write_month(2024, 2)
+        preflight = preflight_legacy_data(self.root)
+        target = Path(self.temporary.name) / "app-data" / "znactime.db"
+        repository = SQLiteRepository.create(target)
+        checks = 0
+
+        def cancelled():
+            nonlocal checks
+            checks += 1
+            return checks > 2
+
+        try:
+            with self.assertRaises(LegacyImportCancelled):
+                repository.merge_legacy(preflight, cancelled=cancelled)
+
+            self.assertEqual(
+                repository._connection.execute("SELECT COUNT(*) FROM months").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM legacy_imports"
+                ).fetchone()[0],
+                0,
+            )
+        finally:
+            repository.close()
+
+    def test_cancelled_first_launch_migration_removes_staging_database(self):
+        self._write_month(2024, 2)
+        preflight = preflight_legacy_data(self.root)
+        target = Path(self.temporary.name) / "app-data" / "znactime.db"
+
+        with self.assertRaises(LegacyImportCancelled):
+            migrate_legacy_database(
+                preflight,
+                target,
+                cancelled=lambda: True,
+            )
+
+        self.assertFalse(target.exists())
+        self.assertFalse(target.with_name(target.name + ".migrating").exists())
+        self.assertFalse(
+            target.with_name(target.name + ".migrating-wal").exists()
+        )
+        self.assertFalse(
+            target.with_name(target.name + ".migrating-shm").exists()
+        )
 
     def test_closed_csv_with_local_conflict_stays_open(self):
         path = self._write_month(2024, 2, closed=True)

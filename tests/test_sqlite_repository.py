@@ -5,9 +5,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from znactime.core.models import BreakRecord
-from znactime.storage.errors import ClosedPeriodError, StorageConflict
+from znactime.storage.errors import ClosedPeriodError, StorageConflict, StorageCorrupt
 from znactime.storage.csv_export import export_month
 from znactime.storage.legacy_csv_import import preflight_legacy_data
+from znactime.storage.legacy_csv_import import LegacyImportCancelled
 from znactime.storage.sqlite.repository import SQLiteRepository
 
 
@@ -172,27 +173,135 @@ class SQLiteRepositoryTest(unittest.TestCase):
                 (month_id, month.revision),
             )
 
-    def test_direct_sql_cannot_attach_active_workday_to_closed_month(self):
-        month = self.repository.get_or_create_month(2024, 6)
-        self.repository.close_month(2024, 6, expected_revision=month.revision)
-        day_id = self.sql.execute(
-            """
-            SELECT day.id FROM day_entries day
-            JOIN months month ON month.id = day.month_id
-            WHERE month.year = 2024 AND month.month = 6
-            ORDER BY day.work_date LIMIT 1
-            """
-        ).fetchone()[0]
+    def test_schema_has_no_independent_active_workday_state(self):
+        table = self.sql.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'active_workday'"
+        ).fetchone()
 
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.sql.execute(
-                """
-                INSERT INTO active_workday(
-                    singleton_id, day_entry_id, started_at_utc, updated_at
-                ) VALUES (1, ?, '2024-06-01T08:00:00Z', '2024-06-01T08:00:00Z')
-                """,
-                (day_id,),
+        self.assertIsNone(table)
+
+    def test_v1_database_drops_only_obsolete_active_state_on_upgrade(self):
+        legacy_path = Path(self.temporary.name) / "v1.db"
+        legacy = SQLiteRepository.create(legacy_path)
+        legacy.start_workday(
+            date(2024, 6, 3),
+            480,
+            datetime(2024, 6, 3, 8, tzinfo=timezone.utc),
+        )
+        legacy.close()
+
+        sql = sqlite3.connect(legacy_path, isolation_level=None)
+        day_id = sql.execute(
+            "SELECT id FROM day_entries WHERE work_date = '2024-06-03'"
+        ).fetchone()[0]
+        sql.execute(
+            """
+            CREATE TABLE active_workday (
+                singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+                day_entry_id INTEGER NOT NULL UNIQUE REFERENCES day_entries(id),
+                started_at_utc TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 1
+            ) STRICT
+            """
+        )
+        sql.execute(
+            """
+            INSERT INTO active_workday(singleton_id, day_entry_id, started_at_utc, updated_at)
+            VALUES (1, ?, '2024-06-03T08:00:00Z', '2024-06-03T08:00:00Z')
+            """,
+            (day_id,),
+        )
+        sql.execute("UPDATE schema_migrations SET version = 1")
+        sql.execute("PRAGMA user_version = 1")
+        sql.close()
+
+        upgraded = SQLiteRepository(legacy_path)
+        try:
+            recovered = upgraded.load_month(2024, 6).days[2]
+            self.assertEqual(recovered.start_minute, 480)
+            self.assertIsNone(recovered.end_minute)
+            table = upgraded._connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'active_workday'"
+            ).fetchone()
+            self.assertIsNone(table)
+            self.assertEqual(
+                upgraded._connection.execute("PRAGMA user_version").fetchone()[0],
+                3,
             )
+        finally:
+            upgraded.close()
+
+    def test_direct_sql_rejects_malformed_day_and_schedule_dates(self):
+        self.repository.get_or_create_month(2024, 6)
+        month_id = self.sql.execute(
+            "SELECT id FROM months WHERE year = 2024 AND month = 6"
+        ).fetchone()[0]
+        now = "2024-06-01T00:00:00Z"
+        invalid_dates = (
+            "2024-06-invalid",
+            "2024-06-31",
+            "2024-06-00",
+            "2023-02-29",
+            "2024-13-01",
+            "2024-6-1",
+            "2024-06-01T00:00:00",
+            "",
+        )
+
+        for invalid in invalid_dates:
+            with self.subTest(day=invalid), self.assertRaises(sqlite3.IntegrityError):
+                self.sql.execute(
+                    """
+                    INSERT INTO day_entries(
+                        month_id, work_date, special_day, expected_work_minutes,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'Normal day', 480, ?, ?)
+                    """,
+                    (month_id, invalid, now, now),
+                )
+
+            with self.subTest(schedule=invalid), self.assertRaises(
+                sqlite3.IntegrityError
+            ):
+                self.sql.execute(
+                    """
+                    UPDATE work_schedule_periods SET effective_to = ?
+                    WHERE dataset_id = (SELECT id FROM datasets)
+                    """,
+                    (invalid,),
+                )
+
+    def test_v2_upgrade_refuses_preexisting_malformed_dates(self):
+        invalid_path = Path(self.temporary.name) / "invalid-v2.db"
+        repository = SQLiteRepository.create(invalid_path)
+        repository.get_or_create_month(2024, 6)
+        repository.close()
+
+        sql = sqlite3.connect(invalid_path, isolation_level=None)
+        sql.execute("DROP TRIGGER day_date_valid_insert")
+        sql.execute("DROP TRIGGER day_date_valid_update")
+        sql.execute("PRAGMA ignore_check_constraints = ON")
+        month_id = sql.execute(
+            "SELECT id FROM months WHERE year = 2024 AND month = 6"
+        ).fetchone()[0]
+        sql.execute(
+            """
+            INSERT INTO day_entries(
+                month_id, work_date, special_day, expected_work_minutes,
+                created_at, updated_at
+            ) VALUES (?, '2024-06-invalid', 'Normal day', 480,
+                      '2024-06-01T00:00:00Z', '2024-06-01T00:00:00Z')
+            """,
+            (month_id,),
+        )
+        sql.execute("UPDATE schema_migrations SET version = 2")
+        sql.execute("PRAGMA user_version = 2")
+        sql.close()
+
+        with self.assertRaises(StorageCorrupt):
+            SQLiteRepository(invalid_path)
 
     def test_schedule_changes_only_open_non_overridden_days(self):
         month = self.repository.get_or_create_month(2024, 6)
@@ -231,12 +340,11 @@ class SQLiteRepositoryTest(unittest.TestCase):
         )
         self.assertIsNone(june.effective_to)
 
-    def test_active_workday_transitions_are_transactional(self):
+    def test_workday_transitions_are_derived_from_day_data(self):
         work_date = date(2024, 6, 3)
         now = datetime(2024, 6, 3, 8, tzinfo=timezone.utc)
         started = self.repository.start_workday(work_date, 480, now)
         self.assertEqual(started.start_minute, 480)
-        self.assertEqual(self.repository.load_active_workday().work_date, work_date)
 
         paused = self.repository.start_pause(work_date, 720, now)
         self.assertIsNone(paused.breaks[0].end_minute)
@@ -244,23 +352,30 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.assertEqual(resumed.breaks[0].end_minute, 750)
         stopped = self.repository.stop_workday(work_date, 1020, now)
         self.assertEqual(stopped.end_minute, 1020)
-        self.assertIsNone(self.repository.load_active_workday())
+        stored = self.repository.load_month(2024, 6).days[2]
+        self.assertEqual(stored.start_minute, 480)
+        self.assertEqual(stored.end_minute, 1020)
+        self.assertEqual(stored.breaks[0].end_minute, 750)
 
-    def test_stale_workday_closes_open_pause_at_end_of_day(self):
+    def test_open_workday_survives_restart_using_only_day_data(self):
         work_date = date(2024, 6, 17)
         started_at = datetime(2024, 6, 17, 8, tzinfo=timezone.utc)
-        recovered_at = datetime(2024, 6, 18, 8, tzinfo=timezone.utc)
         self.repository.start_workday(work_date, 480, started_at)
         self.repository.start_pause(work_date, 750, started_at)
 
-        recovered = self.repository.finalize_stale_workday(
-            recovered_at.date(), recovered_at
-        )
+        self.repository.close()
+        self.repository = SQLiteRepository(self.path)
+        recovered = self.repository.load_month(2024, 6).days[16]
 
-        self.assertEqual(recovered.end_minute, 1439)
+        self.assertEqual(recovered.start_minute, 480)
+        self.assertIsNone(recovered.end_minute)
         self.assertEqual(recovered.breaks[0].start_minute, 750)
-        self.assertEqual(recovered.breaks[0].end_minute, 1439)
-        self.assertIsNone(self.repository.load_active_workday())
+        self.assertIsNone(recovered.breaks[0].end_minute)
+
+        resumed = self.repository.resume_workday(work_date, 780, started_at)
+        stopped = self.repository.stop_workday(work_date, 1020, started_at)
+        self.assertEqual(resumed.breaks[0].end_minute, 780)
+        self.assertEqual(stopped.end_minute, 1020)
 
     def test_verified_backup_reopens(self):
         self.repository.get_or_create_month(2024, 2)
@@ -276,6 +391,22 @@ class SQLiteRepositoryTest(unittest.TestCase):
             self.assertEqual(len(copied.load_month(2024, 3).days), 31)
         finally:
             copied.close()
+
+    def test_cancelled_backup_leaves_no_destination_or_temporary_file(self):
+        self.repository.get_or_create_month(2024, 2)
+        destination = Path(self.temporary.name) / "backup" / "cancelled.db"
+        checks = 0
+
+        def cancelled():
+            nonlocal checks
+            checks += 1
+            return checks > 1
+
+        with self.assertRaises(LegacyImportCancelled):
+            self.repository.backup_to(destination, cancelled=cancelled)
+
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(destination.parent.glob(".*.tmp")), [])
 
     def test_csv_export_is_legacy_compatible_and_atomic(self):
         month = self.repository.get_or_create_month(2024, 2)

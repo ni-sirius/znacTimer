@@ -25,8 +25,7 @@ datasets
 └── months
     └── day_entries
         ├── break_periods
-        ├── closed_day_results   (only after month close)
-        └── active_workday       (zero or one row for the whole database)
+        └── closed_day_results   (only after month close)
 
 schema_migrations                schema history
 legacy_imports                   completed CSV-source snapshots
@@ -177,21 +176,13 @@ For clean new data these values are derivable from the immutable day/break input
 snapshot is therefore controlled redundancy used for historical fidelity and audit
 stability, not a separate editable source.
 
-## `active_workday`
+## Timer projection
 
-Relational replacement for the old QSettings timer state. The singleton design permits
-at most one active workday in the local ledger.
-
-| Column | Description |
-|---|---|
-| `singleton_id` | Always `1`; enforces the single-row invariant. |
-| `day_entry_id` | Active day. It must belong to an open month. |
-| `started_at_utc` | UTC instant when this active workday session started. |
-| `updated_at` | UTC timestamp of the latest timer transition. |
-| `revision` | Active-session concurrency version. |
-
-An active pause is represented by a `break_periods` row whose `end_minute` is `NULL`.
-Start, pause, resume, stop, and stale-session recovery are atomic repository operations.
+There is no timer/session table. The timer pane is a projection of today's authoritative
+day row: no start is Idle, a start without an end is Working, an open break is Paused,
+and a start plus end is Complete. Start, pause, resume, and stop are transactional
+convenience operations over `day_entries` and `break_periods`. Direct table edits remain
+available and immediately determine the pane's next state.
 
 ## `legacy_imports`
 
@@ -224,9 +215,8 @@ not overwritten when any of these apply:
 
 - its parent month is already closed;
 - its `revision` shows that it has already changed;
-- it contains local start/end, special-day, duration, or exact-break data;
-- `expected_minutes_overridden = 1`; or
-- it owns active timer state.
+- it contains local start/end, special-day, duration, or exact-break data; or
+- `expected_minutes_overridden = 1`.
 
 Non-conflicting days in the same month may still import. If a CSV marks a month closed but
 one of its days conflicts with SQLite, imported non-conflicting days are retained but the
@@ -241,7 +231,6 @@ closure. A CSV snapshot already listed in `legacy_imports` is a no-op.
 - Work-schedule periods cannot overlap.
 - Exact breaks cannot overlap and cannot coexist with a duration representation.
 - Closing a normal month requires complete valid inputs, one result per day, a valid
-  running-balance chain, and no active workday/open pause.
+  running-balance chain, and no open pause.
 - CSV compatibility may preserve invalid historical closed inputs only while importing;
   the promoted closed snapshot is still immutable.
-

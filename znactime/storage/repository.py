@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Protocol
+from typing import Callable, Protocol
 
 from znactime.core.models import (
-    ActiveWorkdayRecord,
     BreakRecord,
     DayRecord,
     MonthRecord,
@@ -57,8 +56,6 @@ class Repository(Protocol):
         self, work_date: date, minutes: int, *, expected_revision: int
     ) -> DayRecord: ...
 
-    def load_active_workday(self) -> ActiveWorkdayRecord | None: ...
-
     def start_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord: ...
 
     def start_pause(self, work_date: date, minute: int, now: datetime) -> DayRecord: ...
@@ -67,10 +64,21 @@ class Repository(Protocol):
 
     def stop_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord: ...
 
-    def finalize_stale_workday(self, today: date, now: datetime) -> DayRecord | None: ...
+    def backup_to(
+        self,
+        destination: str,
+        *,
+        overwrite: bool = False,
+        progress: Callable[[str, int, int], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> None: ...
 
-    def backup_to(self, destination: str, *, overwrite: bool = False) -> None: ...
-
-    def merge_legacy(self, preflight: LegacyPreflight) -> LegacyMergeResult: ...
+    def merge_legacy(
+        self,
+        preflight: LegacyPreflight,
+        *,
+        progress: Callable[[str, int, int], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> LegacyMergeResult: ...
 
     def close(self) -> None: ...

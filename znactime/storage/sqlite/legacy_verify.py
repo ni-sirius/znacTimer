@@ -5,7 +5,14 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from znactime.storage.legacy_csv_import import LegacyPreflight, preflight_legacy_data
+from znactime.storage.legacy_csv_import import (
+    CancellationCallback,
+    LegacyPreflight,
+    ProgressCallback,
+    _cancel_if_requested,
+    _report_progress,
+    preflight_legacy_data,
+)
 
 
 @dataclass(frozen=True)
@@ -191,10 +198,18 @@ def _open_results(month_row, day_rows, breaks_by_day):
 def verify_legacy_import(
     source_root: str | Path,
     database_path: str | Path,
+    *,
+    progress: ProgressCallback | None = None,
+    cancelled: CancellationCallback | None = None,
 ) -> LegacyVerificationReport:
+    _cancel_if_requested(cancelled)
     source = Path(source_root).resolve()
     database = Path(database_path).resolve()
-    preflight = preflight_legacy_data(source)
+    preflight = preflight_legacy_data(
+        source,
+        progress=progress,
+        cancelled=cancelled,
+    )
     errors: list[VerificationIssue] = []
     local_differences: list[VerificationIssue] = []
     derived_differences: list[VerificationIssue] = []
@@ -241,11 +256,16 @@ def verify_legacy_import(
 
     db = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
+    db.set_progress_handler(
+        lambda: int(bool(cancelled and cancelled())),
+        1_000,
+    )
     try:
         # Hold one read snapshot so a running client cannot produce a mixed
         # before/after view while the verifier walks months and days.
         db.execute("PRAGMA query_only = ON")
         db.execute("BEGIN")
+        _report_progress(progress, "Checking SQLite integrity", 0, 0)
         quick_check = db.execute("PRAGMA quick_check").fetchone()[0]
         if quick_check != "ok":
             errors.append(
@@ -275,6 +295,7 @@ def verify_legacy_import(
             counts = _database_counts(db)
             _verify_import_metadata(db, preflight, errors)
         except sqlite3.Error as error:
+            _cancel_if_requested(cancelled)
             errors.append(
                 _issue(
                     "error",
@@ -302,7 +323,8 @@ def verify_legacy_import(
 
         source_days_checked = 0
         local_only_days = 0
-        for source_month in preflight.months:
+        for month_index, source_month in enumerate(preflight.months, 1):
+            _cancel_if_requested(cancelled)
             month_location = _month_location(source_month.year, source_month.month)
             month_row = db.execute(
                 """
@@ -411,6 +433,7 @@ def verify_legacy_import(
             )
 
             for source_day in source_month.days:
+                _cancel_if_requested(cancelled)
                 source_days_checked += 1
                 location = _day_location(source_day.work_date)
                 day_row = rows_by_date.get(source_day.work_date.isoformat())
@@ -511,6 +534,13 @@ def verify_legacy_import(
                                     )
                                 )
 
+            _report_progress(
+                progress,
+                "Verifying imported months",
+                month_index,
+                len(preflight.months),
+            )
+
         return LegacyVerificationReport(
             source,
             database,
@@ -525,5 +555,9 @@ def verify_legacy_import(
             tuple(local_differences),
             tuple(derived_differences),
         )
+    except sqlite3.Error:
+        _cancel_if_requested(cancelled)
+        raise
     finally:
+        db.set_progress_handler(None, 0)
         db.close()
