@@ -7,6 +7,7 @@ from enum import Enum
 from pathlib import Path
 
 from znactime.storage.errors import StorageConflict, StorageLocked
+from znactime.storage.atomic_file import publish_staged_file
 from znactime.storage.legacy_csv_import import LegacyPreflight
 from znactime.storage.legacy_csv_import import (
     CancellationCallback,
@@ -101,7 +102,12 @@ def _release_file_lock(descriptor: int) -> None:
 
 
 def _promote(staging: Path, target: Path) -> SQLiteRepository:
-    os.replace(staging, target)
+    try:
+        publish_staged_file(staging, target, overwrite=False)
+    except FileExistsError as error:
+        raise StorageConflict(
+            "The database destination appeared before setup completed."
+        ) from error
     return SQLiteRepository(target)
 
 

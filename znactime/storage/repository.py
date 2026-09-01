@@ -58,7 +58,14 @@ class Repository(Protocol):
 
     def start_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord: ...
 
-    def start_pause(self, work_date: date, minute: int, now: datetime) -> DayRecord: ...
+    def start_pause(
+        self,
+        work_date: date,
+        minute: int,
+        now: datetime,
+        *,
+        replace_duration: bool = False,
+    ) -> DayRecord: ...
 
     def resume_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord: ...
 

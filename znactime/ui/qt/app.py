@@ -21,6 +21,10 @@ from znactime.core.time_utils import (
     hours_to_hhmm,
     open_interruption_start,
 )
+from znactime.storage.atomic_file import (
+    reject_protected_destination,
+    sqlite_protected_paths,
+)
 from znactime.storage.errors import StorageError
 from znactime.storage.legacy_csv_import import (
     LegacyImportCancelled,
@@ -425,7 +429,29 @@ class TimeTrackerApp(QMainWindow):
                 elif self._active_pause(now):
                     self.repository.resume_workday(work_date, minute, now)
                 elif entry.end == UNSET_TIME:
-                    self.repository.start_pause(work_date, minute, now)
+                    replace_duration = False
+                    if (
+                        entry.interruption not in ("", ZERO_DURATION)
+                        and PERIOD_SEPARATOR not in entry.interruption
+                    ):
+                        answer = QMessageBox.question(
+                            self,
+                            "Replace interruption duration?",
+                            "Today's interruption is stored as a duration. "
+                            "Replace it with the recorded pause period?",
+                            QMessageBox.StandardButton.Yes
+                            | QMessageBox.StandardButton.No,
+                            QMessageBox.StandardButton.No,
+                        )
+                        if answer != QMessageBox.StandardButton.Yes:
+                            return
+                        replace_duration = True
+                    self.repository.start_pause(
+                        work_date,
+                        minute,
+                        now,
+                        replace_duration=replace_duration,
+                    )
             except StorageError as error:
                 QMessageBox.warning(self, "Workday update failed", str(error))
                 return
@@ -623,7 +649,18 @@ class TimeTrackerApp(QMainWindow):
         )
         if not path:
             return None
-        if os.path.exists(path):
+        protected_paths = (
+            sqlite_protected_paths(self.repository.path)
+            if self.repository is not None
+            else ()
+        )
+        try:
+            reject_protected_destination(path, protected_paths)
+        except StorageError as error:
+            QMessageBox.warning(self, "Unsafe destination", str(error))
+            return None
+        overwrite = os.path.lexists(path)
+        if overwrite:
             answer = QMessageBox.question(
                 self,
                 "Replace export?",
@@ -633,17 +670,18 @@ class TimeTrackerApp(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return None
-        return path
+        return path, overwrite
 
     def export_month_csv(self):
         if self.repository is None or self._month_record is None:
             return
         suggested = f"{self.header.year()}_tmp_{self.header.month():02}.csv"
-        target = self._confirmed_export_path(
+        destination = self._confirmed_export_path(
             "Export month CSV", suggested, "CSV files (*.csv)"
         )
-        if target is None:
+        if destination is None:
             return
+        target, overwrite = destination
         try:
             from znactime.storage.csv_export import export_month
 
@@ -653,7 +691,12 @@ class TimeTrackerApp(QMainWindow):
             )
             if month is None:
                 raise StorageError("The selected month no longer exists.")
-            export_month(month, target, overwrite=True)
+            export_month(
+                month,
+                target,
+                overwrite=overwrite,
+                protected_paths=sqlite_protected_paths(self.repository.path),
+            )
         except (OSError, StorageError) as error:
             QMessageBox.warning(self, "Export failed", str(error))
 
@@ -756,27 +799,34 @@ class TimeTrackerApp(QMainWindow):
             return
         stats = self.collect_statistics()
         suggested = f"{stats.year}_{stats.month}.pdf"
-        target = self._confirmed_export_path(
+        destination = self._confirmed_export_path(
             "Export month PDF", suggested, "PDF files (*.pdf)"
         )
-        if target is None:
+        if destination is None:
             return
+        target, overwrite = destination
         try:
             from znactime.storage import pdf_export
 
-            pdf_export.export_pdf(stats, target)
-        except OSError as error:
+            pdf_export.export_pdf(
+                stats,
+                target,
+                overwrite=overwrite,
+                protected_paths=sqlite_protected_paths(self.repository.path),
+            )
+        except (OSError, StorageError) as error:
             QMessageBox.warning(self, "Export failed", str(error))
 
     def backup_database(self):
         if self.repository is None:
             return
         suggested = datetime.now().strftime("znactime-backup-%Y%m%d-%H%M%S.db")
-        target = self._confirmed_export_path(
+        destination = self._confirmed_export_path(
             "Back up database", suggested, "SQLite databases (*.db)"
         )
-        if target is None:
+        if destination is None:
             return
+        target, overwrite = destination
         try:
             database_path = self.repository.path
 
@@ -785,7 +835,7 @@ class TimeTrackerApp(QMainWindow):
                 try:
                     worker_repository.backup_to(
                         target,
-                        overwrite=True,
+                        overwrite=overwrite,
                         progress=progress,
                         cancelled=cancelled,
                     )

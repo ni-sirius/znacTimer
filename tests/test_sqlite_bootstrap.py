@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from znactime.storage.errors import StorageLocked
-from znactime.storage.sqlite.bootstrap import startup_lock
+from znactime.storage.errors import StorageConflict, StorageLocked
+from znactime.storage.sqlite.bootstrap import _promote, startup_lock
 
 
 class SQLiteBootstrapLockTest(unittest.TestCase):
@@ -35,6 +35,17 @@ class SQLiteBootstrapLockTest(unittest.TestCase):
         # recovery depends on the OS releasing the handle, not on deleting a PID file.
         with startup_lock(self.database):
             self.assertTrue(lock_path.exists())
+
+    def test_promotion_does_not_clobber_a_destination_that_appeared(self):
+        staging = self.database.with_name(self.database.name + ".creating")
+        staging.write_bytes(b"staged database")
+        self.database.write_bytes(b"other process")
+
+        with self.assertRaises(StorageConflict):
+            _promote(staging, self.database)
+
+        self.assertEqual(self.database.read_bytes(), b"other process")
+        self.assertEqual(staging.read_bytes(), b"staged database")
 
 
 if __name__ == "__main__":

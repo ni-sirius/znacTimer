@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from znactime.core.models import DayEntry
+from znactime.storage.atomic_file import sqlite_protected_paths
 from znactime.ui.qt import QApplication, QMessageBox, Qt
 from znactime.ui.qt.app import TimeTrackerApp
 from znactime.ui.qt.player import WorkdayBar
@@ -81,6 +82,72 @@ class WorkdayBarTest(unittest.TestCase):
             "17.06.2024",
             interruption="10:00-10:30;12:30-...",
         )
+
+    def test_repository_pause_replaces_duration_only_after_confirmation(self):
+        now = datetime(2024, 6, 17, 12, 30)
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="--:--",
+            interruption="00:30",
+        )
+        repository = Mock()
+        fake_app = SimpleNamespace(
+            month_closed=False,
+            repository=repository,
+            _today_entry=Mock(return_value=entry),
+            _active_pause=Mock(return_value=None),
+            load_month=Mock(),
+        )
+
+        with (
+            patch("znactime.ui.qt.app.datetime") as datetime_class,
+            patch.object(
+                QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+        ):
+            datetime_class.now.return_value = now
+            TimeTrackerApp.on_workday_primary(fake_app)
+
+        repository.start_pause.assert_called_once_with(
+            date(2024, 6, 17),
+            750,
+            now,
+            replace_duration=True,
+        )
+        fake_app.load_month.assert_called_once_with()
+
+    def test_repository_pause_preserves_duration_when_replacement_declined(self):
+        entry = DayEntry(
+            cw="",
+            date="17.06.2024",
+            special="Normal day",
+            start="08:00",
+            end="--:--",
+            interruption="00:30",
+        )
+        repository = Mock()
+        fake_app = SimpleNamespace(
+            month_closed=False,
+            repository=repository,
+            _today_entry=Mock(return_value=entry),
+            _active_pause=Mock(return_value=None),
+            load_month=Mock(),
+        )
+
+        with patch.object(
+            QMessageBox,
+            "question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            TimeTrackerApp.on_workday_primary(fake_app)
+
+        repository.start_pause.assert_not_called()
+        fake_app.load_month.assert_not_called()
 
     def test_resuming_pause_finishes_existing_open_interruption(self):
         entry = DayEntry(
@@ -325,6 +392,7 @@ class WorkdayBarTest(unittest.TestCase):
         stale = object()
         committed = object()
         repository = Mock()
+        repository.path = "active.db"
         repository.load_month.return_value = committed
         fake_app = SimpleNamespace(
             repository=repository,
@@ -333,7 +401,7 @@ class WorkdayBarTest(unittest.TestCase):
                 year=Mock(return_value=2024),
                 month=Mock(return_value=6),
             ),
-            _confirmed_export_path=Mock(return_value="month.csv"),
+            _confirmed_export_path=Mock(return_value=("month.csv", False)),
         )
 
         TimeTrackerApp.export_month_csv(fake_app)
@@ -342,7 +410,8 @@ class WorkdayBarTest(unittest.TestCase):
         export_month.assert_called_once_with(
             committed,
             "month.csv",
-            overwrite=True,
+            overwrite=False,
+            protected_paths=sqlite_protected_paths("active.db"),
         )
 
     def _refresh_fake_app(self, entry):

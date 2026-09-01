@@ -23,6 +23,11 @@ from znactime.storage.errors import (
     StorageValidationError,
     StorageVersionUnsupported,
 )
+from znactime.storage.atomic_file import (
+    publish_staged_file,
+    reject_protected_destination,
+    sqlite_protected_paths,
+)
 from znactime.storage.sqlite.connection import (
     connect_database,
     read_transaction,
@@ -93,7 +98,7 @@ def _migration_statements(script: str):
 class SQLiteRepository:
     def __init__(self, path: str | Path):
         self._require_supported_sqlite()
-        self.path = Path(path)
+        self.path = Path(path).resolve()
         self._connection = connect_database(self.path)
         try:
             self._upgrade_schema()
@@ -114,7 +119,7 @@ class SQLiteRepository:
         _validate_minute(default_workday_minutes, allow_1440=True)
         if dataset_public_id is not None:
             dataset_public_id = _validate_uuid4(dataset_public_id)
-        target = Path(path)
+        target = Path(path).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         connection = connect_database(target)
         try:
@@ -774,7 +779,14 @@ class SQLiteRepository:
             )
         return row
 
-    def start_pause(self, work_date: date, minute: int, now: datetime) -> DayRecord:
+    def start_pause(
+        self,
+        work_date: date,
+        minute: int,
+        now: datetime,
+        *,
+        replace_duration: bool = False,
+    ) -> DayRecord:
         _validate_minute(minute)
         with transaction(self._connection) as db:
             day = self._running_day(work_date, db)
@@ -783,6 +795,15 @@ class SQLiteRepository:
                 (day["id"],),
             ).fetchone():
                 raise StorageConflict("The workday is already paused.")
+            if (
+                day["break_duration_minutes"] not in (None, 0)
+                and replace_duration is not True
+            ):
+                raise StorageConflict(
+                    "The interruption is stored as a duration. Explicit "
+                    "replacement confirmation is required before recording "
+                    "pause periods."
+                )
             timestamp = _utc_text(now)
             db.execute(
                 "UPDATE day_entries SET break_duration_minutes = NULL, updated_at = ?, revision = revision + 1 WHERE id = ?",
@@ -865,6 +886,8 @@ class SQLiteRepository:
 
         _cancel_if_requested(cancelled)
         target = Path(destination)
+        protected_paths = sqlite_protected_paths(self.path)
+        reject_protected_destination(target, protected_paths)
         if target.exists() and not overwrite:
             raise StorageConflict("The backup destination already exists.")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -906,7 +929,17 @@ class SQLiteRepository:
             backup.set_progress_handler(None, 0)
             backup.close()
             backup = None
-            os.replace(temporary_name, target)
+            try:
+                publish_staged_file(
+                    temporary_name,
+                    target,
+                    overwrite=overwrite,
+                    protected_paths=protected_paths,
+                )
+            except FileExistsError as error:
+                raise StorageConflict(
+                    "The backup destination appeared before backup completed."
+                ) from error
             succeeded = True
         except sqlite3.Error as error:
             _cancel_if_requested(cancelled)

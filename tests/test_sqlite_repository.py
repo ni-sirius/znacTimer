@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -5,6 +6,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from znactime.core.models import BreakRecord
+from znactime.storage.atomic_file import sqlite_protected_paths
 from znactime.storage.errors import ClosedPeriodError, StorageConflict, StorageCorrupt
 from znactime.storage.csv_export import export_month
 from znactime.storage.legacy_csv_import import preflight_legacy_data
@@ -357,6 +359,36 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.assertEqual(stored.end_minute, 1020)
         self.assertEqual(stored.breaks[0].end_minute, 750)
 
+    def test_pause_requires_explicit_replacement_of_nonzero_duration(self):
+        work_date = date(2024, 6, 3)
+        now = datetime(2024, 6, 3, 8, tzinfo=timezone.utc)
+        started = self.repository.start_workday(work_date, 480, now)
+        duration = self.repository.update_day(
+            work_date,
+            expected_revision=started.revision,
+            break_duration_minutes=30,
+            fields=frozenset(("break_duration_minutes",)),
+        )
+
+        with self.assertRaises(StorageConflict):
+            self.repository.start_pause(work_date, 720, now)
+
+        preserved = self.repository.load_month(2024, 6).days[2]
+        self.assertEqual(preserved.break_duration_minutes, 30)
+        self.assertEqual(preserved.breaks, ())
+        self.assertEqual(preserved.revision, duration.revision)
+
+        replaced = self.repository.start_pause(
+            work_date,
+            720,
+            now,
+            replace_duration=True,
+        )
+        self.assertIsNone(replaced.break_duration_minutes)
+        self.assertEqual(len(replaced.breaks), 1)
+        self.assertEqual(replaced.breaks[0].start_minute, 720)
+        self.assertIsNone(replaced.breaks[0].end_minute)
+
     def test_open_workday_survives_restart_using_only_day_data(self):
         work_date = date(2024, 6, 17)
         started_at = datetime(2024, 6, 17, 8, tzinfo=timezone.utc)
@@ -392,6 +424,17 @@ class SQLiteRepositoryTest(unittest.TestCase):
         finally:
             copied.close()
 
+    def test_backup_rejects_live_database_and_hard_link_alias(self):
+        alias = Path(self.temporary.name) / "database-alias.db"
+        os.link(self.path, alias)
+
+        for destination in (self.path, alias):
+            with self.subTest(destination=destination):
+                with self.assertRaises(StorageConflict):
+                    self.repository.backup_to(destination, overwrite=True)
+
+        self.assertEqual(self.sql.execute("PRAGMA quick_check").fetchone()[0], "ok")
+
     def test_cancelled_backup_leaves_no_destination_or_temporary_file(self):
         self.repository.get_or_create_month(2024, 2)
         destination = Path(self.temporary.name) / "backup" / "cancelled.db"
@@ -422,6 +465,19 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.assertEqual(len(preflight.months[0].days), 29)
         with self.assertRaises(FileExistsError):
             export_month(month, exported)
+
+    def test_csv_export_rejects_active_database_destination(self):
+        month = self.repository.get_or_create_month(2024, 2)
+
+        with self.assertRaises(StorageConflict):
+            export_month(
+                month,
+                self.path,
+                overwrite=True,
+                protected_paths=sqlite_protected_paths(self.path),
+            )
+
+        self.assertEqual(self.sql.execute("PRAGMA quick_check").fetchone()[0], "ok")
 
     def test_sqlite_and_legacy_write_boundaries_are_isolated(self):
         root = Path(__file__).resolve().parents[1] / "znactime"
