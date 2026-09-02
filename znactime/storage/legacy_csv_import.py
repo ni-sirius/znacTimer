@@ -12,13 +12,17 @@ from pathlib import Path
 from typing import Callable
 
 from znactime.core.constants import NORMAL_DAY
+from znactime.storage.csv_format import (
+    CSV_SCHEMA_VERSION,
+    CSV_VERSION_MARKER,
+    decode_spreadsheet_safe_text,
+)
 
 
 _MONTH_FILE = re.compile(r"^(?P<year>\d{4})_tmp_(?P<month>\d{2})\.csv$")
 _CLOSED_FLAG = re.compile(r"^closed_(?P<month>\d{2})\.flag$")
 _TIME = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _SIGNED_DURATION = re.compile(r"^-?\d+:[0-5]\d$")
-_VERSION_MARKER = "#znacTime-csv"
 
 MAX_RECOGNIZED_FILES = 2_400
 MAX_CSV_BYTES = 1 * 1024 * 1024
@@ -405,12 +409,12 @@ def _parse_month(
         issues.append(ImportIssue("warning", relative, None, f"Decoded as {encoding}."))
     schema_version = None
     first_line = 1
-    if rows and rows[0][:1] == [_VERSION_MARKER]:
+    if rows and rows[0][:1] == [CSV_VERSION_MARKER]:
         try:
             schema_version = int(rows[0][1])
         except (IndexError, ValueError):
             issues.append(ImportIssue("error", relative, 1, "Invalid CSV version marker."))
-        if schema_version not in (1, 2):
+        if schema_version not in (1, 2, CSV_SCHEMA_VERSION):
             issues.append(ImportIssue("error", relative, 1, "Unsupported CSV schema version."))
         rows = rows[1:]
         first_line = 2
@@ -443,7 +447,13 @@ def _parse_month(
         running = _result(row[6], relative_path=relative, line=line, field="running balance", issues=issues)
         parsed[work_date] = LegacyDay(
             work_date=work_date,
-            special_day=row[1].strip() or NORMAL_DAY,
+            special_day=(
+                decode_spreadsheet_safe_text(
+                    row[1].strip(),
+                    schema_version,
+                )
+                or NORMAL_DAY
+            ),
             start_minute=start,
             end_minute=end,
             break_duration_minutes=duration,

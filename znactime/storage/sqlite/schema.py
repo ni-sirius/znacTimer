@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 SCHEMA_SQL = r"""
@@ -98,6 +98,8 @@ CREATE TABLE day_entries (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    local_input_revision INTEGER NOT NULL DEFAULT 0
+        CHECK (local_input_revision >= 0),
     UNIQUE (month_id, work_date),
     CHECK (
         date(work_date, '+0 days') IS NOT NULL

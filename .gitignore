@@ -1,0 +1,38 @@
+# Python environments and caches
+/.venv/
+__pycache__/
+*.py[cod]
+
+# Personal time-tracking data and SQLite operational files
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.lock
+*.db.instance.lock
+*.db.creating*
+*.db.migrating*
+*.sqlite
+*.sqlite3
+[0-9][0-9][0-9][0-9]_tmp_[0-1][0-9].csv
+closed_[0-1][0-9].flag
+
+# User-created backups and exports
+/backup/
+/backups/
+/exports/
+/output/
+/recovery/
+/*.csv
+/*.pdf
+
+# Local engineering review notes
+/docs/CODE_REVIEW_*.md
+
+# Build and test output
+/build/
+/dist/
+*.egg-info/
+.coverage
+htmlcov/

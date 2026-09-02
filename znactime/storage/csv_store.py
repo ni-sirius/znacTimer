@@ -19,21 +19,33 @@ from znactime.core.time_utils import (
     time_input_or_zero,
 )
 from znactime.storage import paths
+from znactime.storage.csv_format import (
+    CSV_SCHEMA_VERSION,
+    CSV_VERSION_MARKER,
+    decode_spreadsheet_safe_text,
+    spreadsheet_safe_text,
+)
 
-
-CSV_SCHEMA_VERSION = 2
-CSV_VERSION_MARKER = "#znacTime-csv"
 
 
 def _version_row():
     return [CSV_VERSION_MARKER, str(CSV_SCHEMA_VERSION)]
 
 
-def _data_rows(rows):
+def _document(rows):
     rows = list(rows)
+    schema_version = None
     if rows and rows[0][:1] == [CSV_VERSION_MARKER]:
-        return rows[1:]
-    return rows
+        try:
+            schema_version = int(rows[0][1])
+        except (IndexError, TypeError, ValueError):
+            pass
+        rows = rows[1:]
+    return schema_version, rows
+
+
+def _data_rows(rows):
+    return _document(rows)[1]
 
 
 def _normalized_csv_row(row):
@@ -67,7 +79,7 @@ def _default_entries(year, month):
     return entries
 
 
-def _entry_from_csv_row(row):
+def _entry_from_csv_row(row, schema_version=None):
     csv_row = _normalized_csv_row(row)
     try:
         cw = calendar_week_tag(csv_row[0])
@@ -76,7 +88,7 @@ def _entry_from_csv_row(row):
     return DayEntry(
         cw=cw,
         date=csv_row[0],
-        special=csv_row[1],
+        special=decode_spreadsheet_safe_text(csv_row[1], schema_version),
         start=_legacy_clock(csv_row[2]),
         end=_legacy_clock(csv_row[3]),
         interruption=interruption_input_or_zero(csv_row[4]),
@@ -88,7 +100,7 @@ def _entry_from_csv_row(row):
 def _entry_to_csv_row(entry):
     return [
         entry.date,
-        entry.special,
+        spreadsheet_safe_text(entry.special),
         ZERO_HHMM if entry.start == UNSET_TIME else entry.start,
         ZERO_HHMM if entry.end == UNSET_TIME else entry.end,
         entry.interruption,
@@ -110,7 +122,11 @@ def load_month(year, month, data_dir=None) -> list[DayEntry]:
         return _default_entries(year, month)
 
     with open(month_file, newline="") as f:
-        return [_entry_from_csv_row(row) for row in _data_rows(csv.reader(f))]
+        schema_version, rows = _document(csv.reader(f))
+        return [
+            _entry_from_csv_row(row, schema_version)
+            for row in rows
+        ]
 
 
 def save_month(year, month, entries: list[DayEntry], data_dir=None):

@@ -30,6 +30,7 @@ def sqlite_protected_paths(database_path: str | Path) -> tuple[Path, ...]:
         database.with_name(database.name + "-shm"),
         database.with_name(database.name + "-journal"),
         database.with_name(database.name + ".lock"),
+        database.with_name(database.name + ".instance.lock"),
         database.with_name(database.name + ".creating"),
         database.with_name(database.name + ".migrating"),
     )

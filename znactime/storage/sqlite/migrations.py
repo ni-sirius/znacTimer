@@ -108,7 +108,23 @@ BEGIN SELECT RAISE(ABORT, 'work date must be a canonical calendar date'); END;
 """
 
 
+MIGRATION_3_TO_4 = r"""
+DROP TRIGGER IF EXISTS day_guard_update;
+ALTER TABLE day_entries ADD COLUMN local_input_revision INTEGER NOT NULL
+    DEFAULT 0 CHECK (local_input_revision >= 0);
+UPDATE day_entries
+SET local_input_revision = CASE WHEN revision > 1 THEN revision - 1 ELSE 0 END;
+
+CREATE TRIGGER day_guard_update
+BEFORE UPDATE ON day_entries
+WHEN NEW.work_date != OLD.work_date OR NEW.month_id != OLD.month_id
+  OR EXISTS (SELECT 1 FROM months month WHERE month.id = OLD.month_id AND month.status = 'closed')
+BEGIN SELECT RAISE(ABORT, 'day is immutable or belongs to a closed month'); END;
+"""
+
+
 MIGRATIONS = {
     1: MIGRATION_1_TO_2,
     2: MIGRATION_2_TO_3,
+    3: MIGRATION_3_TO_4,
 }

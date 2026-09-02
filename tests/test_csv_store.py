@@ -5,6 +5,7 @@ import unittest
 from znactime.core.constants import UNSET_TIME
 from znactime.core.models import DayEntry, MonthStats
 from znactime.storage import csv_store, paths
+from znactime.storage.csv_format import spreadsheet_safe_text
 
 
 class CsvStoreTest(unittest.TestCase):
@@ -39,7 +40,7 @@ class CsvStoreTest(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                ["#znacTime-csv", "2"],
+                ["#znacTime-csv", "3"],
                 [
                     "17.06.2024",
                     "Normal day",
@@ -56,6 +57,72 @@ class CsvStoreTest(unittest.TestCase):
             csv_store.load_month(2024, 6, data_dir=self.data_dir),
             entries,
         )
+
+    def test_v3_formula_safety_is_reversible_for_all_dangerous_prefixes(self):
+        special_values = (
+            "=1+1",
+            "+SUM(A1:A2)",
+            "-1+2",
+            "@command",
+            "\t=1+1",
+            "\r=1+1",
+            "\n=1+1",
+            "'=literal apostrophe",
+            " leading space",
+        )
+        entries = [
+            DayEntry(
+                cw="",
+                date=f"{position:02}.06.2024",
+                special=value,
+                start=UNSET_TIME,
+                end=UNSET_TIME,
+                interruption="00:00",
+            )
+            for position, value in enumerate(special_values, 1)
+        ]
+
+        csv_store.save_month(2024, 6, entries, data_dir=self.data_dir)
+
+        with open(
+            paths.tmp_month_file(2024, 6, data_dir=self.data_dir),
+            newline="",
+        ) as stream:
+            rows = list(csv.reader(stream))
+        self.assertEqual(rows[0], ["#znacTime-csv", "3"])
+        self.assertEqual(
+            [row[1] for row in rows[1:]],
+            [spreadsheet_safe_text(value) for value in special_values],
+        )
+        self.assertEqual(
+            [entry.special for entry in csv_store.load_month(
+                2024, 6, data_dir=self.data_dir
+            )],
+            list(special_values),
+        )
+
+    def test_v2_formula_leading_text_is_loaded_without_v3_decoding(self):
+        month_file = paths.tmp_month_file(2024, 6, data_dir=self.data_dir)
+        paths.year_dir(2024, create=True, data_dir=self.data_dir)
+        with open(month_file, "w", newline="") as stream:
+            csv.writer(stream).writerows(
+                [
+                    ["#znacTime-csv", "2"],
+                    [
+                        "17.06.2024",
+                        "'=legacy literal",
+                        "08:00",
+                        "17:00",
+                        "00:00",
+                        "00:00",
+                        "00:00",
+                    ],
+                ]
+            )
+
+        loaded = csv_store.load_month(2024, 6, data_dir=self.data_dir)
+
+        self.assertEqual(loaded[0].special, "'=legacy literal")
 
     def test_load_month_supports_legacy_unversioned_csv(self):
         month_file = paths.tmp_month_file(2024, 6, data_dir=self.data_dir)

@@ -4,6 +4,9 @@ This document describes the production SQLite schema defined in
 `znactime/storage/sqlite/schema.py`. SQLite is the authoritative source for time-tracking
 data. CSV is an import/export format and never overrides established SQLite data.
 
+Repository audit timestamps accept only timezone-aware Python datetimes and are stored as
+UTC `Z` text. Workday clock values remain separate local wall-clock minute integers.
+
 ## Common conventions
 
 | Convention | Meaning |
@@ -11,6 +14,7 @@ data. CSV is an import/export format and never overrides established SQLite data
 | `id INTEGER PRIMARY KEY` | Fast local SQLite relationship key. It is database-local and must not be used by a server API. |
 | `public_id TEXT` | Canonical immutable UUIDv4 used only for entities without a stable natural identity. It permits the same logical record to be recognized on multiple clients later. |
 | `revision INTEGER` | Monotonically increasing optimistic-concurrency version. A stale writer must not silently overwrite a newer record. |
+| `local_input_revision INTEGER` | Sticky per-day count of user-originated changes. Automatic schedule recalculation does not increment or reset it. It is separate from the generic concurrency revision. |
 | `created_at`, `updated_at`, `closed_at` | UTC ISO-8601 timestamps. They describe persistence events, not local work-clock time. |
 | `*_minute` / `*_minutes` | Integer count of minutes. Clock values use `0..1439`; durations and work limits use `0..1440`. |
 | SQL `NULL` clock value | The clock time is absent/unset. It is different from real midnight (`0`). Legacy CSV `00:00` is imported as unset because the old format could not distinguish them reliably. |
@@ -42,6 +46,25 @@ Records which forward-only database schema versions were applied.
 | `app_version` | znacTime application version that applied it. |
 
 `PRAGMA user_version` must agree with the maximum value in this table.
+
+## Runtime database ownership
+
+The desktop application supports one running process per canonical database path. It
+holds an operating-system advisory lock in the stable sibling
+`znactime.db.instance.lock` file for its complete lifetime. A contending launch exits
+before opening SQLite or constructing the table, header, or main window. The separate
+`znactime.db.lock` file coordinates short-lived first-launch creation and migration while
+the owning application already holds the runtime lock. Lock files are stable metadata;
+process exit or a crash releases ownership through the operating system.
+
+First-launch creation uses `znactime.db.creating`; legacy CSV import uses
+`znactime.db.migrating`. If the final database is absent after an interrupted setup, the
+staging file is assessed through an immutable read-only SQLite connection. Creation is
+recoverable only with the pristine initial database shape. Import is recoverable only
+with exactly one committed `legacy_imports` record whose month count matches SQLite.
+Unresolved journals/WAL files are never promoted. The user may instead copy the staging
+database and every sidecar into a verified timestamped `recovery/` bundle before setup
+restarts; Exit leaves the original staging bytes unchanged.
 
 ## `datasets`
 
@@ -78,8 +101,10 @@ Stores effective-dated work-limit policies. Periods for one dataset cannot overl
 | `updated_at` | UTC timestamp of the latest change. |
 | `revision` | Schedule concurrency version. |
 
-When a schedule changes, eligible open days without a per-day override receive the new
-applicable value. Closed days never change.
+When a schedule changes, eligible open days within that schedule period and without a
+per-day override receive the new applicable value. Only days whose derived value actually
+changes receive a new generic revision. Closed days never change, and schedule
+recalculation never changes `local_input_revision`.
 
 ## `months`
 
@@ -122,6 +147,7 @@ labels, colors, and calculated open-month balances do not belong here.
 | `created_at` | UTC creation timestamp. |
 | `updated_at` | UTC timestamp of the latest input change. |
 | `revision` | Day concurrency version. UI edits supply the revision they loaded; a mismatch is a conflict. |
+| `local_input_revision` | Sticky count of user-originated edits and timer actions. Once nonzero, later automatic changes leave it nonzero so an intentional user clear remains distinguishable from a generated placeholder. |
 
 The two break representations are intentional:
 
@@ -134,6 +160,11 @@ Exact intervals known:
     day_entries.break_duration_minutes = NULL
     break_periods = 12:00-12:30, 15:00-15:15
 ```
+
+Repository writes reject an end without a start and reject `end_minute <= start_minute`.
+This validation happens against the complete resulting row before any table or timer
+change is committed. Equal times are not used to represent zero work; leave both values
+unset or select the applicable special-day classification.
 
 ## `break_periods`
 
@@ -210,13 +241,25 @@ the same byte-identical snapshot should have the same fingerprint after being mo
 **SQLite always wins a conflict.** Import is one atomic transaction and never modifies
 source files.
 
+CSV schema v3 uses a leading-apostrophe escape for spreadsheet-formula-sensitive
+`special_day` text. The importer decodes that marker only for v3 documents. Unversioned,
+v1, and v2 values retain their legacy interpretation, including literal leading
+apostrophes. This keeps new exports safe to open in spreadsheet software while preserving
+an exact znacTime v3 export/import round trip.
+
 A generated day placeholder may receive CSV data. A day is local-authoritative and is
 not overwritten when any of these apply:
 
 - its parent month is already closed;
-- its `revision` shows that it has already changed;
+- its `local_input_revision` shows that a user has changed it, even if the user later
+  restored visible values to their defaults;
 - it contains local start/end, special-day, duration, or exact-break data; or
 - `expected_minutes_overridden = 1`.
+
+Generic `revision` remains the optimistic-concurrency token, but it is not used as a proxy
+for user input because schedule recalculation also advances it. Upgrading a schema-v3
+database initializes the new marker conservatively: existing days with `revision > 1` are
+treated as locally changed because their historical change origin cannot be reconstructed.
 
 Non-conflicting days in the same month may still import. If a CSV marks a month closed but
 one of its days conflicts with SQLite, imported non-conflicting days are retained but the

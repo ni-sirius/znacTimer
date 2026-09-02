@@ -70,6 +70,50 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
         self.assertTrue(any("not midnight" in issue.message for issue in result.warnings))
         self.assertEqual(result.months[0].days[1].start_minute, None)
 
+    def test_preflight_decodes_v3_safety_escape_but_leaves_v2_unchanged(self):
+        year_dir = self.root / "2024"
+        year_dir.mkdir()
+        v2 = year_dir / "2024_tmp_06.csv"
+        v3 = year_dir / "2024_tmp_08.csv"
+        with v2.open("w", newline="", encoding="utf-8") as stream:
+            csv.writer(stream).writerows(
+                [
+                    ["#znacTime-csv", "2"],
+                    [
+                        "17.06.2024", "'=legacy literal", "08:00", "17:00",
+                        "00:00", "00:00", "00:00",
+                    ],
+                ]
+            )
+        with v3.open("w", newline="", encoding="utf-8") as stream:
+            csv.writer(stream).writerows(
+                [
+                    ["#znacTime-csv", "3"],
+                    [
+                        "17.08.2024", "'=1+1", "08:00", "17:00",
+                        "00:00", "00:00", "00:00",
+                    ],
+                    [
+                        "18.08.2024", "''=literal apostrophe", "08:00", "17:00",
+                        "00:00", "00:00", "00:00",
+                    ],
+                ]
+            )
+        original_v2 = v2.read_bytes()
+        original_v3 = v3.read_bytes()
+
+        result = preflight_legacy_data(self.root)
+
+        self.assertFalse(result.blocking_errors)
+        self.assertEqual(result.months[0].days[0].special_day, "'=legacy literal")
+        self.assertEqual(result.months[1].days[0].special_day, "=1+1")
+        self.assertEqual(
+            result.months[1].days[1].special_day,
+            "'=literal apostrophe",
+        )
+        self.assertEqual(v2.read_bytes(), original_v2)
+        self.assertEqual(v3.read_bytes(), original_v3)
+
     def test_invalid_value_is_blocking_instead_of_becoming_zero(self):
         self._write_month(2024, 2, invalid_start="99:99")
         result = preflight_legacy_data(self.root)
@@ -319,6 +363,67 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             repeated = repository.merge_legacy(preflight)
             self.assertTrue(repeated.already_imported)
             self.assertEqual(repeated.days_imported, 0)
+        finally:
+            repository.close()
+
+    def test_schedule_only_revision_does_not_block_legacy_day_import(self):
+        self._write_month(2024, 2)
+        preflight = preflight_legacy_data(self.root)
+        target = Path(self.temporary.name) / "app-data" / "znactime.db"
+        repository = SQLiteRepository.create(target)
+        try:
+            repository.get_or_create_month(2024, 2)
+            repository.replace_work_schedule(
+                effective_from=date(2024, 2, 1),
+                effective_to=None,
+                weekday_minutes=(420, 420, 420, 420, 420, 0, 0),
+            )
+            metadata = repository._connection.execute(
+                """
+                SELECT revision, local_input_revision FROM day_entries
+                WHERE work_date = '2024-02-01'
+                """
+            ).fetchone()
+            self.assertEqual(tuple(metadata), (2, 0))
+
+            result = repository.merge_legacy(preflight)
+
+            imported = repository.load_month(2024, 2).days[0]
+            self.assertEqual(imported.start_minute, 480)
+            self.assertEqual(imported.end_minute, 1020)
+            self.assertEqual(result.days_imported, 1)
+            self.assertEqual(result.days_kept_current, 0)
+        finally:
+            repository.close()
+
+    def test_user_cleared_day_remains_authoritative_during_legacy_merge(self):
+        self._write_month(2024, 2)
+        preflight = preflight_legacy_data(self.root)
+        target = Path(self.temporary.name) / "app-data" / "znactime.db"
+        repository = SQLiteRepository.create(target)
+        try:
+            day = repository.get_or_create_month(2024, 2).days[0]
+            changed = repository.update_day(
+                day.work_date,
+                expected_revision=day.revision,
+                special_day="Vacation",
+                fields=frozenset(("special_day",)),
+            )
+            repository.update_day(
+                day.work_date,
+                expected_revision=changed.revision,
+                special_day="Normal day",
+                fields=frozenset(("special_day",)),
+            )
+
+            result = repository.merge_legacy(preflight)
+
+            preserved = repository.load_month(2024, 2).days[0]
+            self.assertEqual(preserved.special_day, "Normal day")
+            self.assertIsNone(preserved.start_minute)
+            self.assertIsNone(preserved.end_minute)
+            self.assertEqual(result.days_kept_current, 1)
+            self.assertEqual(result.days_imported, 0)
         finally:
             repository.close()
 

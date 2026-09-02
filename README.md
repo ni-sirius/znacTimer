@@ -11,7 +11,7 @@
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-0.5.3-6941c6">
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white">
   <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6-41cd52?logo=qt&logoColor=white">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-146c43"></a>
 </p>
@@ -70,8 +70,8 @@ header displays **Closed**, and the month remains available for review.
 
 ### Requirements
 
-- Python 3.10 or newer
-- Windows is the primary desktop target
+- CPython 3.12
+- 64-bit Windows (the reviewed dependency lock targets `win_amd64` wheels)
 
 ### Install and run
 
@@ -84,6 +84,13 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 python -m znactime
 ```
+
+`requirements.txt` is the production lock: it pins direct and transitive packages,
+accepts binary wheels only, and verifies their SHA-256 hashes. Development and test
+environments use `requirements-dev.txt`; it currently adds no packages beyond the
+production lock. Dependency upgrades must update `requirements.in`, review the complete
+resolution, and regenerate the hashes together. Release builds must install from
+`requirements.txt`, not directly from `requirements.in`.
 
 You can also launch the application with:
 
@@ -99,11 +106,31 @@ data directory. On first launch, choose either a new empty database or a
 non-destructive import of the legacy `data/<year>/*.csv` tree. The importer
 validates all recognized files before committing and never modifies the source files.
 
+If first-launch creation or import is interrupted before the staging database becomes
+active, the next launch validates it without modification. A complete staging database
+can finish setup; an incomplete one can be copied with all SQLite sidecars into a
+timestamped recovery folder before setup restarts. Exiting the recovery dialog leaves the
+staging files byte-for-byte unchanged, and no recovery action automatically deletes user
+data or legacy CSV sources.
+
+Only one znacTime process may use a database at a time. A second launch shows a
+standalone **znacTime is already running** dialog with one **Exit application** action;
+it does not open the database, table, header, or main window. Closing that dialog by its
+button, window close control, or keyboard shortcut terminates only the second process.
+The operating-system lock is released automatically when the running process exits or
+crashes.
+
 Month status, immutable closed-month results, work schedules, per-day work
 limits, clocks, and breaks are stored transactionally in the same database. The timer
 pane has no independent state: it derives its state from today's table row and writes
 back to that row. Use **Month > Export Month CSV** or **Export PDF** for portable
 outputs; exports are not read back as live application state.
+
+New CSV exports use schema v3. Free-text special-day values that could be interpreted as
+spreadsheet formulas are prefixed with a reversible apostrophe escape. znacTime removes
+that escape when a v3 file is imported, so its own export/import round trip preserves the
+exact text. Existing unversioned, v1, and v2 CSV files continue to import unchanged and
+are never rewritten.
 
 Legacy import recognizes only `<root>/<YYYY>/<YYYY>_tmp_<MM>.csv` and matching
 `closed_<MM>.flag` files. Symlinks and Windows junctions are rejected. An import is
@@ -154,6 +181,18 @@ Run the complete test suite with:
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+Before creating a source or release archive, verify that every tracked file belongs to
+the reviewed source allowlist:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_release_tree.py
+```
+
+The repository ignores the local legacy `data/` tree, SQLite databases and journals,
+first-launch/runtime lock files, and conventional backup/export directories. The release
+check independently fails if such data is force-added or another unreviewed artifact type
+enters the Git index.
 
 After importing legacy CSV files, verify the current Qt AppData database against
 the `data` folder with:

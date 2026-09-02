@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -59,6 +60,22 @@ class QtSQLiteModelTest(unittest.TestCase):
             self.repository.load_month(2024, 6).days[0].start_minute
         )
         self.assertEqual(index.data(), "--:--")
+
+    @patch("znactime.ui.qt.model.QMessageBox.warning")
+    def test_invalid_work_range_warns_and_is_not_added_to_table(self, warning):
+        start = self.model.index(0, Column.START)
+        end = self.model.index(0, Column.END)
+
+        self.assertFalse(self.model.setData(end, "10:00", Qt.ItemDataRole.EditRole))
+        self.assertEqual(end.data(), "--:--")
+        self.assertTrue(self.model.setData(start, "08:00", Qt.ItemDataRole.EditRole))
+        self.assertFalse(self.model.setData(end, "08:00", Qt.ItemDataRole.EditRole))
+
+        stored = self.repository.load_month(2024, 6).days[0]
+        self.assertEqual(stored.start_minute, 480)
+        self.assertIsNone(stored.end_minute)
+        self.assertEqual(end.data(), "--:--")
+        self.assertEqual(warning.call_count, 2)
 
     def test_interruption_periods_are_normalized_into_rows(self):
         index = self.model.index(0, Column.INTERRUPTION)

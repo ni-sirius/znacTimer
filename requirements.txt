@@ -1,2 +1,22 @@
-PySide6
-reportlab
+# znacTime production dependency lock.
+#
+# Target: CPython 3.12 on 64-bit Windows.
+# Source declarations: requirements.in
+# Regenerate only after reviewing versions and hashes from the official package index.
+--only-binary=:all:
+--require-hashes
+
+charset-normalizer==3.4.4 \
+    --hash=sha256:a79cfe37875f822425b89a82333404539ae63dbdddf97f84dcbc3d339aae9525
+pillow==12.1.0 \
+    --hash=sha256:d70534cea9e7966169ad29a903b99fc507e932069a881d0965a1a84bb57f6c6d
+pyside6==6.11.1 \
+    --hash=sha256:0968877ab1fb4ef3587a284da6fe05e8647ada56a6a3750b6395188e01f4aba6
+pyside6-addons==6.11.1 \
+    --hash=sha256:0d13c4dfd671b050a48e4f8d8ddc724b7248f9c0437e7fc47fdf316278572923
+pyside6-essentials==6.11.1 \
+    --hash=sha256:63311bd48e32c584599ab04b9ef7c324082374cd2c9fa533f978fb893bb47e40
+reportlab==4.4.9 \
+    --hash=sha256:68e2d103ae8041a37714e8896ec9b79a1c1e911d68c3bd2ea17546568cf17bfd
+shiboken6==6.11.1 \
+    --hash=sha256:c2c6863aa80ec18c0f82cea3417837b279cdc60024ac17123461dc9042577df7

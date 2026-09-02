@@ -404,7 +404,7 @@ class TimeTrackerApp(QMainWindow):
             )
 
     def on_workday_primary(self):
-        now = datetime.now()
+        now = datetime.now().astimezone()
         entry = self._today_entry(now)
         if self.month_closed or entry is None:
             return
@@ -563,7 +563,7 @@ class TimeTrackerApp(QMainWindow):
         return updated
 
     def stop_workday(self):
-        now = datetime.now()
+        now = datetime.now().astimezone()
         entry = self._today_entry(now)
         if self.month_closed or entry is None or entry.start == UNSET_TIME:
             return
@@ -582,7 +582,12 @@ class TimeTrackerApp(QMainWindow):
             return
 
         end_text = now.strftime(TIME_FORMAT)
-        if end_text < entry.start:
+        if end_text <= entry.start:
+            QMessageBox.warning(
+                self,
+                "Invalid time range",
+                "End time must be later than start time; overnight work is not supported.",
+            )
             return
 
         if self._active_pause(now):

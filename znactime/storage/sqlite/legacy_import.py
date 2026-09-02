@@ -51,9 +51,9 @@ def _legacy_day_has_data(day: LegacyDay, *, include_results: bool) -> bool:
 
 
 def _local_day_has_data(db, day_row) -> bool:
-    """Generated revision-1 placeholders are importable; local state is not."""
+    """Return whether a day contains local user input that import must preserve."""
     if (
-        day_row["revision"] > 1
+        day_row["local_input_revision"] > 0
         or day_row["special_day"] != NORMAL_DAY
         or day_row["start_minute"] is not None
         or day_row["end_minute"] is not None

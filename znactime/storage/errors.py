@@ -10,6 +10,10 @@ class StorageLocked(StorageError):
     pass
 
 
+class ApplicationAlreadyRunning(StorageLocked):
+    """A second application process targeted the same local database."""
+
+
 class StorageCorrupt(StorageError):
     pass
 

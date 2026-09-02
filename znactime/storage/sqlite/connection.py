@@ -15,12 +15,23 @@ from znactime.storage.errors import (
 )
 
 
-def connect_database(path: str | Path, *, timeout_seconds: float = 0.75) -> sqlite3.Connection:
+def _database_uri(path: str | Path, *, mode: str) -> str:
+    return f"{Path(path).resolve().as_uri()}?mode={mode}"
+
+
+def _connect_database(
+    path: str | Path,
+    *,
+    mode: str,
+    timeout_seconds: float,
+) -> sqlite3.Connection:
+    connection = None
     try:
         connection = sqlite3.connect(
-            str(path),
+            _database_uri(path, mode=mode),
             timeout=timeout_seconds,
             isolation_level=None,
+            uri=True,
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -29,14 +40,40 @@ def connect_database(path: str | Path, *, timeout_seconds: float = 0.75) -> sqli
         connection.execute("PRAGMA synchronous = FULL")
         return connection
     except sqlite3.Error as error:
+        if connection is not None:
+            connection.close()
         raise translate_error(error) from error
 
 
+def connect_database(
+    path: str | Path,
+    *,
+    timeout_seconds: float = 0.75,
+) -> sqlite3.Connection:
+    """Open an existing database read-write without creating a missing file."""
+    return _connect_database(path, mode="rw", timeout_seconds=timeout_seconds)
+
+
+def create_database(
+    path: str | Path,
+    *,
+    timeout_seconds: float = 0.75,
+) -> sqlite3.Connection:
+    """Open or explicitly create a database for a controlled creation path."""
+    return _connect_database(path, mode="rwc", timeout_seconds=timeout_seconds)
+
+
 def translate_error(error: sqlite3.Error) -> StorageError:
+    error_code = getattr(error, "sqlite_errorcode", None)
+    primary_code = error_code & 0xFF if error_code is not None else None
     message = str(error).casefold()
-    if "locked" in message or "busy" in message:
+    if primary_code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
         return StorageLocked("The time database is busy; retry the operation.")
-    if "malformed" in message or "not a database" in message or "corrupt" in message:
+    if primary_code in (
+        sqlite3.SQLITE_CORRUPT,
+        sqlite3.SQLITE_NOTADB,
+        sqlite3.SQLITE_SCHEMA,
+    ):
         return StorageCorrupt("The time database failed an integrity check.")
     if (
         "closed month" in message
@@ -46,15 +83,23 @@ def translate_error(error: sqlite3.Error) -> StorageError:
         or "active workday identity is immutable or protected" in message
     ):
         return ClosedPeriodError(str(error))
-    if (
+    if primary_code == sqlite3.SQLITE_CONSTRAINT or (
         "constraint" in message
         or "violates" in message
         or "overlap" in message
         or "immutable" in message
     ):
         return StorageValidationError(str(error))
-    if "readonly" in message or "unable to open" in message:
+    if primary_code in (
+        sqlite3.SQLITE_READONLY,
+        sqlite3.SQLITE_CANTOPEN,
+        sqlite3.SQLITE_PERM,
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_FULL,
+    ):
         return StorageUnavailable("The time database path is unavailable or read-only.")
+    if isinstance(error, sqlite3.ProgrammingError) and "closed" in message:
+        return StorageUnavailable("The time database connection is closed.")
     return StorageError("The time database operation failed.")
 
 

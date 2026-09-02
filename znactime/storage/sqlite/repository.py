@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 
 from znactime.config import VERSION
@@ -20,6 +21,8 @@ from znactime.storage.errors import (
     ClosedPeriodError,
     StorageConflict,
     StorageCorrupt,
+    StorageError,
+    StorageUnavailable,
     StorageValidationError,
     StorageVersionUnsupported,
 )
@@ -30,6 +33,7 @@ from znactime.storage.atomic_file import (
 )
 from znactime.storage.sqlite.connection import (
     connect_database,
+    create_database,
     read_transaction,
     require_changed,
     transaction,
@@ -54,13 +58,52 @@ _MINIMUM_SQLITE_VERSION = (3, 37, 0)
 
 def _utc_text(now: datetime | None = None) -> str:
     value = now or datetime.now(timezone.utc)
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+    _require_aware_datetime(value)
     return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _require_aware_datetime(value: datetime) -> None:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        raise StorageValidationError(
+            "Repository timestamps must include an explicit timezone."
+        )
 
 
 def _uuid4() -> str:
     return str(uuid.uuid4())
+
+
+def _repository_operation(method):
+    """Keep adapter/OS exceptions behind the public repository contract."""
+    @wraps(method)
+    def guarded(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except StorageError:
+            raise
+        except sqlite3.Error as error:
+            raise translate_error(error) from error
+        except OSError as error:
+            raise StorageUnavailable(
+                "The time database filesystem operation failed."
+            ) from error
+
+    return guarded
+
+
+def _stored_date(value, field: str) -> date:
+    if not isinstance(value, str):
+        raise StorageCorrupt(f"The database contains an invalid {field} value.")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise StorageCorrupt(
+            f"The database contains an invalid {field} value."
+        ) from error
 
 
 def _validate_uuid4(value: str) -> str:
@@ -78,6 +121,17 @@ def _validate_minute(value: int | None, *, allow_1440: bool = False):
     upper = 1440 if allow_1440 else 1439
     if value is not None and (not isinstance(value, int) or not 0 <= value <= upper):
         raise StorageValidationError(f"Minute value must be between 0 and {upper}.")
+
+
+def _validate_work_range(start_minute: int | None, end_minute: int | None) -> None:
+    if end_minute is None:
+        return
+    if start_minute is None:
+        raise StorageValidationError("An end time requires a start time.")
+    if end_minute <= start_minute:
+        raise StorageValidationError(
+            "End time must be later than start time; overnight work is not supported."
+        )
 
 
 def _migration_statements(script: str):
@@ -108,6 +162,7 @@ class SQLiteRepository:
             raise
 
     @classmethod
+    @_repository_operation
     def create(
         cls,
         path: str | Path,
@@ -121,7 +176,7 @@ class SQLiteRepository:
             dataset_public_id = _validate_uuid4(dataset_public_id)
         target = Path(path).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
-        connection = connect_database(target)
+        connection = create_database(target)
         try:
             if connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
@@ -206,6 +261,19 @@ class SQLiteRepository:
             self._validate_migration_source(version)
             with transaction(self._connection) as db:
                 for statement in _migration_statements(migration_sql):
+                    if (
+                        version == 3
+                        and statement.startswith(
+                            "ALTER TABLE day_entries ADD COLUMN local_input_revision"
+                        )
+                        and any(
+                            row["name"] == "local_input_revision"
+                            for row in db.execute(
+                                "PRAGMA table_info(day_entries)"
+                            ).fetchall()
+                        )
+                    ):
+                        continue
                     db.execute(statement)
                 version += 1
                 db.execute(
@@ -266,10 +334,11 @@ class SQLiteRepository:
             raise StorageValidationError(f"No work schedule applies to {work_date.isoformat()}.")
         return row[work_date.weekday()]
 
+    @_repository_operation
     def get_or_create_month(self, year: int, month: int) -> MonthRecord:
         try:
             date(year, month, 1)
-        except ValueError as error:
+        except (TypeError, ValueError) as error:
             raise StorageValidationError("Invalid calendar month.") from error
         existing = self.load_month(year, month)
         if existing is not None:
@@ -277,109 +346,170 @@ class SQLiteRepository:
         now = _utc_text()
         with transaction(self._connection) as db:
             dataset_id = self._dataset_id(db)
-            previous_year, previous_month = (year, month - 1) if month > 1 else (year - 1, 12)
-            previous = db.execute(
+            existing_id = db.execute(
                 """
-                SELECT closing_balance_minutes FROM months
-                WHERE dataset_id = ? AND year = ? AND month = ? AND status = 'closed'
+                SELECT id FROM months
+                WHERE dataset_id = ? AND year = ? AND month = ?
                 """,
-                (dataset_id, previous_year, previous_month),
+                (dataset_id, year, month),
             ).fetchone()
-            opening = previous[0] if previous else 0
-            month_id = db.execute(
-                """
-                INSERT INTO months(
-                    dataset_id, year, month, status, opening_balance_minutes,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, 'open', ?, ?, ?)
-                """,
-                (dataset_id, year, month, opening, now, now),
-            ).lastrowid
-            for day_number in range(1, calendar.monthrange(year, month)[1] + 1):
-                work_date = date(year, month, day_number)
-                db.execute(
-                    """
-                    INSERT INTO day_entries(
-                        month_id, work_date, special_day, start_minute, end_minute,
-                        break_duration_minutes, expected_work_minutes,
-                        expected_minutes_overridden, created_at, updated_at
-                    ) VALUES (?, ?, ?, NULL, NULL, 0, ?, 0, ?, ?)
-                    """,
-                    (
-                        month_id,
-                        work_date.isoformat(),
-                        NORMAL_DAY,
-                        self._expected_minutes(work_date, db),
-                        now,
-                        now,
-                    ),
+            if existing_id is None:
+                previous_year, previous_month = (
+                    (year, month - 1) if month > 1 else (year - 1, 12)
                 )
+                previous = db.execute(
+                    """
+                    SELECT closing_balance_minutes FROM months
+                    WHERE dataset_id = ? AND year = ? AND month = ?
+                      AND status = 'closed'
+                    """,
+                    (dataset_id, previous_year, previous_month),
+                ).fetchone()
+                opening = previous[0] if previous else 0
+                month_id = db.execute(
+                    """
+                    INSERT INTO months(
+                        dataset_id, year, month, status, opening_balance_minutes,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, 'open', ?, ?, ?)
+                    """,
+                    (dataset_id, year, month, opening, now, now),
+                ).lastrowid
+                for day_number in range(1, calendar.monthrange(year, month)[1] + 1):
+                    work_date = date(year, month, day_number)
+                    db.execute(
+                        """
+                        INSERT INTO day_entries(
+                            month_id, work_date, special_day, start_minute, end_minute,
+                            break_duration_minutes, expected_work_minutes,
+                            expected_minutes_overridden, created_at, updated_at
+                        ) VALUES (?, ?, ?, NULL, NULL, 0, ?, 0, ?, ?)
+                        """,
+                        (
+                            month_id,
+                            work_date.isoformat(),
+                            NORMAL_DAY,
+                            self._expected_minutes(work_date, db),
+                            now,
+                            now,
+                        ),
+                    )
         result = self.load_month(year, month)
         assert result is not None
         return result
 
+    @_repository_operation
     def load_month(self, year: int, month: int) -> MonthRecord | None:
         with read_transaction(self._connection) as db:
-            row = db.execute(
-                """
-                SELECT id, year, month, status, opening_balance_minutes,
-                       closing_balance_minutes, revision
-                FROM months WHERE dataset_id = ? AND year = ? AND month = ?
-                """,
-                (self._dataset_id(db), year, month),
-            ).fetchone()
-            if row is None:
-                return None
-            days = tuple(
-                self._day_from_row(day)
-                for day in db.execute(
-                    "SELECT * FROM day_entries WHERE month_id = ? ORDER BY work_date",
-                    (row["id"],),
-                ).fetchall()
+            records = self._load_month_records(db, year=year, month=month)
+            return records[0] if records else None
+
+    @_repository_operation
+    def list_months(self, year: int | None = None) -> tuple[MonthRecord, ...]:
+        with read_transaction(self._connection) as db:
+            return self._load_month_records(db, year=year)
+
+    def _load_month_records(
+        self,
+        db,
+        *,
+        year: int | None = None,
+        month: int | None = None,
+    ) -> tuple[MonthRecord, ...]:
+        conditions = ["month.dataset_id = ?"]
+        parameters: list[int] = [self._dataset_id(db)]
+        if year is not None:
+            conditions.append("month.year = ?")
+            parameters.append(year)
+        if month is not None:
+            conditions.append("month.month = ?")
+            parameters.append(month)
+        where = " AND ".join(conditions)
+
+        month_rows = db.execute(
+            f"""
+            SELECT month.id, month.year, month.month, month.status,
+                   month.opening_balance_minutes, month.closing_balance_minutes,
+                   month.revision
+            FROM months month
+            WHERE {where}
+            ORDER BY month.year, month.month
+            """,
+            parameters,
+        ).fetchall()
+        if not month_rows:
+            return ()
+
+        day_rows = db.execute(
+            f"""
+            SELECT day.*
+            FROM day_entries day
+            JOIN months month ON month.id = day.month_id
+            WHERE {where}
+            ORDER BY month.year, month.month, day.work_date
+            """,
+            parameters,
+        ).fetchall()
+        pause_rows = db.execute(
+            f"""
+            SELECT pause.*
+            FROM break_periods pause
+            JOIN day_entries day ON day.id = pause.day_entry_id
+            JOIN months month ON month.id = day.month_id
+            WHERE {where}
+            ORDER BY month.year, month.month, day.work_date, pause.position
+            """,
+            parameters,
+        ).fetchall()
+        result_rows = db.execute(
+            f"""
+            SELECT result.*
+            FROM closed_day_results result
+            JOIN day_entries day ON day.id = result.day_entry_id
+            JOIN months month ON month.id = day.month_id
+            WHERE {where}
+            ORDER BY month.year, month.month, day.work_date
+            """,
+            parameters,
+        ).fetchall()
+
+        breaks_by_day: dict[int, list[BreakRecord]] = {}
+        for pause in pause_rows:
+            breaks_by_day.setdefault(pause["day_entry_id"], []).append(
+                BreakRecord(
+                    public_id=pause["public_id"],
+                    position=pause["position"],
+                    start_minute=pause["start_minute"],
+                    end_minute=pause["end_minute"],
+                    revision=pause["revision"],
+                )
             )
-            return MonthRecord(
+        results_by_day = {row["day_entry_id"]: row for row in result_rows}
+        days_by_month: dict[int, list[DayRecord]] = {}
+        for day in day_rows:
+            days_by_month.setdefault(day["month_id"], []).append(
+                self._day_from_row(
+                    day,
+                    breaks=tuple(breaks_by_day.get(day["id"], ())),
+                    result=results_by_day.get(day["id"]),
+                )
+            )
+        return tuple(
+            MonthRecord(
                 year=row["year"],
                 month=row["month"],
                 status=row["status"],
                 opening_balance_minutes=row["opening_balance_minutes"],
                 closing_balance_minutes=row["closing_balance_minutes"],
                 revision=row["revision"],
-                days=days,
+                days=tuple(days_by_month.get(row["id"], ())),
             )
-
-    def list_months(self, year: int | None = None) -> tuple[MonthRecord, ...]:
-        if year is None:
-            rows = self._connection.execute(
-                "SELECT year, month FROM months WHERE dataset_id = ? ORDER BY year, month",
-                (self._dataset_id(),),
-            ).fetchall()
-        else:
-            rows = self._connection.execute(
-                "SELECT year, month FROM months WHERE dataset_id = ? AND year = ? ORDER BY month",
-                (self._dataset_id(), year),
-            ).fetchall()
-        return tuple(self.load_month(row["year"], row["month"]) for row in rows)
-
-    def _day_from_row(self, row) -> DayRecord:
-        result = self._connection.execute(
-            "SELECT * FROM closed_day_results WHERE day_entry_id = ?",
-            (row["id"],),
-        ).fetchone()
-        breaks = tuple(
-            BreakRecord(
-                public_id=pause["public_id"],
-                position=pause["position"],
-                start_minute=pause["start_minute"],
-                end_minute=pause["end_minute"],
-                revision=pause["revision"],
-            )
-            for pause in self._connection.execute(
-                "SELECT * FROM break_periods WHERE day_entry_id = ? ORDER BY position",
-                (row["id"],),
-            ).fetchall()
+            for row in month_rows
         )
+
+    def _day_from_row(self, row, *, breaks=(), result=None) -> DayRecord:
         return DayRecord(
-            work_date=date.fromisoformat(row["work_date"]),
+            work_date=_stored_date(row["work_date"], "work date"),
             special_day=row["special_day"],
             start_minute=row["start_minute"],
             end_minute=row["end_minute"],
@@ -407,8 +537,31 @@ class SQLiteRepository:
         return row
 
     def _load_day(self, work_date: date) -> DayRecord:
-        return self._day_from_row(self._day_row(work_date))
+        with read_transaction(self._connection) as db:
+            row = self._day_row(work_date, db)
+            result = db.execute(
+                "SELECT * FROM closed_day_results WHERE day_entry_id = ?",
+                (row["id"],),
+            ).fetchone()
+            breaks = tuple(
+                BreakRecord(
+                    public_id=pause["public_id"],
+                    position=pause["position"],
+                    start_minute=pause["start_minute"],
+                    end_minute=pause["end_minute"],
+                    revision=pause["revision"],
+                )
+                for pause in db.execute(
+                    """
+                    SELECT * FROM break_periods
+                    WHERE day_entry_id = ? ORDER BY position
+                    """,
+                    (row["id"],),
+                ).fetchall()
+            )
+            return self._day_from_row(row, breaks=breaks, result=result)
 
+    @_repository_operation
     def update_day(
         self,
         work_date: date,
@@ -451,6 +604,14 @@ class SQLiteRepository:
             row = self._day_row(work_date, db)
             if row["revision"] != expected_revision:
                 raise StorageConflict("The day changed since it was loaded.")
+            if fields & {"start_minute", "end_minute"}:
+                resulting_start = (
+                    start_minute if "start_minute" in fields else row["start_minute"]
+                )
+                resulting_end = (
+                    end_minute if "end_minute" in fields else row["end_minute"]
+                )
+                _validate_work_range(resulting_start, resulting_end)
             if "breaks" in fields:
                 supplied_ids = [pause.public_id for pause in breaks or () if pause.public_id]
                 if len(supplied_ids) != len(set(supplied_ids)):
@@ -527,7 +688,13 @@ class SQLiteRepository:
                 db.execute("DELETE FROM break_periods WHERE day_entry_id = ?", (row["id"],))
             assignments = [f"{name} = ?" for name in fields if name != "breaks"]
             parameters = [values[name] for name in fields if name != "breaks"]
-            assignments.extend(("updated_at = ?", "revision = revision + 1"))
+            assignments.extend(
+                (
+                    "updated_at = ?",
+                    "revision = revision + 1",
+                    "local_input_revision = local_input_revision + 1",
+                )
+            )
             parameters.extend((_utc_text(), row["id"], expected_revision))
             cursor = db.execute(
                 f"UPDATE day_entries SET {', '.join(assignments)} WHERE id = ? AND revision = ?",
@@ -536,30 +703,45 @@ class SQLiteRepository:
             require_changed(cursor, "The day changed since it was loaded.")
         return self._load_day(work_date)
 
+    @_repository_operation
     def is_month_closed(self, year: int, month: int) -> bool:
-        row = self._connection.execute(
-            "SELECT status FROM months WHERE dataset_id = ? AND year = ? AND month = ?",
-            (self._dataset_id(), year, month),
-        ).fetchone()
-        return bool(row and row[0] == "closed")
+        with read_transaction(self._connection) as db:
+            row = db.execute(
+                """
+                SELECT status FROM months
+                WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (self._dataset_id(db), year, month),
+            ).fetchone()
+            return bool(row and row[0] == "closed")
 
+    @_repository_operation
     def get_carry_over(self, year: int, month: int) -> int:
-        current = self._connection.execute(
-            "SELECT opening_balance_minutes FROM months WHERE dataset_id = ? AND year = ? AND month = ?",
-            (self._dataset_id(), year, month),
-        ).fetchone()
-        if current:
-            return current[0]
-        previous_year, previous_month = (year, month - 1) if month > 1 else (year - 1, 12)
-        previous = self._connection.execute(
-            """
-            SELECT closing_balance_minutes FROM months
-            WHERE dataset_id = ? AND year = ? AND month = ? AND status = 'closed'
-            """,
-            (self._dataset_id(), previous_year, previous_month),
-        ).fetchone()
-        return previous[0] if previous else 0
+        with read_transaction(self._connection) as db:
+            dataset_id = self._dataset_id(db)
+            current = db.execute(
+                """
+                SELECT opening_balance_minutes FROM months
+                WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (dataset_id, year, month),
+            ).fetchone()
+            if current:
+                return current[0]
+            previous_year, previous_month = (
+                (year, month - 1) if month > 1 else (year - 1, 12)
+            )
+            previous = db.execute(
+                """
+                SELECT closing_balance_minutes FROM months
+                WHERE dataset_id = ? AND year = ? AND month = ?
+                  AND status = 'closed'
+                """,
+                (dataset_id, previous_year, previous_month),
+            ).fetchone()
+            return previous[0] if previous else 0
 
+    @_repository_operation
     def close_month(self, year: int, month: int, *, expected_revision: int) -> MonthRecord:
         with transaction(self._connection) as db:
             month_row = db.execute(
@@ -625,21 +807,36 @@ class SQLiteRepository:
         assert result is not None
         return result
 
+    @_repository_operation
     def list_work_schedules(self) -> tuple[WorkSchedulePeriod, ...]:
-        return tuple(
-            WorkSchedulePeriod(
-                public_id=row["public_id"],
-                effective_from=date.fromisoformat(row["effective_from"]),
-                effective_to=date.fromisoformat(row["effective_to"]) if row["effective_to"] else None,
-                weekday_minutes=tuple(row[column] for column in _SCHEDULE_COLUMNS),
-                revision=row["revision"],
+        with read_transaction(self._connection) as db:
+            return tuple(
+                WorkSchedulePeriod(
+                    public_id=row["public_id"],
+                    effective_from=_stored_date(
+                        row["effective_from"],
+                        "schedule start date",
+                    ),
+                    effective_to=(
+                        _stored_date(row["effective_to"], "schedule end date")
+                        if row["effective_to"]
+                        else None
+                    ),
+                    weekday_minutes=tuple(
+                        row[column] for column in _SCHEDULE_COLUMNS
+                    ),
+                    revision=row["revision"],
+                )
+                for row in db.execute(
+                    """
+                    SELECT * FROM work_schedule_periods
+                    WHERE dataset_id = ? ORDER BY effective_from
+                    """,
+                    (self._dataset_id(db),),
+                ).fetchall()
             )
-            for row in self._connection.execute(
-                "SELECT * FROM work_schedule_periods WHERE dataset_id = ? ORDER BY effective_from",
-                (self._dataset_id(),),
-            ).fetchall()
-        )
 
+    @_repository_operation
     def replace_work_schedule(
         self,
         *,
@@ -670,7 +867,10 @@ class SQLiteRepository:
                 (dataset_id, effective_from.isoformat()),
             ).fetchone()
             derived_end = (
-                date.fromisoformat(following["effective_from"]) - timedelta(days=1)
+                _stored_date(
+                    following["effective_from"],
+                    "schedule start date",
+                ) - timedelta(days=1)
                 if following
                 else None
             )
@@ -688,21 +888,28 @@ class SQLiteRepository:
                 """,
                 (dataset_id, effective_from.isoformat(), effective_from.isoformat()),
             ).fetchone()
+            derived_end_text = derived_end.isoformat() if derived_end else None
+            schedule_changed = exact is None or (
+                exact["effective_to"] != derived_end_text
+                or tuple(exact[column] for column in _SCHEDULE_COLUMNS)
+                != weekday_minutes
+            )
             if exact:
                 public_id = exact["public_id"]
-                db.execute(
-                    f"""
-                    UPDATE work_schedule_periods SET effective_to = ?,
-                        {', '.join(f'{column} = ?' for column in _SCHEDULE_COLUMNS)},
-                        updated_at = ?, revision = revision + 1 WHERE id = ?
-                    """,
-                    (
-                        derived_end.isoformat() if derived_end else None,
-                        *weekday_minutes,
-                        now,
-                        exact["id"],
-                    ),
-                )
+                if schedule_changed:
+                    db.execute(
+                        f"""
+                        UPDATE work_schedule_periods SET effective_to = ?,
+                            {', '.join(f'{column} = ?' for column in _SCHEDULE_COLUMNS)},
+                            updated_at = ?, revision = revision + 1 WHERE id = ?
+                        """,
+                        (
+                            derived_end_text,
+                            *weekday_minutes,
+                            now,
+                            exact["id"],
+                        ),
+                    )
             elif previous:
                 db.execute(
                     """
@@ -720,29 +927,55 @@ class SQLiteRepository:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (public_id, dataset_id, effective_from.isoformat(),
-                     derived_end.isoformat() if derived_end else None,
+                     derived_end_text,
                      *weekday_minutes, now, now),
                 )
-            affected = db.execute(
-                """
-                SELECT day.id, day.work_date FROM day_entries day
-                JOIN months month ON month.id = day.month_id
-                WHERE month.dataset_id = ? AND month.status = 'open'
-                  AND day.expected_minutes_overridden = 0 AND day.work_date >= ?
-                """,
-                (dataset_id, effective_from.isoformat()),
-            ).fetchall()
-            for day in affected:
-                day_date = date.fromisoformat(day["work_date"])
+            if schedule_changed:
+                weekday_by_sqlite_day = (
+                    weekday_minutes[6],
+                    weekday_minutes[0],
+                    weekday_minutes[1],
+                    weekday_minutes[2],
+                    weekday_minutes[3],
+                    weekday_minutes[4],
+                    weekday_minutes[5],
+                )
                 db.execute(
-                    """
-                    UPDATE day_entries SET expected_work_minutes = ?, updated_at = ?,
-                        revision = revision + 1 WHERE id = ?
+                    f"""
+                    WITH calculated AS (
+                        SELECT day.id,
+                               day.expected_work_minutes AS current_minutes,
+                               CASE CAST(strftime('%w', day.work_date) AS INTEGER)
+                                   {' '.join(f'WHEN {day} THEN ?' for day in range(7))}
+                               END AS new_minutes
+                        FROM day_entries day
+                        JOIN months month ON month.id = day.month_id
+                        WHERE month.dataset_id = ? AND month.status = 'open'
+                          AND day.expected_minutes_overridden = 0
+                          AND day.work_date BETWEEN ? AND COALESCE(?, '9999-12-31')
+                    )
+                    UPDATE day_entries
+                    SET expected_work_minutes = (
+                            SELECT new_minutes FROM calculated
+                            WHERE calculated.id = day_entries.id
+                        ),
+                        updated_at = ?, revision = revision + 1
+                    WHERE id IN (
+                        SELECT id FROM calculated
+                        WHERE new_minutes != current_minutes
+                    )
                     """,
-                    (self._expected_minutes(day_date, db), now, day["id"]),
+                    (
+                        *weekday_by_sqlite_day,
+                        dataset_id,
+                        effective_from.isoformat(),
+                        derived_end_text,
+                        now,
+                    ),
                 )
         return next(item for item in self.list_work_schedules() if item.public_id == public_id)
 
+    @_repository_operation
     def set_day_work_limit(
         self, work_date: date, minutes: int, *, expected_revision: int
     ) -> DayRecord:
@@ -754,8 +987,10 @@ class SQLiteRepository:
             fields=frozenset(("expected_work_minutes", "expected_minutes_overridden")),
         )
 
+    @_repository_operation
     def start_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord:
         _validate_minute(minute)
+        _require_aware_datetime(now)
         self.get_or_create_month(work_date.year, work_date.month)
         with transaction(self._connection) as db:
             day = self._day_row(work_date, db)
@@ -765,7 +1000,8 @@ class SQLiteRepository:
             db.execute(
                 """
                 UPDATE day_entries SET start_minute = ?, end_minute = NULL,
-                    updated_at = ?, revision = revision + 1 WHERE id = ?
+                    updated_at = ?, revision = revision + 1,
+                    local_input_revision = local_input_revision + 1 WHERE id = ?
                 """,
                 (minute, timestamp, day["id"]),
             )
@@ -779,6 +1015,7 @@ class SQLiteRepository:
             )
         return row
 
+    @_repository_operation
     def start_pause(
         self,
         work_date: date,
@@ -788,6 +1025,7 @@ class SQLiteRepository:
         replace_duration: bool = False,
     ) -> DayRecord:
         _validate_minute(minute)
+        _require_aware_datetime(now)
         with transaction(self._connection) as db:
             day = self._running_day(work_date, db)
             if db.execute(
@@ -806,7 +1044,12 @@ class SQLiteRepository:
                 )
             timestamp = _utc_text(now)
             db.execute(
-                "UPDATE day_entries SET break_duration_minutes = NULL, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                """
+                UPDATE day_entries SET break_duration_minutes = NULL,
+                    updated_at = ?, revision = revision + 1,
+                    local_input_revision = local_input_revision + 1
+                WHERE id = ?
+                """,
                 (timestamp, day["id"]),
             )
             position = db.execute(
@@ -824,8 +1067,10 @@ class SQLiteRepository:
             )
         return self._load_day(work_date)
 
+    @_repository_operation
     def resume_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord:
         _validate_minute(minute)
+        _require_aware_datetime(now)
         with transaction(self._connection) as db:
             day = self._running_day(work_date, db)
             pause = db.execute(
@@ -843,15 +1088,22 @@ class SQLiteRepository:
                     (minute, timestamp, pause["id"]),
                 )
             db.execute(
-                "UPDATE day_entries SET updated_at = ?, revision = revision + 1 WHERE id = ?",
+                """
+                UPDATE day_entries SET updated_at = ?, revision = revision + 1,
+                    local_input_revision = local_input_revision + 1
+                WHERE id = ?
+                """,
                 (timestamp, day["id"]),
             )
         return self._load_day(work_date)
 
+    @_repository_operation
     def stop_workday(self, work_date: date, minute: int, now: datetime) -> DayRecord:
         _validate_minute(minute)
+        _require_aware_datetime(now)
         with transaction(self._connection) as db:
             day = self._running_day(work_date, db)
+            _validate_work_range(day["start_minute"], minute)
             timestamp = _utc_text(now)
             pause = db.execute(
                 "SELECT * FROM break_periods WHERE day_entry_id = ? AND end_minute IS NULL",
@@ -866,11 +1118,17 @@ class SQLiteRepository:
                         (minute, timestamp, pause["id"]),
                     )
             db.execute(
-                "UPDATE day_entries SET end_minute = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                """
+                UPDATE day_entries SET end_minute = ?, updated_at = ?,
+                    revision = revision + 1,
+                    local_input_revision = local_input_revision + 1
+                WHERE id = ?
+                """,
                 (minute, timestamp, day["id"]),
             )
         return self._load_day(work_date)
 
+    @_repository_operation
     def backup_to(
         self,
         destination: str | Path,
@@ -909,7 +1167,7 @@ class SQLiteRepository:
             )
 
         try:
-            backup = connect_database(temporary_name)
+            backup = create_database(temporary_name)
             self._connection.backup(
                 backup,
                 pages=128,
@@ -953,6 +1211,7 @@ class SQLiteRepository:
                 except OSError:
                     pass
 
+    @_repository_operation
     def merge_legacy(self, preflight, *, progress=None, cancelled=None):
         from znactime.storage.sqlite.legacy_import import merge_preflight
 
@@ -963,5 +1222,6 @@ class SQLiteRepository:
             cancelled=cancelled,
         )
 
+    @_repository_operation
     def close(self) -> None:
         self._connection.close()

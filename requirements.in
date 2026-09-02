@@ -1,0 +1,4 @@
+# Direct production dependencies. The reviewed, hash-verified resolution is
+# committed in requirements.txt for CPython 3.12 on 64-bit Windows.
+PySide6==6.11.1
+reportlab==4.4.9

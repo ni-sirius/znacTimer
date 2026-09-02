@@ -10,10 +10,12 @@ from znactime.storage.atomic_file import (
     publish_staged_file,
     reject_protected_destination,
 )
+from znactime.storage.csv_format import (
+    CSV_SCHEMA_VERSION,
+    CSV_VERSION_MARKER,
+    spreadsheet_safe_text,
+)
 
-
-CSV_VERSION_MARKER = "#znacTime-csv"
-CSV_SCHEMA_VERSION = 2
 
 
 def _clock(value: int | None) -> str:
@@ -63,7 +65,7 @@ def month_rows(month: MonthRecord):
             overtime = 0
         yield [
             day.work_date.strftime("%d.%m.%Y"),
-            day.special_day,
+            spreadsheet_safe_text(day.special_day),
             _clock(day.start_minute),
             _clock(day.end_minute),
             interruption,

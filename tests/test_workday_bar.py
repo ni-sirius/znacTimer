@@ -84,7 +84,7 @@ class WorkdayBarTest(unittest.TestCase):
         )
 
     def test_repository_pause_replaces_duration_only_after_confirmation(self):
-        now = datetime(2024, 6, 17, 12, 30)
+        now = datetime(2024, 6, 17, 12, 30).astimezone()
         entry = DayEntry(
             cw="",
             date="17.06.2024",
@@ -205,13 +205,19 @@ class WorkdayBarTest(unittest.TestCase):
             interruption="10:00-10:30",
         )
 
+    @patch("znactime.ui.qt.app.QMessageBox.warning")
     @patch("znactime.ui.qt.app.datetime")
-    def test_stop_workday_accepts_same_start_and_end_time(self, mock_datetime):
+    def test_stop_workday_rejects_same_start_and_end_time(
+        self,
+        mock_datetime,
+        warning,
+    ):
         now = Mock()
         now.strftime.side_effect = lambda pattern: {
             "%H:%M": "08:00",
             "%d.%m.%Y": "17.06.2024",
         }[pattern]
+        now.astimezone.return_value = now
         mock_datetime.now.return_value = now
 
         entry = DayEntry(
@@ -232,10 +238,9 @@ class WorkdayBarTest(unittest.TestCase):
 
         TimeTrackerApp.stop_workday(fake_app)
 
-        fake_app.table.update_entry_for_date.assert_called_once_with(
-            "17.06.2024",
-            end="08:00",
-        )
+        fake_app.table.update_entry_for_date.assert_not_called()
+        fake_app.refresh_workday_bar.assert_not_called()
+        warning.assert_called_once()
 
     @patch("znactime.ui.qt.app.datetime")
     @patch("znactime.ui.qt.app.QMessageBox.question")
@@ -249,6 +254,7 @@ class WorkdayBarTest(unittest.TestCase):
             "%H:%M": "08:00",
             "%d.%m.%Y": "17.06.2024",
         }[pattern]
+        now.astimezone.return_value = now
         mock_datetime.now.return_value = now
         entry = DayEntry(
             cw="",
