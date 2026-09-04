@@ -15,6 +15,82 @@ from znactime.storage.errors import (
 )
 
 
+_TRIGGER_ERRORS = {
+    "ZT:VALIDATION:DATASET_IDENTITY": (
+        StorageValidationError,
+        "The dataset identity cannot be changed.",
+    ),
+    "ZT:VALIDATION:SCHEDULE_IDENTITY": (
+        StorageValidationError,
+        "The work-schedule identity cannot be changed.",
+    ),
+    "ZT:VALIDATION:SCHEDULE_DATE": (
+        StorageValidationError,
+        "Work-schedule dates must be valid canonical calendar dates.",
+    ),
+    "ZT:VALIDATION:SCHEDULE_OVERLAP": (
+        StorageValidationError,
+        "Work-schedule periods cannot overlap.",
+    ),
+    "ZT:VALIDATION:MONTH_IDENTITY": (
+        StorageValidationError,
+        "The month calendar identity cannot be changed.",
+    ),
+    "ZT:VALIDATION:DAY_PARENT_OR_DATE": (
+        StorageValidationError,
+        "The day does not belong to an open matching calendar month.",
+    ),
+    "ZT:VALIDATION:WORK_DATE": (
+        StorageValidationError,
+        "The work date must be a valid canonical calendar date.",
+    ),
+    "ZT:VALIDATION:BREAK_REPRESENTATION": (
+        StorageValidationError,
+        "A day cannot contain both a break duration and individual break periods.",
+    ),
+    "ZT:VALIDATION:BREAK_INSERT": (
+        StorageValidationError,
+        "The break conflicts with the day state, representation, or another break.",
+    ),
+    "ZT:VALIDATION:BREAK_UPDATE": (
+        StorageValidationError,
+        "The break cannot be changed or overlaps another break.",
+    ),
+    "ZT:CLOSED_PERIOD:MONTH_IMMUTABLE": (
+        ClosedPeriodError,
+        "A closed month cannot be changed or deleted.",
+    ),
+    "ZT:CLOSED_PERIOD:MONTH_CLOSE_PRECONDITION": (
+        ClosedPeriodError,
+        "The month cannot be closed until all close requirements are satisfied.",
+    ),
+    "ZT:CLOSED_PERIOD:DAY_PROTECTED": (
+        ClosedPeriodError,
+        "The day identity is protected or the day belongs to a closed month.",
+    ),
+    "ZT:CLOSED_PERIOD:DAY_DELETE": (
+        ClosedPeriodError,
+        "A day in a closed month cannot be deleted.",
+    ),
+    "ZT:CLOSED_PERIOD:BREAK_DELETE": (
+        ClosedPeriodError,
+        "A break in a closed month cannot be deleted.",
+    ),
+    "ZT:CLOSED_PERIOD:RESULT_INSERT": (
+        ClosedPeriodError,
+        "A result cannot be added after its month is closed.",
+    ),
+    "ZT:CLOSED_PERIOD:RESULT_UPDATE": (
+        ClosedPeriodError,
+        "A result in a closed month cannot be changed.",
+    ),
+    "ZT:CLOSED_PERIOD:RESULT_DELETE": (
+        ClosedPeriodError,
+        "A result in a closed month cannot be deleted.",
+    ),
+}
+
+
 def _database_uri(path: str | Path, *, mode: str) -> str:
     return f"{Path(path).resolve().as_uri()}?mode={mode}"
 
@@ -66,7 +142,10 @@ def create_database(
 def translate_error(error: sqlite3.Error) -> StorageError:
     error_code = getattr(error, "sqlite_errorcode", None)
     primary_code = error_code & 0xFF if error_code is not None else None
-    message = str(error).casefold()
+    trigger_error = _TRIGGER_ERRORS.get(str(error).strip())
+    if trigger_error is not None:
+        error_type, user_message = trigger_error
+        return error_type(user_message)
     if primary_code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
         return StorageLocked("The time database is busy; retry the operation.")
     if primary_code in (
@@ -75,21 +154,8 @@ def translate_error(error: sqlite3.Error) -> StorageError:
         sqlite3.SQLITE_SCHEMA,
     ):
         return StorageCorrupt("The time database failed an integrity check.")
-    if (
-        "closed month" in message
-        or "closed result" in message
-        or "month close preconditions" in message
-        or "protected month" in message
-        or "active workday identity is immutable or protected" in message
-    ):
-        return ClosedPeriodError(str(error))
-    if primary_code == sqlite3.SQLITE_CONSTRAINT or (
-        "constraint" in message
-        or "violates" in message
-        or "overlap" in message
-        or "immutable" in message
-    ):
-        return StorageValidationError(str(error))
+    if primary_code == sqlite3.SQLITE_CONSTRAINT:
+        return StorageValidationError("The database rejected an invalid value or relationship.")
     if primary_code in (
         sqlite3.SQLITE_READONLY,
         sqlite3.SQLITE_CANTOPEN,
@@ -98,7 +164,7 @@ def translate_error(error: sqlite3.Error) -> StorageError:
         sqlite3.SQLITE_FULL,
     ):
         return StorageUnavailable("The time database path is unavailable or read-only.")
-    if isinstance(error, sqlite3.ProgrammingError) and "closed" in message:
+    if isinstance(error, sqlite3.ProgrammingError):
         return StorageUnavailable("The time database connection is closed.")
     return StorageError("The time database operation failed.")
 

@@ -26,6 +26,10 @@ class StorageValidationError(StorageError):
     pass
 
 
+class ExportError(StorageError):
+    pass
+
+
 class StorageConflict(StorageError):
     pass
 

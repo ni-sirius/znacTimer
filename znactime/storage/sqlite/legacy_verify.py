@@ -13,6 +13,10 @@ from znactime.storage.legacy_csv_import import (
     _report_progress,
     preflight_legacy_data,
 )
+from znactime.storage.sqlite.schema import (
+    SCHEMA_VERSION,
+    schema_definition_mismatches,
+)
 
 
 @dataclass(frozen=True)
@@ -54,11 +58,29 @@ class LegacyVerificationReport:
 
     @property
     def input_difference_days(self) -> int:
+        source_dates = {
+            day.work_date.isoformat()
+            for month in self.preflight.months
+            for day in month.days
+        }
         return len(
             {
                 issue.location
                 for issue in self.local_differences
-                if len(issue.location) == 10
+                if issue.location in source_dates
+            }
+        )
+
+    @property
+    def input_difference_months(self) -> int:
+        source_months = {
+            _month_location(month.year, month.month) for month in self.preflight.months
+        }
+        return len(
+            {
+                issue.location
+                for issue in self.local_differences
+                if issue.location in source_months
             }
         )
 
@@ -69,6 +91,10 @@ class LegacyVerificationReport:
     @property
     def exact_input_days(self) -> int:
         return max(0, self.source_days_checked - self.input_difference_days)
+
+    @property
+    def exact_input_months(self) -> int:
+        return max(0, len(self.preflight.months) - self.input_difference_months)
 
 
 def _issue(category, location, field, expected, actual, message):
@@ -83,13 +109,131 @@ def _day_location(work_date) -> str:
     return work_date.isoformat()
 
 
-def _database_counts(db):
+def _database_counts(db, dataset_id):
     return (
-        db.execute("SELECT COUNT(*) FROM months").fetchone()[0],
-        db.execute("SELECT COUNT(*) FROM day_entries").fetchone()[0],
-        db.execute("SELECT COUNT(*) FROM break_periods").fetchone()[0],
-        db.execute("SELECT COUNT(*) FROM closed_day_results").fetchone()[0],
+        db.execute(
+            "SELECT COUNT(*) FROM months WHERE dataset_id = ?", (dataset_id,)
+        ).fetchone()[0],
+        db.execute(
+            """
+            SELECT COUNT(*) FROM day_entries day
+            JOIN months month ON month.id = day.month_id
+            WHERE month.dataset_id = ?
+            """,
+            (dataset_id,),
+        ).fetchone()[0],
+        db.execute(
+            """
+            SELECT COUNT(*) FROM break_periods pause
+            JOIN day_entries day ON day.id = pause.day_entry_id
+            JOIN months month ON month.id = day.month_id
+            WHERE month.dataset_id = ?
+            """,
+            (dataset_id,),
+        ).fetchone()[0],
+        db.execute(
+            """
+            SELECT COUNT(*) FROM closed_day_results result
+            JOIN day_entries day ON day.id = result.day_entry_id
+            JOIN months month ON month.id = day.month_id
+            WHERE month.dataset_id = ?
+            """,
+            (dataset_id,),
+        ).fetchone()[0],
     )
+
+
+def _verify_database_identity(db, database, errors):
+    valid = True
+
+    actual_objects = frozenset(
+        (row["type"], row["name"])
+        for row in db.execute(
+            """
+            SELECT type, name FROM sqlite_master
+            WHERE type IN ('table', 'index', 'trigger', 'view')
+              AND name NOT LIKE 'sqlite_%'
+            """
+        ).fetchall()
+    )
+    definition_mismatches = schema_definition_mismatches(db)
+    if definition_mismatches:
+        valid = False
+        errors.append(
+            _issue(
+                "error",
+                str(database),
+                "schema_definitions",
+                "canonical current schema",
+                definition_mismatches,
+                "SQLite schema objects or their definitions do not match this verifier.",
+            )
+        )
+
+    version = db.execute("PRAGMA user_version").fetchone()[0]
+    if version != SCHEMA_VERSION:
+        valid = False
+        errors.append(
+            _issue(
+                "error",
+                str(database),
+                "schema_version",
+                SCHEMA_VERSION,
+                version,
+                "SQLite user_version is not supported by this verifier.",
+            )
+        )
+
+    if ("table", "schema_migrations") in actual_objects:
+        migration_versions = tuple(
+            row["version"]
+            for row in db.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        )
+        expected_history = (
+            tuple(range(migration_versions[0], SCHEMA_VERSION + 1))
+            if migration_versions
+            and isinstance(migration_versions[0], int)
+            and 1 <= migration_versions[0] <= SCHEMA_VERSION
+            else ()
+        )
+        if migration_versions != expected_history:
+            valid = False
+            errors.append(
+                _issue(
+                    "error",
+                    str(database),
+                    "migration_history",
+                    f"a contiguous history ending at {SCHEMA_VERSION}",
+                    migration_versions,
+                    "SQLite migration history is incomplete or unsupported.",
+                )
+            )
+    else:
+        valid = False
+
+    dataset_id = None
+    if ("table", "datasets") in actual_objects:
+        dataset_rows = db.execute("SELECT id FROM datasets ORDER BY id").fetchall()
+        if len(dataset_rows) == 1:
+            dataset_id = dataset_rows[0]["id"]
+        else:
+            valid = False
+            errors.append(
+                _issue(
+                    "error",
+                    str(database),
+                    "dataset_count",
+                    1,
+                    len(dataset_rows),
+                    "The verified database must contain exactly one dataset.",
+                )
+            )
+    else:
+        valid = False
+
+    return dataset_id if valid else None
 
 
 def _verify_import_metadata(db, preflight, errors):
@@ -292,7 +436,23 @@ def verify_legacy_import(
             )
 
         try:
-            counts = _database_counts(db)
+            dataset_id = _verify_database_identity(db, database, errors)
+            if dataset_id is None:
+                return LegacyVerificationReport(
+                    source,
+                    database,
+                    preflight,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    tuple(errors),
+                    (),
+                    (),
+                )
+            counts = _database_counts(db, dataset_id)
             _verify_import_metadata(db, preflight, errors)
         except sqlite3.Error as error:
             _cancel_if_requested(cancelled)
@@ -329,10 +489,9 @@ def verify_legacy_import(
             month_row = db.execute(
                 """
                 SELECT * FROM months
-                WHERE year = ? AND month = ?
-                ORDER BY dataset_id LIMIT 1
+                WHERE dataset_id = ? AND year = ? AND month = ?
                 """,
-                (source_month.year, source_month.month),
+                (dataset_id, source_month.year, source_month.month),
             ).fetchone()
             if month_row is None:
                 errors.append(

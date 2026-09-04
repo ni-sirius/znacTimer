@@ -50,6 +50,8 @@ class Repository(Protocol):
         effective_from: date,
         effective_to: date | None,
         weekday_minutes: tuple[int, int, int, int, int, int, int],
+        expected_public_id: str,
+        expected_revision: int,
     ) -> WorkSchedulePeriod: ...
 
     def set_day_work_limit(

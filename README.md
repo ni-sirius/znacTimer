@@ -113,6 +113,13 @@ timestamped recovery folder before setup restarts. Exiting the recovery dialog l
 staging files byte-for-byte unchanged, and no recovery action automatically deletes user
 data or legacy CSV sources.
 
+If a forward schema upgrade fails, znacTime offers **Recover database** instead of leaving
+the user to manipulate files. Recovery verifies and atomically restores the pre-upgrade
+copy, runs the normal forward migration again, validates and reopens the upgraded database,
+and then continues application startup. A recovery marker lets an interrupted recovery
+resume automatically on the next launch. The recovery copy and marker are removed only
+after the current-schema database validates successfully.
+
 Only one znacTime process may use a database at a time. A second launch shows a
 standalone **znacTime is already running** dialog with one **Exit application** action;
 it does not open the database, table, header, or main window. Closing that dialog by its
@@ -129,19 +136,30 @@ outputs; exports are not read back as live application state.
 New CSV exports use schema v3. Free-text special-day values that could be interpreted as
 spreadsheet formulas are prefixed with a reversible apostrophe escape. znacTime removes
 that escape when a v3 file is imported, so its own export/import round trip preserves the
-exact text. Existing unversioned, v1, and v2 CSV files continue to import unchanged and
-are never rewritten.
+exact text. Existing unversioned, v1, and v2 source files are never rewritten. Imported
+clock and break inputs that could not pass the current month-close rules are normalized;
+derived overtime, running balances, and closing balances are then recalculated through
+the ordinary close path.
 
 Legacy import recognizes only `<root>/<YYYY>/<YYYY>_tmp_<MM>.csv` and matching
 `closed_<MM>.flag` files. Symlinks and Windows junctions are rejected. An import is
 limited to 2,400 recognized files, 1 MiB per CSV, 64 MiB total, 400 rows per CSV, and
 64 KiB per row. Inspection, import, validation, and backup run in cancellable background
-workers so the desktop interface remains responsive.
+workers so the desktop interface remains responsive. Every committed import creates a
+private UTF-8 report under `import-logs/` beside the database. The completion dialog links
+to this report, which lists the source fingerprint, outcome, warnings, and every applied
+normalization. If the report cannot be created, the database import is rolled back.
 
 Use **Month > Back Up Database** to create a verified SQLite backup of the full
 working history. A normal filesystem copy of `znactime.db` should only be made
 while znacTime is closed. Keep the original legacy `data/` directory until the
 imported records have been reviewed.
+
+CSV, PDF, database backup, and setup promotion publish complete staged files atomically.
+On POSIX systems znacTime also attempts to sync the containing directory after the rename
+or link operation. Some filesystems do not support directory syncing, and Python on Windows
+does not expose the equivalent guarantee; in those cases publication remains atomic but
+power-loss durability follows the filesystem and operating system.
 
 ## Settings
 

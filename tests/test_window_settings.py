@@ -1,13 +1,16 @@
 import os
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from znactime.ui.qt import QApplication, QSettings
+from znactime.storage.errors import StorageConflict
+from znactime.ui.qt.app import TimeTrackerApp
 from znactime.ui.qt.settings import (
     AppearanceDialog,
     DEFAULT_FIT_STARTUP_HEIGHT,
@@ -158,6 +161,40 @@ class WindowSettingsTest(unittest.TestCase):
             self.assertIsInstance(appearance, SettingsDialog)
             self.assertIsInstance(work_schedule, SettingsDialog)
             self.assertIsNot(type(appearance), type(work_schedule))
+
+    def test_schedule_conflict_reloads_winning_schedule_and_warns(self):
+        stale = SimpleNamespace(public_id="stale-id", revision=3)
+        current = SimpleNamespace(
+            public_id="current-id",
+            revision=4,
+            effective_from=date.min,
+            effective_to=None,
+            weekday_minutes=(420,) * 7,
+        )
+        repository = Mock()
+        repository.replace_work_schedule.side_effect = StorageConflict("changed")
+        repository.list_work_schedules.return_value = (current,)
+        window = SimpleNamespace(
+            repository=repository,
+            day_hours=8.0,
+            show_expected_end=True,
+            load_month=Mock(),
+        )
+
+        with patch("znactime.ui.qt.app.QMessageBox.warning") as warning:
+            TimeTrackerApp._apply_work_schedule_settings(
+                window,
+                day_hours=7.5,
+                show_expected_end=True,
+                expected_schedule=stale,
+            )
+
+        call = repository.replace_work_schedule.call_args.kwargs
+        self.assertEqual(call["expected_public_id"], stale.public_id)
+        self.assertEqual(call["expected_revision"], stale.revision)
+        self.assertEqual(window.day_hours, 7.0)
+        window.load_month.assert_called_once_with()
+        self.assertIn("not applied", warning.call_args.args[2])
 
 
 if __name__ == "__main__":

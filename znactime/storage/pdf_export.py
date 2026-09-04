@@ -8,6 +8,7 @@ from znactime.storage.atomic_file import (
     publish_staged_file,
     reject_protected_destination,
 )
+from znactime.storage.errors import ExportError, StorageError
 
 
 def export_pdf(
@@ -17,8 +18,11 @@ def export_pdf(
     overwrite: bool = False,
     protected_paths=(),
 ):
-    from reportlab.lib.pagesizes import A4
-    from reportlab.pdfgen import canvas
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except Exception as error:
+        raise ExportError("PDF export support could not be loaded.") from error
 
     target = Path(output_path)
     protected_paths = tuple(protected_paths)
@@ -45,9 +49,11 @@ def export_pdf(
             overwrite=overwrite,
             protected_paths=protected_paths,
         )
-    except Exception:
+    except Exception as error:
         try:
             Path(temporary_name).unlink()
         except FileNotFoundError:
             pass
-        raise
+        if isinstance(error, (OSError, StorageError)):
+            raise
+        raise ExportError("The PDF report could not be generated.") from error

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from enum import Enum
+from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton
+from PySide6.QtCore import QStandardPaths, Qt, QUrl
+from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QPushButton
 
 from znactime.storage.errors import StorageError
 from znactime.storage.legacy_csv_import import (
@@ -17,8 +18,10 @@ from znactime.storage.sqlite.bootstrap import (
     archive_interrupted_setup,
     assess_interrupted_setup,
     create_new_database,
+    failed_migration_recovery,
     inspect_bootstrap,
     migrate_legacy_database,
+    recover_failed_schema_migration,
     recover_interrupted_setup,
     startup_lock,
 )
@@ -36,6 +39,11 @@ class InterruptedSetupResult(Enum):
     RETRY = "retry"
     EXIT = "exit"
     RECOVERED = "recovered"
+
+
+class FailedMigrationChoice(Enum):
+    RECOVER = "recover"
+    EXIT = "exit"
 
 
 def database_path() -> Path:
@@ -56,7 +64,9 @@ def format_preflight_summary(preflight) -> str:
         for issue in preflight.warnings
     )
     lines = [
-        f"Manifest: {preflight.file_count} file(s), {len(preflight.months)} month(s), "
+        f"Manifest: {preflight.file_count} recognized file(s), "
+        f"{preflight.ignored_file_count} unrelated entry/entries ignored, "
+        f"{len(preflight.months)} month(s), "
         f"and {sum(len(item.days) for item in preflight.months)} day rows.",
         f"Months: {closed_count} closed, {len(preflight.months) - closed_count} open.",
         f"CSV schemas: {', '.join(schema_versions) or 'none'}; "
@@ -80,6 +90,58 @@ def format_preflight_summary(preflight) -> str:
             "omitted from this dialog."
         )
     return "\n".join(lines)
+
+
+def _show_import_complete(parent, preflight, log_path: Path) -> None:
+    resolved_log = Path(log_path).resolve()
+    log_url = QUrl.fromLocalFile(str(resolved_log)).toString()
+    dialog = QMessageBox(parent)
+    dialog.setWindowTitle("Import complete")
+    dialog.setIcon(QMessageBox.Icon.Information)
+    dialog.setText(
+        f"Imported {len(preflight.months)} month(s) and "
+        f"{sum(len(item.days) for item in preflight.months)} day rows."
+    )
+    dialog.setInformativeText(
+        f"Legacy source preserved at:<br>{escape(str(preflight.source_root))}<br><br>"
+        f'<a href="{escape(log_url, quote=True)}">Open detailed import log</a><br>'
+        f"{escape(str(resolved_log))}"
+    )
+    dialog.setTextFormat(Qt.TextFormat.RichText)
+    dialog.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+    for label in dialog.findChildren(QLabel):
+        label.setOpenExternalLinks(True)
+    dialog.exec()
+
+
+def _show_failed_migration_dialog(parent, target: Path, error) -> FailedMigrationChoice:
+    backup_path = Path(error.recovery_backup_path)
+    dialog = QMessageBox(parent)
+    dialog.setWindowTitle("Database upgrade failed")
+    dialog.setIcon(QMessageBox.Icon.Critical)
+    dialog.setText(
+        "znacTime could not upgrade the database. Your pre-upgrade data was preserved."
+    )
+    dialog.setInformativeText(
+        "Recover database restores the verified pre-upgrade copy, runs the standard "
+        "database upgrade again, validates the upgraded database, and then continues "
+        "opening znacTime. The recovery backup is retained unless every step succeeds."
+    )
+    dialog.setDetailedText(
+        f"Database: {target}\nRecovery backup: {backup_path}\n\nFailure: {error}"
+    )
+    recover_button = QPushButton("Recover database", dialog)
+    exit_button = QPushButton("Exit application", dialog)
+    dialog.addButton(recover_button, QMessageBox.ButtonRole.AcceptRole)
+    dialog.addButton(exit_button, QMessageBox.ButtonRole.RejectRole)
+    dialog.setDefaultButton(recover_button)
+    dialog.setEscapeButton(exit_button)
+    dialog.exec()
+    return (
+        FailedMigrationChoice.RECOVER
+        if dialog.clickedButton() is recover_button
+        else FailedMigrationChoice.EXIT
+    )
 
 
 def _show_interrupted_setup_dialog(parent, assessment: InterruptedSetupAssessment):
@@ -172,8 +234,47 @@ def open_or_initialize_repository(parent=None, *, default_workday_minutes=480):
         inspection = inspect_bootstrap(target)
         if inspection.state is BootstrapState.READY:
             try:
-                return SQLiteRepository(target)
+                recovery = failed_migration_recovery(target)
+                if recovery is not None:
+                    with startup_lock(target):
+                        return recover_failed_schema_migration(
+                            target,
+                            recovery.backup_path,
+                            recovery.failure,
+                        )
+            except (StorageError, OSError, ValueError) as error:
+                QMessageBox.critical(
+                    parent,
+                    "Database recovery failed",
+                    "The verified pre-upgrade backup was retained, but znacTime could "
+                    f"not finish the database upgrade:\n\n{error}",
+                )
+                return None
+            try:
+                repository = SQLiteRepository(target)
             except StorageError as error:
+                backup_path = getattr(error, "recovery_backup_path", None)
+                if backup_path is not None:
+                    if (
+                        _show_failed_migration_dialog(parent, target, error)
+                        is FailedMigrationChoice.RECOVER
+                    ):
+                        try:
+                            with startup_lock(target):
+                                return recover_failed_schema_migration(
+                                    target,
+                                    backup_path,
+                                    str(error),
+                                )
+                        except (StorageError, OSError, ValueError) as recovery_error:
+                            QMessageBox.critical(
+                                parent,
+                                "Database recovery failed",
+                                "The verified backup was retained, but automatic recovery "
+                                f"could not finish:\n\n{recovery_error}",
+                            )
+                            return None
+                    return None
                 QMessageBox.critical(
                     parent,
                     "Database recovery required",
@@ -181,6 +282,7 @@ def open_or_initialize_repository(parent=None, *, default_workday_minutes=480):
                     f"{target}\n\n{error}",
                 )
                 return None
+            return repository
         if inspection.state in (
             BootstrapState.INTERRUPTED_CREATE,
             BootstrapState.INTERRUPTED_MIGRATION,
@@ -258,20 +360,20 @@ def open_or_initialize_repository(parent=None, *, default_workday_minutes=480):
                     progress=progress,
                     cancelled=cancelled,
                 )
-                worker_repository.close()
+                try:
+                    log_path = worker_repository.last_import_log_path
+                    if log_path is None:
+                        raise RuntimeError("The completed import did not produce its log file.")
+                    return log_path
+                finally:
+                    worker_repository.close()
 
-            run_background_task(
+            log_path = run_background_task(
                 parent,
                 "Importing legacy data",
                 migrate,
             )
-            QMessageBox.information(
-                parent,
-                "Import complete",
-                f"Imported {len(preflight.months)} month(s) and "
-                f"{sum(len(item.days) for item in preflight.months)} day rows.\n\n"
-                f"Legacy source preserved at:\n{preflight.source_root}",
-            )
+            _show_import_complete(parent, preflight, log_path)
             return SQLiteRepository(target)
         except LegacyImportCancelled:
             continue

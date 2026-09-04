@@ -2,8 +2,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from znactime.storage.atomic_file import (
+    _sync_parent_directory,
     paths_refer_to_same_file,
     publish_staged_file,
     reject_protected_destination,
@@ -28,6 +30,28 @@ class AtomicFileTest(unittest.TestCase):
 
         self.assertEqual(target.read_bytes(), b"complete")
         self.assertFalse(staged.exists())
+
+    @patch("znactime.storage.atomic_file._sync_parent_directory")
+    def test_successful_publication_syncs_parent_directory(self, sync_directory):
+        staged = self.root / ".report.tmp"
+        target = self.root / "report.csv"
+        staged.write_bytes(b"complete")
+
+        publish_staged_file(staged, target, overwrite=False)
+
+        sync_directory.assert_called_once_with(target.parent)
+
+    def test_posix_directory_sync_is_best_effort_and_closes_descriptor(self):
+        with patch("znactime.storage.atomic_file.os.name", "posix"), patch(
+            "znactime.storage.atomic_file.os.open", return_value=42
+        ) as open_directory, patch(
+            "znactime.storage.atomic_file.os.fsync", side_effect=OSError("unsupported")
+        ) as fsync, patch("znactime.storage.atomic_file.os.close") as close:
+            _sync_parent_directory(self.root)
+
+        open_directory.assert_called_once()
+        fsync.assert_called_once_with(42)
+        close.assert_called_once_with(42)
 
     def test_no_clobber_publish_preserves_destination_that_won_race(self):
         staged = self.root / ".report.tmp"

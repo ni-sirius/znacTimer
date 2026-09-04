@@ -25,7 +25,7 @@ from znactime.storage.atomic_file import (
     reject_protected_destination,
     sqlite_protected_paths,
 )
-from znactime.storage.errors import StorageError
+from znactime.storage.errors import StorageConflict, StorageError
 from znactime.storage.legacy_csv_import import (
     LegacyImportCancelled,
     preflight_legacy_data,
@@ -68,6 +68,16 @@ ABOUT_LICENSE = "MIT"
 ABOUT_WEBSITE = "https://znac.org"
 ABOUT_CONTACT = "znacompany@gmail.com"
 ABOUT_USE = "Track workdays, interruptions, and overtime."
+
+
+def _schedule_for_date(schedules, work_date):
+    applicable = [
+        item
+        for item in schedules
+        if item.effective_from <= work_date
+        and (item.effective_to is None or item.effective_to >= work_date)
+    ]
+    return applicable[-1] if applicable else None
 
 
 def create_about_dialog(parent=None):
@@ -127,13 +137,13 @@ class TimeTrackerApp(QMainWindow):
         ) = load_work_schedule_settings(self.theme_controller.settings)
         if self.repository is not None:
             today = datetime.today().date()
-            applicable = [
-                item for item in self.repository.list_work_schedules()
-                if item.effective_from <= today
-                and (item.effective_to is None or item.effective_to >= today)
-            ]
-            if applicable:
-                self.day_hours = applicable[-1].weekday_minutes[today.weekday()] / 60
+            active_schedule = _schedule_for_date(
+                self.repository.list_work_schedules(), today
+            )
+            if active_schedule is not None:
+                self.day_hours = (
+                    active_schedule.weekday_minutes[today.weekday()] / 60
+                )
         self.resize(initial_width, initial_height)
 
         self.menu = MenuBar(
@@ -158,6 +168,7 @@ class TimeTrackerApp(QMainWindow):
 
         self.table = TableWidget(self, repository=repository)
         self.table.overtimeChanged.connect(self.set_current_overtime)
+        self.table.monthReloaded.connect(self._apply_reloaded_month)
         self.table.contentHeightChanged.connect(self.fit_initial_window_height)
 
         self.workday_bar = WorkdayBar(self)
@@ -222,13 +233,22 @@ class TimeTrackerApp(QMainWindow):
 
     def open_work_schedule_settings(self):
         initial_minutes = None
-        if self.repository is not None and self._month_record is not None:
+        active_schedule = None
+        if self.repository is not None:
             today = datetime.today().date()
-            current = next(
-                (item for item in self._month_record.days if item.work_date == today),
-                self._month_record.days[0] if self._month_record.days else None,
+            active_schedule = _schedule_for_date(
+                self.repository.list_work_schedules(), today
             )
-            initial_minutes = current.expected_work_minutes if current else None
+            if self._month_record is not None:
+                current = next(
+                    (
+                        item
+                        for item in self._month_record.days
+                        if item.work_date == today
+                    ),
+                    self._month_record.days[0] if self._month_record.days else None,
+                )
+                initial_minutes = current.expected_work_minutes if current else None
         dialog = WorkScheduleDialog(
             self,
             self.theme_controller.settings,
@@ -239,12 +259,19 @@ class TimeTrackerApp(QMainWindow):
         self._apply_work_schedule_settings(
             day_hours=dialog.schedule_widget.day_minutes() / 60,
             show_expected_end=dialog.schedule_widget.show_expected_end(),
+            expected_schedule=active_schedule,
         )
 
     def show_about(self):
         create_about_dialog(self).exec()
 
-    def _apply_work_schedule_settings(self, day_hours=None, show_expected_end=None):
+    def _apply_work_schedule_settings(
+        self,
+        day_hours=None,
+        show_expected_end=None,
+        *,
+        expected_schedule=None,
+    ):
         if day_hours is None or show_expected_end is None:
             day_hours, show_expected_end = load_work_schedule_settings(
                 self.theme_controller.settings
@@ -256,12 +283,36 @@ class TimeTrackerApp(QMainWindow):
             return
         day_hours_changed = day_hours != self.day_hours
         if getattr(self, "repository", None) is not None and day_hours_changed:
+            if expected_schedule is None:
+                QMessageBox.warning(
+                    self,
+                    "Schedule update failed",
+                    "The active work schedule could not be loaded. Reopen the settings and try again.",
+                )
+                return
+            today = datetime.today().date()
             try:
                 self.repository.replace_work_schedule(
-                    effective_from=datetime.today().date(),
+                    effective_from=today,
                     effective_to=None,
                     weekday_minutes=(round(day_hours * 60),) * 7,
+                    expected_public_id=expected_schedule.public_id,
+                    expected_revision=expected_schedule.revision,
                 )
+            except StorageConflict:
+                current = _schedule_for_date(
+                    self.repository.list_work_schedules(), today
+                )
+                if current is not None:
+                    self.day_hours = current.weekday_minutes[today.weekday()] / 60
+                self.load_month()
+                QMessageBox.warning(
+                    self,
+                    "Work schedule changed",
+                    "Another writer changed the work schedule while the settings were open. "
+                    "Your change was not applied; the current schedule has been reloaded.",
+                )
+                return
             except StorageError as error:
                 QMessageBox.warning(self, "Schedule update failed", str(error))
                 return
@@ -354,6 +405,18 @@ class TimeTrackerApp(QMainWindow):
         self.table.set_month_record(record)
         self.table.recalculate(today=datetime.today().date(), autosave=False)
         self.table.set_month_closed(self.month_closed)
+        self.menu.set_month_closed(self.month_closed)
+        self.refresh_workday_bar()
+
+    def _apply_reloaded_month(self, record):
+        if record.year != self.header.year() or record.month != self.header.month():
+            return
+        self._month_record = record
+        self.month_closed = record.status == "closed"
+        self.carry_over = record.opening_balance_minutes / 60
+        self.header.set_carry_over_text(
+            f"Carry over: {hours_to_hhmm(self.carry_over)}"
+        )
         self.menu.set_month_closed(self.month_closed)
         self.refresh_workday_bar()
 

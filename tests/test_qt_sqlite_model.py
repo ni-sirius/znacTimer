@@ -108,6 +108,39 @@ class QtSQLiteModelTest(unittest.TestCase):
         self.assertEqual([item.public_id for item in after], [item.public_id for item in before])
         self.assertGreater(after[0].revision, before[0].revision)
 
+    @patch("znactime.ui.qt.model.QMessageBox.warning")
+    def test_conflict_reloads_winning_value_and_allows_the_next_edit(self, warning):
+        other = SQLiteRepository(self.repository.path)
+        reloaded = []
+        self.model.monthReloaded.connect(reloaded.append)
+        try:
+            stale = self.month.days[0]
+            other.update_day(
+                stale.work_date,
+                expected_revision=stale.revision,
+                start_minute=540,
+                fields=frozenset(("start_minute",)),
+            )
+
+            index = self.model.index(0, Column.START)
+            self.assertFalse(
+                self.model.setData(index, "08:00", Qt.ItemDataRole.EditRole)
+            )
+            self.assertEqual(index.data(), "09:00")
+            self.assertEqual(len(reloaded), 1)
+            self.assertIn("your edit '08:00'", warning.call_args.args[2])
+            self.assertIn("current value '09:00'", warning.call_args.args[2])
+
+            self.assertTrue(
+                self.model.setData(index, "10:00", Qt.ItemDataRole.EditRole)
+            )
+            self.assertEqual(
+                self.repository.load_month(2024, 6).days[0].start_minute,
+                600,
+            )
+        finally:
+            other.close()
+
 
 if __name__ == "__main__":
     unittest.main()

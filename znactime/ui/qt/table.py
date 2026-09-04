@@ -1502,6 +1502,7 @@ class TableWidget(QWidget):
         self.view.contentHeightChanged.connect(self._update_content_height)
         self.model.dataChanged.connect(self._handle_model_data_changed)
         self.model.modelReset.connect(self._handle_model_reset)
+        self.model.entryCommitted.connect(self.entriesChanged)
         self.shadow = QGraphicsDropShadowEffect(self.view)
         self.shadow.setBlurRadius(24)
         self.shadow.setOffset(0, 5)
@@ -1531,11 +1532,9 @@ class TableWidget(QWidget):
         self.contentHeightChanged.emit(widget_height)
 
     def _handle_model_data_changed(self, *_args):
-        self.entriesChanged.emit()
         QTimer.singleShot(0, self._update_view_geometry)
 
     def _handle_model_reset(self):
-        self.entriesChanged.emit()
         QTimer.singleShot(0, self._update_view_geometry)
 
     def _update_view_geometry(self):
@@ -1599,3 +1598,7 @@ class TableWidget(QWidget):
     @property
     def overtimeChanged(self):
         return self.model.overtimeChanged
+
+    @property
+    def monthReloaded(self):
+        return self.model.monthReloaded

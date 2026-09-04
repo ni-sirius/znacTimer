@@ -7,7 +7,11 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from znactime.storage.errors import ClosedPeriodError
+from znactime.storage.errors import (
+    ClosedPeriodError,
+    StorageConflict,
+    StorageUnavailable,
+)
 from znactime.storage.legacy_csv_import import (
     LegacyImportCancelled,
     preflight_legacy_data,
@@ -147,7 +151,7 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             repository.close()
         self.assertEqual(january.read_bytes(), original)
 
-    def test_closed_after_open_chain_is_preserved_with_warning(self):
+    def test_closed_after_open_month_remains_open_and_chain_can_be_closed(self):
         self._write_month(2024, 1, closed=False)
         self._write_month(2024, 2, closed=True)
         result = preflight_legacy_data(self.root)
@@ -162,7 +166,7 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             january = repository.load_month(2024, 1)
             february = repository.load_month(2024, 2)
             self.assertEqual(january.status, "open")
-            self.assertEqual(february.status, "closed")
+            self.assertEqual(february.status, "open")
             changed = repository.update_day(
                 january.days[0].work_date,
                 expected_revision=january.days[0].revision,
@@ -170,8 +174,14 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
                 fields=frozenset(("special_day",)),
             )
             self.assertEqual(changed.special_day, "Corrected")
-            with self.assertRaises(ClosedPeriodError):
-                repository.close_month(2024, 1, expected_revision=january.revision)
+            repository.close_month(2024, 1, expected_revision=january.revision)
+            refreshed_february = repository.load_month(2024, 2)
+            self.assertEqual(refreshed_february.opening_balance_minutes, 30)
+            repository.close_month(
+                2024,
+                2,
+                expected_revision=refreshed_february.revision,
+            )
         finally:
             repository.close()
 
@@ -200,13 +210,14 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             month = repository.load_month(2024, 6)
             self.assertEqual(len(month.days), 30)
             migrated = next(item for item in month.days if item.work_date == date(2024, 6, 17))
-            self.assertEqual(migrated.start_minute, 480)
+            self.assertIsNone(migrated.start_minute)
+            self.assertIsNone(migrated.end_minute)
             blank = next(item for item in month.days if item.work_date == date(2024, 6, 1))
             self.assertIsNone(blank.start_minute)
         finally:
             repository.close()
 
-    def test_invalid_closed_workday_is_imported_as_immutable_snapshot(self):
+    def test_invalid_closed_workday_is_normalized_and_closed_through_guard(self):
         self._write_month(2024, 2, closed=True, invalid_start="23:00")
         result = preflight_legacy_data(self.root)
 
@@ -217,9 +228,23 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
         try:
             month = repository.load_month(2024, 2)
             self.assertEqual(month.status, "closed")
-            self.assertEqual(month.days[0].start_minute, 23 * 60)
-            self.assertEqual(month.days[0].end_minute, 17 * 60)
-            self.assertEqual(month.days[0].daily_overtime_minutes, 30)
+            self.assertIsNone(month.days[0].start_minute)
+            self.assertIsNone(month.days[0].end_minute)
+            self.assertEqual(month.days[0].break_duration_minutes, 0)
+            self.assertEqual(month.days[0].daily_overtime_minutes, 0)
+            self.assertEqual(month.days[0].running_balance_minutes, 0)
+            self.assertEqual(month.closing_balance_minutes, 0)
+            log_path = repository.last_import_log_path
+            self.assertIsNotNone(log_path)
+            log_text = log_path.read_text(encoding="utf-8")
+            self.assertIn("2024-02-01 | work_interval", log_text)
+            self.assertIn("2024-02-01 | daily_overtime_minutes", log_text)
+            self.assertIn("Source: (1380, 1020)", log_text)
+            self.assertIn("Imported: (None, None)", log_text)
+            guard_sql = repository._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'month_close_guard'"
+            ).fetchone()[0]
+            self.assertIn("ZT:CLOSED_PERIOD:MONTH_CLOSE_PRECONDITION", guard_sql)
             with self.assertRaises(ClosedPeriodError):
                 repository.update_day(
                     month.days[0].work_date,
@@ -227,6 +252,83 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
                     special_day="Changed",
                     fields=frozenset(("special_day",)),
                 )
+        finally:
+            repository.close()
+
+    def test_strict_import_normalizes_every_guarded_interval_without_trigger_ddl(self):
+        year_dir = self.root / "2024"
+        year_dir.mkdir()
+        path = year_dir / "2024_tmp_02.csv"
+        with path.open("w", newline="", encoding="utf-8") as stream:
+            csv.writer(stream).writerows(
+                [
+                    ["#znacTime-csv", "2"],
+                    ["01.02.2024", "Normal day", "08:00", "00:00", "00:30", "00:00", "00:00"],
+                    ["02.02.2024", "Normal day", "08:00", "09:00", "02:00", "00:00", "00:00"],
+                    ["03.02.2024", "Normal day", "08:00", "17:00", "07:00-08:00", "00:00", "00:00"],
+                    ["04.02.2024", "Normal day", "08:00", "17:00", "12:00-...", "00:00", "00:00"],
+                ]
+            )
+        (year_dir / "closed_02.flag").write_text("", encoding="utf-8")
+        preflight = preflight_legacy_data(self.root)
+        self.assertFalse(preflight.blocking_errors)
+        target = Path(self.temporary.name) / "app-data" / "znactime.db"
+        repository = SQLiteRepository.create(target)
+        statements = []
+        repository._connection.set_trace_callback(statements.append)
+        try:
+            result = repository.merge_legacy(preflight)
+        finally:
+            repository._connection.set_trace_callback(None)
+
+        try:
+            month = repository.load_month(2024, 2)
+            self.assertEqual(month.status, "closed")
+            self.assertEqual(
+                (month.days[0].start_minute, month.days[0].end_minute),
+                (None, None),
+            )
+            self.assertEqual(month.days[1].break_duration_minutes, 0)
+            self.assertEqual(month.days[2].breaks, ())
+            self.assertEqual(month.days[3].breaks, ())
+            self.assertTrue(all(day.daily_overtime_minutes == 0 for day in month.days))
+            self.assertEqual(month.closing_balance_minutes, 0)
+            self.assertGreaterEqual(len(result.normalizations), 4)
+            ddl = tuple(
+                statement for statement in statements
+                if statement.lstrip().upper().startswith(
+                    ("DROP TRIGGER", "CREATE TRIGGER")
+                )
+            )
+            self.assertEqual(ddl, ())
+            self.assertTrue(result.log_path.is_file())
+            self.assertEqual(tuple(result.log_path.parent.glob("*.tmp")), ())
+        finally:
+            repository.close()
+
+    def test_import_log_failure_rolls_back_database_import(self):
+        self._write_month(2024, 2)
+        preflight = preflight_legacy_data(self.root)
+        target = Path(self.temporary.name) / "app-data" / "znactime.db"
+        repository = SQLiteRepository.create(target)
+        try:
+            with patch(
+                "znactime.storage.legacy_import_log.write_legacy_import_log",
+                side_effect=OSError("log unavailable"),
+            ):
+                with self.assertRaises(StorageUnavailable):
+                    repository.merge_legacy(preflight)
+
+            self.assertEqual(
+                repository._connection.execute("SELECT COUNT(*) FROM months").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM legacy_imports"
+                ).fetchone()[0],
+                0,
+            )
         finally:
             repository.close()
 
@@ -263,7 +365,9 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
         after = preflight_legacy_data(self.root)
 
         self.assertEqual(after.file_count, 1)
+        self.assertEqual(after.ignored_file_count, 2)
         self.assertEqual(after.manifest_digest, before.manifest_digest)
+        self.assertEqual(after.source_fingerprint, before.source_fingerprint)
 
     def test_preflight_enforces_file_total_row_and_row_size_limits(self):
         month = self._write_month(2024, 2)
@@ -373,10 +477,13 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
         repository = SQLiteRepository.create(target)
         try:
             repository.get_or_create_month(2024, 2)
+            active_schedule = repository.list_work_schedules()[0]
             repository.replace_work_schedule(
                 effective_from=date(2024, 2, 1),
                 effective_to=None,
                 weekday_minutes=(420, 420, 420, 420, 420, 0, 0),
+                expected_public_id=active_schedule.public_id,
+                expected_revision=active_schedule.revision,
             )
             metadata = repository._connection.execute(
                 """
@@ -393,6 +500,28 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             self.assertEqual(imported.end_minute, 1020)
             self.assertEqual(result.days_imported, 1)
             self.assertEqual(result.days_kept_current, 0)
+        finally:
+            repository.close()
+
+    def test_merge_advances_revision_when_it_changes_month_opening_balance(self):
+        self._write_month(2024, 2, opening_minutes=60)
+        preflight = preflight_legacy_data(self.root)
+        target = Path(self.temporary.name) / "app-data" / "znactime.db"
+        repository = SQLiteRepository.create(target)
+        try:
+            stale = repository.get_or_create_month(2024, 2)
+
+            repository.merge_legacy(preflight)
+
+            merged = repository.load_month(2024, 2)
+            self.assertEqual(merged.opening_balance_minutes, 60)
+            self.assertEqual(merged.revision, stale.revision + 1)
+            with self.assertRaises(StorageConflict):
+                repository.close_month(
+                    2024,
+                    2,
+                    expected_revision=stale.revision,
+                )
         finally:
             repository.close()
 

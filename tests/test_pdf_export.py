@@ -1,9 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from znactime.core.models import MonthStats
-from znactime.storage.errors import StorageConflict
+from znactime.storage.errors import ExportError, StorageConflict
 from znactime.storage.pdf_export import export_pdf
 
 
@@ -42,6 +43,23 @@ class PdfExportTest(unittest.TestCase):
             )
 
         self.assertEqual(protected.read_bytes(), b"database")
+
+    def test_reportlab_failure_preserves_existing_destination_and_cleans_staging(self):
+        target = self.root / "report.pdf"
+        original = b"existing report"
+        target.write_bytes(original)
+
+        with patch(
+            "reportlab.pdfgen.canvas.Canvas",
+            side_effect=RuntimeError("internal renderer details"),
+        ), self.assertRaisesRegex(ExportError, "could not be generated"):
+            export_pdf(self.stats, target, overwrite=True)
+
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(
+            tuple(self.root.glob(f".{target.name}.*.tmp")),
+            (),
+        )
 
 
 if __name__ == "__main__":

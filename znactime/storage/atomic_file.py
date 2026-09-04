@@ -7,6 +7,27 @@ from typing import Iterable
 from znactime.storage.errors import StorageConflict
 
 
+def _sync_parent_directory(directory: str | Path) -> None:
+    """Best-effort durability for published directory entries on POSIX."""
+    if os.name == "nt":
+        return
+    descriptor = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        descriptor = os.open(os.fspath(directory), flags)
+        os.fsync(descriptor)
+    except OSError:
+        # Some POSIX filesystems do not permit directory fsync. Publication has
+        # already succeeded and cannot be rolled back safely at this boundary.
+        pass
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
 def _canonical_path(path: str | Path) -> str:
     return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(path))))
 
@@ -33,6 +54,7 @@ def sqlite_protected_paths(database_path: str | Path) -> tuple[Path, ...]:
         database.with_name(database.name + ".instance.lock"),
         database.with_name(database.name + ".creating"),
         database.with_name(database.name + ".migrating"),
+        database.with_name(database.name + ".upgrade-failed"),
     )
 
 
@@ -66,6 +88,7 @@ def publish_staged_file(
     reject_protected_destination(target, protected_paths)
     if overwrite:
         os.replace(staged, target)
+        _sync_parent_directory(target.parent)
         return
 
     os.link(staged, target, follow_symlinks=False)
@@ -75,3 +98,4 @@ def publish_staged_file(
         # Publication already succeeded. A leftover private staging name is
         # preferable to falsely reporting failure after the target is valid.
         pass
+    _sync_parent_directory(target.parent)

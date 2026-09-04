@@ -15,6 +15,7 @@ from znactime.storage.errors import (
     ClosedPeriodError,
     StorageConflict,
     StorageCorrupt,
+    StorageError,
     StorageLocked,
     StorageUnavailable,
     StorageValidationError,
@@ -24,6 +25,7 @@ from znactime.storage.csv_format import spreadsheet_safe_text
 from znactime.storage.legacy_csv_import import preflight_legacy_data
 from znactime.storage.legacy_csv_import import LegacyImportCancelled
 from znactime.storage.sqlite.repository import SQLiteRepository
+from znactime.storage.sqlite.schema import SCHEMA_VERSION
 
 
 class SQLiteRepositoryTest(unittest.TestCase):
@@ -38,6 +40,29 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.sql.close()
         self.repository.close()
         self.temporary.cleanup()
+
+    def _replace_schedule(
+        self,
+        *,
+        effective_from,
+        effective_to,
+        weekday_minutes,
+        repository=None,
+    ):
+        repository = repository or self.repository
+        active = next(
+            item
+            for item in repository.list_work_schedules()
+            if item.effective_from <= effective_from
+            and (item.effective_to is None or item.effective_to >= effective_from)
+        )
+        return repository.replace_work_schedule(
+            effective_from=effective_from,
+            effective_to=effective_to,
+            weekday_minutes=weekday_minutes,
+            expected_public_id=active.public_id,
+            expected_revision=active.revision,
+        )
 
     def test_opening_a_missing_repository_does_not_create_a_blank_file(self):
         missing = Path(self.temporary.name) / "missing.db"
@@ -56,6 +81,30 @@ class SQLiteRepositoryTest(unittest.TestCase):
             self.assertEqual(created.list_months(), ())
         finally:
             created.close()
+
+    def test_schema_creation_failure_rolls_back_all_ddl(self):
+        failed_path = Path(self.temporary.name) / "failed-create.db"
+        broken_schema = """
+        CREATE TABLE should_roll_back (id INTEGER PRIMARY KEY) STRICT;
+        THIS IS NOT VALID SQL;
+        """
+
+        with patch(
+            "znactime.storage.sqlite.repository.SCHEMA_SQL",
+            broken_schema,
+        ):
+            with self.assertRaises(StorageError):
+                SQLiteRepository.create(failed_path)
+
+        self.assertTrue(failed_path.is_file())
+        failed = sqlite3.connect(failed_path)
+        try:
+            objects = failed.execute(
+                "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+            self.assertEqual(objects, [])
+        finally:
+            failed.close()
 
     def test_create_and_calendar_month_round_trip(self):
         month = self.repository.get_or_create_month(2024, 2)
@@ -311,6 +360,88 @@ class SQLiteRepositoryTest(unittest.TestCase):
                 (day_id,),
             )
 
+    def test_break_interval_swap_is_atomic_and_preserves_identities(self):
+        day = self.repository.get_or_create_month(2024, 6).days[0]
+        original = self.repository.update_day(
+            day.work_date,
+            expected_revision=day.revision,
+            breaks=(
+                BreakRecord("", 0, 720, 750),
+                BreakRecord("", 1, 900, 930),
+            ),
+            fields=frozenset(("breaks",)),
+        )
+        internal_ids = dict(
+            self.sql.execute(
+                "SELECT public_id, id FROM break_periods WHERE day_entry_id = "
+                "(SELECT id FROM day_entries WHERE work_date = ?)",
+                (day.work_date.isoformat(),),
+            ).fetchall()
+        )
+
+        swapped = self.repository.update_day(
+            day.work_date,
+            expected_revision=original.revision,
+            breaks=(
+                BreakRecord(
+                    original.breaks[0].public_id,
+                    0,
+                    900,
+                    930,
+                    original.breaks[0].revision,
+                ),
+                BreakRecord(
+                    original.breaks[1].public_id,
+                    1,
+                    720,
+                    750,
+                    original.breaks[1].revision,
+                ),
+            ),
+            fields=frozenset(("breaks",)),
+        )
+
+        self.assertEqual(
+            [(item.start_minute, item.end_minute) for item in swapped.breaks],
+            [(900, 930), (720, 750)],
+        )
+        self.assertEqual(
+            [item.public_id for item in swapped.breaks],
+            [item.public_id for item in original.breaks],
+        )
+        self.assertEqual(
+            dict(self.sql.execute("SELECT public_id, id FROM break_periods").fetchall()),
+            internal_ids,
+        )
+        self.assertEqual(
+            [item.revision for item in swapped.breaks],
+            [item.revision + 1 for item in original.breaks],
+        )
+
+    def test_invalid_final_break_layout_is_rejected_without_mutation(self):
+        day = self.repository.get_or_create_month(2024, 6).days[0]
+        original = self.repository.update_day(
+            day.work_date,
+            expected_revision=day.revision,
+            breaks=(BreakRecord("", 0, 720, 750),),
+            fields=frozenset(("breaks",)),
+        )
+
+        with self.assertRaisesRegex(StorageValidationError, "cannot overlap"):
+            self.repository.update_day(
+                day.work_date,
+                expected_revision=original.revision,
+                breaks=(
+                    original.breaks[0],
+                    BreakRecord("", 1, 740, 760),
+                ),
+                fields=frozenset(("breaks",)),
+            )
+
+        preserved = self.repository.load_month(2024, 6).days[0]
+        self.assertEqual(preserved.breaks, original.breaks)
+        self.assertEqual(preserved.revision, original.revision)
+
     def test_close_is_atomic_immutable_and_carries_to_successor(self):
         june = self.repository.get_or_create_month(2024, 6)
         july = self.repository.get_or_create_month(2024, 7)
@@ -407,6 +538,32 @@ class SQLiteRepositoryTest(unittest.TestCase):
 
         self.assertIsNone(table)
 
+    def test_startup_rejects_a_replaced_business_trigger(self):
+        self.sql.execute("DROP TRIGGER day_guard_delete")
+        self.sql.execute(
+            """
+            CREATE TRIGGER day_guard_delete
+            BEFORE DELETE ON day_entries
+            WHEN 0
+            BEGIN SELECT RAISE(ABORT, 'disabled'); END
+            """
+        )
+
+        with self.assertRaisesRegex(StorageCorrupt, "day_guard_delete"):
+            SQLiteRepository(self.path)
+
+    def test_startup_rejects_a_missing_required_index(self):
+        self.sql.execute("DROP INDEX one_open_break_per_day")
+
+        with self.assertRaisesRegex(StorageCorrupt, "one_open_break_per_day"):
+            SQLiteRepository(self.path)
+
+    def test_startup_rejects_an_unexpected_table_column(self):
+        self.sql.execute("ALTER TABLE datasets ADD COLUMN untrusted_value TEXT")
+
+        with self.assertRaisesRegex(StorageCorrupt, "datasets"):
+            SQLiteRepository(self.path)
+
     def test_v1_database_drops_only_obsolete_active_state_on_upgrade(self):
         legacy_path = Path(self.temporary.name) / "v1.db"
         legacy = SQLiteRepository.create(legacy_path)
@@ -455,7 +612,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
             self.assertIsNone(table)
             self.assertEqual(
                 upgraded._connection.execute("PRAGMA user_version").fetchone()[0],
-                4,
+                SCHEMA_VERSION,
             )
         finally:
             upgraded.close()
@@ -490,7 +647,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
             self.assertEqual(tuple(stored), (2, 1))
             self.assertEqual(
                 upgraded._connection.execute("PRAGMA user_version").fetchone()[0],
-                4,
+                SCHEMA_VERSION,
             )
             with self.assertRaises(sqlite3.IntegrityError):
                 upgraded._connection.execute(
@@ -501,6 +658,146 @@ class SQLiteRepositoryTest(unittest.TestCase):
                 )
         finally:
             upgraded.close()
+
+    def test_v4_upgrade_canonicalizes_historical_schema_without_changing_data(self):
+        legacy_path = Path(self.temporary.name) / "v4.db"
+        legacy = SQLiteRepository.create(legacy_path)
+        month = legacy.get_or_create_month(2024, 6)
+        legacy.update_day(
+            date(2024, 6, 3),
+            expected_revision=month.days[2].revision,
+            special_day="Vacation",
+            fields=frozenset(("special_day",)),
+        )
+        expected = legacy.load_month(2024, 6)
+        legacy.close()
+
+        sql = sqlite3.connect(legacy_path, isolation_level=None)
+        canonical_schedule_sql = sql.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'work_schedule_periods'"
+        ).fetchone()[0]
+        historical_schedule_sql = canonical_schedule_sql.replace(
+            """CHECK (
+        date(effective_from, '+0 days') IS NOT NULL
+        AND effective_from = date(effective_from, '+0 days')
+    ),
+    CHECK (
+        effective_to IS NULL OR (
+            date(effective_to, '+0 days') IS NOT NULL
+            AND effective_to = date(effective_to, '+0 days')
+        )
+    ),""",
+            """CHECK (effective_from = date(effective_from, '+0 days')),
+    CHECK (effective_to IS NULL OR effective_to = date(effective_to, '+0 days')),""",
+        )
+        self.assertNotEqual(historical_schedule_sql, canonical_schedule_sql)
+        sql.execute("PRAGMA legacy_alter_table = ON")
+        sql.execute(
+            "ALTER TABLE work_schedule_periods RENAME TO work_schedule_periods_v4_test"
+        )
+        sql.execute(historical_schedule_sql)
+        schedule_columns = ", ".join(
+            row[1] for row in sql.execute("PRAGMA table_info(work_schedule_periods)")
+        )
+        sql.execute(
+            f"INSERT INTO work_schedule_periods({schedule_columns}) "
+            f"SELECT {schedule_columns} FROM work_schedule_periods_v4_test"
+        )
+        sql.execute("DROP TABLE work_schedule_periods_v4_test")
+        sql.execute("PRAGMA legacy_alter_table = OFF")
+        sql.execute(
+            """
+            CREATE TRIGGER month_no_insert_before_closed
+            BEFORE INSERT ON months
+            WHEN EXISTS (SELECT 1 FROM months WHERE status = 'closed')
+            BEGIN SELECT RAISE(ABORT, 'obsolete month insertion guard'); END
+            """
+        )
+        sql.execute("DROP TRIGGER closed_month_no_update")
+        sql.execute(
+            """
+            CREATE TRIGGER closed_month_no_update
+            BEFORE UPDATE ON months
+            WHEN OLD.status = 'closed'
+            BEGIN SELECT RAISE(ABORT, 'closed month is immutable'); END
+            """
+        )
+        sql.execute("UPDATE schema_migrations SET version = 4")
+        sql.execute("PRAGMA user_version = 4")
+        sql.close()
+
+        upgraded = SQLiteRepository(legacy_path)
+        try:
+            self.assertEqual(upgraded.load_month(2024, 6), expected)
+            self.assertEqual(
+                upgraded._connection.execute("PRAGMA user_version").fetchone()[0],
+                SCHEMA_VERSION,
+            )
+            trigger_sql = upgraded._connection.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type = 'trigger' AND name = 'closed_month_no_update'"
+            ).fetchone()[0]
+            self.assertIn("ZT:CLOSED_PERIOD:MONTH_IMMUTABLE", trigger_sql)
+            self.assertNotIn("closed month is immutable", trigger_sql)
+            obsolete = upgraded._connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'trigger' AND name = 'month_no_insert_before_closed'"
+            ).fetchone()
+            self.assertIsNone(obsolete)
+            recovery_root = legacy_path.parent / "recovery"
+            self.assertTrue(recovery_root.is_dir())
+            self.assertEqual(tuple(recovery_root.iterdir()), ())
+        finally:
+            upgraded.close()
+
+    def test_failed_migration_chain_rolls_back_and_retains_verified_backup(self):
+        legacy_path = Path(self.temporary.name) / "v3-chain.db"
+        legacy = SQLiteRepository.create(legacy_path)
+        legacy.get_or_create_month(2024, 6)
+        legacy.close()
+
+        sql = sqlite3.connect(legacy_path, isolation_level=None)
+        sql.execute("ALTER TABLE day_entries DROP COLUMN local_input_revision")
+        sql.execute("UPDATE schema_migrations SET version = 3")
+        sql.execute("PRAGMA user_version = 3")
+        sql.close()
+
+        with patch.dict(
+            "znactime.storage.sqlite.repository.MIGRATIONS",
+            {4: "THIS IS NOT VALID SQL;"},
+        ):
+            with self.assertRaisesRegex(StorageError, "Recovery backup:") as raised:
+                SQLiteRepository(legacy_path)
+
+        self.assertEqual(
+            raised.exception.recovery_backup_path,
+            next((legacy_path.parent / "recovery").glob("*/v3-chain.db")),
+        )
+        self.assertTrue(raised.exception.migration_signature)
+
+        source = sqlite3.connect(legacy_path)
+        try:
+            self.assertEqual(source.execute("PRAGMA user_version").fetchone()[0], 3)
+            columns = {
+                row[1] for row in source.execute("PRAGMA table_info(day_entries)")
+            }
+            self.assertNotIn("local_input_revision", columns)
+        finally:
+            source.close()
+
+        backups = tuple((legacy_path.parent / "recovery").glob("*/v3-chain.db"))
+        self.assertEqual(len(backups), 1)
+        backup = sqlite3.connect(backups[0])
+        try:
+            self.assertEqual(backup.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            self.assertEqual(backup.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                backup.execute("SELECT COUNT(*) FROM months").fetchone()[0],
+                1,
+            )
+        finally:
+            backup.close()
 
     def test_direct_sql_rejects_malformed_day_and_schedule_dates(self):
         self.repository.get_or_create_month(2024, 6)
@@ -578,7 +875,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.repository.set_day_work_limit(
             override.work_date, 300, expected_revision=override.revision
         )
-        self.repository.replace_work_schedule(
+        self._replace_schedule(
             effective_from=date(2024, 6, 1),
             effective_to=None,
             weekday_minutes=(420, 420, 420, 420, 420, 0, 0),
@@ -592,7 +889,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.repository.get_or_create_month(2024, 5)
         self.repository.get_or_create_month(2024, 6)
         self.repository.get_or_create_month(2024, 7)
-        self.repository.replace_work_schedule(
+        self._replace_schedule(
             effective_from=date(2024, 6, 1),
             effective_to=None,
             weekday_minutes=(420, 420, 420, 420, 420, 0, 0),
@@ -606,7 +903,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
             ).fetchall()
         )
 
-        may = self.repository.replace_work_schedule(
+        may = self._replace_schedule(
             effective_from=date(2024, 5, 1),
             effective_to=date(2024, 5, 31),
             weekday_minutes=(450, 450, 450, 450, 450, 0, 0),
@@ -633,7 +930,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
 
     def test_schedule_updates_only_changed_values_and_exact_noop_changes_nothing(self):
         self.repository.get_or_create_month(2024, 6)
-        period = self.repository.replace_work_schedule(
+        period = self._replace_schedule(
             effective_from=date(2024, 6, 1),
             effective_to=None,
             weekday_minutes=(480, 480, 480, 480, 480, 0, 0),
@@ -648,7 +945,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
                 for work_date, revision in rows)
         )
 
-        repeated = self.repository.replace_work_schedule(
+        repeated = self._replace_schedule(
             effective_from=date(2024, 6, 1),
             effective_to=None,
             weekday_minutes=(480, 480, 480, 480, 480, 0, 0),
@@ -662,10 +959,83 @@ class SQLiteRepositoryTest(unittest.TestCase):
             rows,
         )
 
+    def test_schedule_write_rejects_a_stale_active_revision(self):
+        effective_from = date(2024, 6, 1)
+        self._replace_schedule(
+            effective_from=effective_from,
+            effective_to=None,
+            weekday_minutes=(420, 420, 420, 420, 420, 0, 0),
+        )
+        stale = next(
+            item
+            for item in self.repository.list_work_schedules()
+            if item.effective_from == effective_from
+        )
+        other = SQLiteRepository(self.path)
+        try:
+            winner = other.replace_work_schedule(
+                effective_from=effective_from,
+                effective_to=None,
+                weekday_minutes=(450, 450, 450, 450, 450, 0, 0),
+                expected_public_id=stale.public_id,
+                expected_revision=stale.revision,
+            )
+
+            with self.assertRaisesRegex(StorageConflict, "changed since"):
+                self.repository.replace_work_schedule(
+                    effective_from=effective_from,
+                    effective_to=None,
+                    weekday_minutes=(480, 480, 480, 480, 480, 0, 0),
+                    expected_public_id=stale.public_id,
+                    expected_revision=stale.revision,
+                )
+        finally:
+            other.close()
+
+        current = next(
+            item
+            for item in self.repository.list_work_schedules()
+            if item.effective_from == effective_from
+        )
+        self.assertEqual(current.revision, winner.revision)
+        self.assertEqual(current.weekday_minutes, winner.weekday_minutes)
+
+    def test_schedule_write_rejects_a_stale_active_identity(self):
+        effective_from = date(2024, 6, 1)
+        stale = self.repository.list_work_schedules()[0]
+        other = SQLiteRepository(self.path)
+        try:
+            winner = other.replace_work_schedule(
+                effective_from=effective_from,
+                effective_to=None,
+                weekday_minutes=(450, 450, 450, 450, 450, 0, 0),
+                expected_public_id=stale.public_id,
+                expected_revision=stale.revision,
+            )
+
+            with self.assertRaisesRegex(StorageConflict, "changed since"):
+                self.repository.replace_work_schedule(
+                    effective_from=effective_from,
+                    effective_to=None,
+                    weekday_minutes=(480, 480, 480, 480, 480, 0, 0),
+                    expected_public_id=stale.public_id,
+                    expected_revision=stale.revision,
+                )
+        finally:
+            other.close()
+
+        current = next(
+            item
+            for item in self.repository.list_work_schedules()
+            if item.effective_from == effective_from
+        )
+        self.assertEqual(current.public_id, winner.public_id)
+        self.assertEqual(current.weekday_minutes, winner.weekday_minutes)
+
     def test_local_input_revision_is_sticky_across_automatic_schedule_changes(self):
         work_date = date(2024, 6, 3)
         day = self.repository.get_or_create_month(2024, 6).days[2]
-        self.repository.replace_work_schedule(
+        self._replace_schedule(
             effective_from=date(2024, 6, 1),
             effective_to=None,
             weekday_minutes=(420, 420, 420, 420, 420, 0, 0),
@@ -699,7 +1069,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
             (work_date.isoformat(),),
         ).fetchone()[0]
 
-        self.repository.replace_work_schedule(
+        self._replace_schedule(
             effective_from=date(2024, 6, 1),
             effective_to=None,
             weekday_minutes=(450, 450, 450, 450, 450, 0, 0),

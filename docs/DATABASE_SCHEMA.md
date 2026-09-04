@@ -39,6 +39,12 @@ legacy_imports                   completed CSV-source snapshots
 
 Records which forward-only database schema versions were applied.
 
+The current schema version is **5**. Version 5 replaces human-language trigger
+`RAISE()` text with stable `ZT:*` machine codes. It also canonicalizes the stored
+definitions of `work_schedule_periods` and `day_entries` for databases that reached v4
+through historical migrations and removes the obsolete `month_no_insert_before_closed`
+trigger. Existing time-tracking row values and identities are copied unchanged.
+
 | Column | Description |
 |---|---|
 | `version` | Schema version number and primary key. |
@@ -46,6 +52,27 @@ Records which forward-only database schema versions were applied.
 | `app_version` | znacTime application version that applied it. |
 
 `PRAGMA user_version` must agree with the maximum value in this table.
+
+Every open also compares all table, index, and trigger definitions with the canonical
+manifest for the current version. Missing, unexpected, or modified schema objects are
+treated as database corruption rather than being discovered during a later write.
+
+Before an eligible older schema is changed, the repository creates a verified SQLite
+backup under `recovery/`. All required forward migrations then run in one transaction and
+the resulting version, canonical schema, integrity, relationships, and single-dataset
+invariant are checked before commit. The database is closed, reopened, and checked again
+after commit. Only then is the temporary migration backup removed. If migration or either
+validation fails, the complete chain is rolled back, the backup is retained, and its path
+is included in the storage error.
+
+The desktop recovery dialog uses that structured backup path to offer **Recover database**
+and **Exit application**. Recovery revalidates the pre-upgrade database, restores it via a
+same-directory staged atomic replacement, verifies the restored bytes and SQLite
+invariants, writes `znactime.db.upgrade-failed`, and runs the same standard forward
+migration used during normal startup. After the upgraded database is reopened and fully
+validated, application startup continues and both the retained backup and marker are
+removed. If recovery is interrupted, the marker causes the operation to resume on the
+next launch; if it fails, the verified pre-upgrade backup remains available.
 
 ## Runtime database ownership
 
@@ -100,6 +127,11 @@ Stores effective-dated work-limit policies. Periods for one dataset cannot overl
 | `created_at` | UTC creation timestamp. |
 | `updated_at` | UTC timestamp of the latest change. |
 | `revision` | Schedule concurrency version. |
+
+A schedule replacement supplies the `public_id` and `revision` of the period that was
+active when editing began. Both are checked in the write transaction; a different active
+identity or revision is an optimistic-concurrency conflict and cannot silently overwrite
+the winning schedule.
 
 When a schedule changes, eligible open days within that schedule period and without a
 per-day override receive the new applicable value. Only days whose derived value actually
@@ -197,11 +229,9 @@ name refers to a day-level result row; days are not closed individually.
 | `running_balance_minutes` | Final accumulated balance after that day. |
 
 This table is deliberately empty for open months. Open results are calculated dynamically.
-It is retained for two reasons:
-
-1. legacy closed CSV months can contain incomplete or inconsistent clock inputs while
-   still containing an authoritative historical overtime result that cannot be recreated;
-2. future calculation-rule changes must not silently rewrite an already closed report.
+It is retained because future calculation-rule changes must not silently rewrite an
+already closed report. Legacy inputs are normalized before closure and their results are
+calculated through the same path as ordinary application closure.
 
 For clean new data these values are derivable from the immutable day/break inputs. The
 snapshot is therefore controlled redundancy used for historical fidelity and audit
@@ -264,7 +294,24 @@ treated as locally changed because their historical change origin cannot be reco
 Non-conflicting days in the same month may still import. If a CSV marks a month closed but
 one of its days conflicts with SQLite, imported non-conflicting days are retained but the
 month stays open. This avoids presenting a mixed local/CSV month as a faithful historical
-closure. A CSV snapshot already listed in `legacy_imports` is a no-op.
+closure. A source-closed month also remains open when an earlier month is open or its
+immediate successor is already closed, preserving a chronological chain that can still be
+closed normally. A CSV snapshot already listed in `legacy_imports` is a no-op.
+
+Legacy rows are not permitted to bypass the ordinary close guard. Incomplete or
+non-positive work intervals are cleared together with their interruptions. Interruptions
+without a valid work interval, durations longer than the work interval, and active or
+out-of-range pause lists are cleared. Expected work is inferred when possible; daily
+overtime, running balances, and month closing balance are then recalculated by the normal
+month-close operation. The canonical trigger bundle remains installed for the entire
+import transaction.
+
+Every committed import has a private UTF-8 report in the sibling `import-logs/` directory.
+It records source identity, summary counters, preflight issues, and field-level
+normalizations. The report is durably and atomically published before the database
+transaction commits; failure to create it rolls back the import. The completion dialog
+contains a clickable local-file link. Reports contain the selected source path and time
+data differences and should therefore be protected like the database itself.
 
 ## Important database invariants
 
@@ -275,5 +322,11 @@ closure. A CSV snapshot already listed in `legacy_imports` is a no-op.
 - Exact breaks cannot overlap and cannot coexist with a duration representation.
 - Closing a normal month requires complete valid inputs, one result per day, a valid
   running-balance chain, and no open pause.
-- CSV compatibility may preserve invalid historical closed inputs only while importing;
-  the promoted closed snapshot is still immutable.
+- Legacy imports normalize invalid clock/break inputs and use the same guarded calculation
+  path as ordinary month closure; no trigger is disabled for compatibility.
+
+Business triggers raise stable machine identifiers such as
+`ZT:CLOSED_PERIOD:MONTH_IMMUTABLE` and `ZT:VALIDATION:SCHEDULE_OVERLAP`. The storage
+adapter maps exact identifiers to stable exception types and user-facing messages; raw
+codes are not shown to users. Ordinary SQLite failures are classified using numeric
+`sqlite_errorcode` values, not translated English message fragments.

@@ -81,6 +81,7 @@ class LegacyPreflight:
     source_fingerprint: str
     manifest_digest: str
     file_count: int
+    ignored_file_count: int
     months: tuple[LegacyMonth, ...]
     issues: tuple[ImportIssue, ...]
     encodings: tuple[str, ...]
@@ -92,6 +93,17 @@ class LegacyPreflight:
     @property
     def warnings(self) -> tuple[ImportIssue, ...]:
         return tuple(issue for issue in self.issues if issue.severity == "warning")
+
+
+@dataclass(frozen=True)
+class LegacyNormalization:
+    """One intentional source-to-database change made by strict import."""
+
+    location: str
+    field: str
+    source_value: object
+    imported_value: object
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -108,6 +120,8 @@ class LegacyMergeResult:
     days_kept_current: int
     days_unchanged: int
     warning_count: int
+    normalizations: tuple[LegacyNormalization, ...] = ()
+    log_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -153,22 +167,26 @@ def _discover_legacy_files(
     root: Path,
     *,
     cancelled: CancellationCallback | None,
-) -> tuple[_RecognizedFile, ...]:
+) -> tuple[tuple[_RecognizedFile, ...], int]:
     discovered: list[_RecognizedFile] = []
+    ignored = 0
     total_bytes = 0
     for year_dir in sorted(root.iterdir(), key=lambda item: item.name):
         _cancel_if_requested(cancelled)
         if not re.fullmatch(r"\d{4}", year_dir.name):
+            ignored += 1
             continue
         if _is_link_or_junction(year_dir):
             raise ValueError(f"Legacy import does not allow links: {year_dir.name}")
         if not year_dir.is_dir():
+            ignored += 1
             continue
         for path in sorted(year_dir.iterdir(), key=lambda item: item.name):
             _cancel_if_requested(cancelled)
             is_month = _MONTH_FILE.fullmatch(path.name) is not None
             is_flag = _CLOSED_FLAG.fullmatch(path.name) is not None
             if not is_month and not is_flag:
+                ignored += 1
                 continue
             relative = path.relative_to(root).as_posix()
             if _is_link_or_junction(path):
@@ -202,7 +220,7 @@ def _discover_legacy_files(
                     "Legacy source exceeds the "
                     f"{MAX_RECOGNIZED_FILES}-file limit."
                 )
-    return tuple(discovered)
+    return tuple(discovered), ignored
 
 
 def _assert_source_unchanged(source: _RecognizedFile) -> None:
@@ -474,43 +492,76 @@ def _parse_month(
                 f"Month is missing {len(missing)} calendar day row(s); blank rows will be created.",
             )
         )
-    if closed:
-        for day in parsed.values():
-            if (day.start_minute is None) != (day.end_minute is None):
-                issues.append(
-                    ImportIssue("warning", relative, None, f"Closed day {day.work_date} has one missing clock time; the historical row and results will be preserved.")
+    for day in parsed.values():
+        if (day.start_minute is None) != (day.end_minute is None):
+            issues.append(
+                ImportIssue(
+                    "warning", relative, None,
+                    f"Day {day.work_date} has one missing clock time; its work interval "
+                    "and interruptions will be cleared during import.",
                 )
-                continue
-            if day.start_minute is not None and day.end_minute <= day.start_minute:
-                issues.append(
-                    ImportIssue("warning", relative, None, f"Closed day {day.work_date} has a reversed workday; the historical row and results will be preserved.")
+            )
+            continue
+        if day.start_minute is not None and day.end_minute <= day.start_minute:
+            issues.append(
+                ImportIssue(
+                    "warning", relative, None,
+                    f"Day {day.work_date} has a reversed workday; its work interval "
+                    "and interruptions will be cleared during import.",
                 )
-                continue
-            if day.start_minute is not None:
-                if day.break_duration_minutes is not None:
-                    interruption = day.break_duration_minutes
-                else:
-                    if any(item.end_minute is None for item in day.breaks):
-                        issues.append(
-                            ImportIssue("warning", relative, None, f"Closed day {day.work_date} has an active pause; the historical row and results will be preserved.")
-                        )
-                        continue
-                    if any(
-                        item.start_minute < day.start_minute or item.end_minute > day.end_minute
-                        for item in day.breaks
-                    ):
-                        issues.append(
-                            ImportIssue("warning", relative, None, f"Closed day {day.work_date} has a pause outside the workday; the historical row and results will be preserved.")
-                        )
-                    interruption = sum(item.end_minute - item.start_minute for item in day.breaks)
-                inferred = day.end_minute - day.start_minute - interruption - day.daily_overtime_minutes
-                if not 0 <= inferred <= 1440:
-                    issues.append(
-                        ImportIssue(
-                            "warning", relative, None,
-                            f"Closed day {day.work_date} work limit cannot be inferred; migration default will be used.",
-                        )
+            )
+            continue
+        if day.start_minute is None:
+            if day.break_duration_minutes not in (None, 0) or day.breaks:
+                issues.append(
+                    ImportIssue(
+                        "warning", relative, None,
+                        f"Day {day.work_date} has interruptions without a work interval; "
+                        "they will be cleared during import.",
                     )
+                )
+            continue
+        elapsed = day.end_minute - day.start_minute
+        if day.break_duration_minutes is not None:
+            interruption = day.break_duration_minutes
+            if interruption > elapsed:
+                issues.append(
+                    ImportIssue(
+                        "warning", relative, None,
+                        f"Day {day.work_date} has a break duration longer than its work "
+                        "interval; the break will be cleared during import.",
+                    )
+                )
+                interruption = 0
+        else:
+            invalid_breaks = any(
+                item.end_minute is None
+                or item.start_minute < day.start_minute
+                or item.end_minute > day.end_minute
+                for item in day.breaks
+            )
+            if invalid_breaks:
+                issues.append(
+                    ImportIssue(
+                        "warning", relative, None,
+                        f"Day {day.work_date} has an active or out-of-range pause; all "
+                        "pauses for that day will be cleared during import.",
+                    )
+                )
+                interruption = 0
+            else:
+                interruption = sum(
+                    item.end_minute - item.start_minute for item in day.breaks
+                )
+        inferred = elapsed - interruption - day.daily_overtime_minutes
+        if not 0 <= inferred <= 1440:
+            issues.append(
+                ImportIssue(
+                    "warning", relative, None,
+                    f"Day {day.work_date} work limit cannot be inferred; the active "
+                    "schedule will be used and derived results will be recalculated.",
+                )
+            )
     return LegacyMonth(year, month, closed, schema_version, tuple(parsed[key] for key in sorted(parsed))), encoding
 
 
@@ -527,7 +578,7 @@ def preflight_legacy_data(
     if not root.is_dir():
         raise ValueError("Legacy data root does not exist or is not a directory.")
     _report_progress(progress, "Discovering legacy files", 0, 0)
-    files = _discover_legacy_files(root, cancelled=cancelled)
+    files, ignored_file_count = _discover_legacy_files(root, cancelled=cancelled)
     manifest = []
     for index, source in enumerate(files, 1):
         digest = _hash_source_file(source, cancelled=cancelled)
@@ -620,7 +671,8 @@ def preflight_legacy_data(
             issues.append(
                 ImportIssue(
                     "warning", f"{item.year}/{item.month:02}", None,
-                    "Closed month follows an earlier existing open month; independent legacy closure states will be preserved.",
+                    "Closed month follows an earlier existing open month; it will remain "
+                    "open so the database retains a closable chronological chain.",
                 )
             )
     for previous, current in zip(months, months[1:]):
@@ -651,6 +703,7 @@ def preflight_legacy_data(
         source_fingerprint=source_fingerprint,
         manifest_digest=manifest_digest,
         file_count=len(files),
+        ignored_file_count=ignored_file_count,
         months=tuple(months),
         issues=tuple(issues),
         encodings=tuple(sorted(encodings)),

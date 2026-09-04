@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import sqlite3
 import stat
+import tempfile
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -20,7 +22,7 @@ from znactime.storage.errors import (
     StorageUnavailable,
     StorageValidationError,
 )
-from znactime.storage.atomic_file import publish_staged_file
+from znactime.storage.atomic_file import _sync_parent_directory, publish_staged_file
 from znactime.storage.legacy_csv_import import LegacyPreflight
 from znactime.storage.legacy_csv_import import (
     CancellationCallback,
@@ -29,8 +31,12 @@ from znactime.storage.legacy_csv_import import (
 )
 from znactime.storage.sqlite.legacy_import import import_preflight
 from znactime.storage.sqlite.connection import translate_error
+from znactime.storage.sqlite.migrations import MIGRATIONS, migration_signature
 from znactime.storage.sqlite.repository import SQLiteRepository
-from znactime.storage.sqlite.schema import SCHEMA_VERSION
+from znactime.storage.sqlite.schema import (
+    SCHEMA_VERSION,
+    schema_definition_mismatches,
+)
 
 
 class BootstrapState(Enum):
@@ -52,6 +58,39 @@ class InterruptedSetupAssessment:
     inspection: BootstrapInspection
     recoverable: bool
     detail: str
+
+
+@dataclass(frozen=True)
+class FailedMigrationRecovery:
+    backup_path: Path
+    migration_signature: str
+    recovered_at: str
+    failure: str
+
+
+def _failed_migration_marker(database_path: str | Path) -> Path:
+    target = Path(database_path)
+    return target.with_name(target.name + ".upgrade-failed")
+
+
+def failed_migration_recovery(
+    database_path: str | Path,
+) -> FailedMigrationRecovery | None:
+    marker = _failed_migration_marker(database_path)
+    if not marker.is_file():
+        return None
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        return FailedMigrationRecovery(
+            Path(payload["backup_path"]),
+            str(payload["migration_signature"]),
+            str(payload["recovered_at"]),
+            str(payload["failure"]),
+        )
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise StorageValidationError(
+            "The failed-upgrade recovery marker is invalid."
+        ) from error
 
 
 def inspect_bootstrap(database_path: str | Path) -> BootstrapInspection:
@@ -106,6 +145,13 @@ def _open_staging_read_only(path: Path) -> sqlite3.Connection:
             raise StorageValidationError(
                 f"Staging schema {version!r}/{migration!r} is not the current "
                 f"schema {SCHEMA_VERSION}."
+            )
+        schema_mismatches = schema_definition_mismatches(connection)
+        if schema_mismatches:
+            names = ", ".join(name for _object_type, name in schema_mismatches)
+            raise StorageValidationError(
+                f"Staging schema definitions do not match version "
+                f"{SCHEMA_VERSION}: {names}."
             )
         if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise StorageValidationError("The staging database failed its integrity check.")
@@ -235,6 +281,178 @@ def _copy_recovery_file(source: Path, destination: Path) -> None:
         destination
     ):
         raise StorageUnavailable("A staging recovery copy failed verification.")
+
+
+def _validated_schema_recovery_path(database_path: Path, backup_path: Path) -> Path:
+    target = database_path.resolve()
+    backup = backup_path.resolve()
+    recovery_root = (target.parent / "recovery").resolve()
+    if backup.name != target.name or backup.parent.parent != recovery_root:
+        raise StorageValidationError(
+            "The schema recovery backup is outside the managed recovery directory."
+        )
+    _require_regular_file(backup)
+    return backup
+
+
+def _validate_pre_upgrade_database(path: Path) -> tuple[int, int]:
+    connection = None
+    try:
+        uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
+        connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        migration = connection.execute(
+            "SELECT MAX(version) FROM schema_migrations"
+        ).fetchone()[0]
+        if (
+            version != migration
+            or version not in MIGRATIONS
+            or version >= SCHEMA_VERSION
+        ):
+            raise StorageValidationError(
+                f"Recovery backup schema {version!r}/{migration!r} is not a supported "
+                "pre-upgrade database."
+            )
+        if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise StorageValidationError(
+                "The schema recovery backup failed its integrity check."
+            )
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise StorageValidationError(
+                "The schema recovery backup contains invalid relationships."
+            )
+        if connection.execute("SELECT COUNT(*) FROM datasets").fetchone()[0] != 1:
+            raise StorageValidationError(
+                "The schema recovery backup must contain exactly one dataset."
+            )
+        return version, migration
+    except sqlite3.Error as error:
+        raise translate_error(error) from error
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _write_failed_migration_marker(
+    database_path: Path,
+    backup_path: Path,
+    failure: str,
+) -> None:
+    marker = _failed_migration_marker(database_path)
+    payload = {
+        "backup_path": str(backup_path),
+        "migration_signature": migration_signature(),
+        "recovered_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "failure": failure,
+    }
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{marker.name}.",
+        suffix=".tmp",
+        dir=marker.parent,
+    )
+    succeeded = False
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        publish_staged_file(temporary_name, marker, overwrite=True)
+        succeeded = True
+    finally:
+        if not succeeded:
+            try:
+                Path(temporary_name).unlink()
+            except FileNotFoundError:
+                pass
+
+
+def recover_failed_schema_migration(
+    database_path: str | Path,
+    backup_path: str | Path,
+    failure: str,
+) -> SQLiteRepository:
+    """Restore a verified backup, run the standard migration, and reopen it."""
+    target = Path(database_path).resolve()
+    backup = _validated_schema_recovery_path(target, Path(backup_path))
+    version, migration = _validate_pre_upgrade_database(backup)
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.recovery.",
+        suffix=".tmp",
+        dir=target.parent,
+    )
+    os.close(descriptor)
+    staged = Path(temporary_name)
+    staged.unlink()
+    try:
+        _copy_recovery_file(backup, staged)
+        if _validate_pre_upgrade_database(staged) != (version, migration):
+            raise StorageValidationError(
+                "The staged schema recovery copy changed during validation."
+            )
+
+        sidecars = tuple(
+            target.with_name(target.name + suffix)
+            for suffix in ("-journal", "-wal", "-shm")
+            if target.with_name(target.name + suffix).exists()
+        )
+        if sidecars:
+            archive = backup.parent / "pre-recovery-sidecars"
+            archive.mkdir(mode=0o700, exist_ok=True)
+            for sidecar in sidecars:
+                _copy_recovery_file(sidecar, archive / sidecar.name)
+            for sidecar in sidecars:
+                sidecar.unlink()
+
+        os.replace(staged, target)
+        _sync_parent_directory(target.parent)
+        if _validate_pre_upgrade_database(target) != (version, migration):
+            raise StorageValidationError(
+                "The restored database failed post-recovery validation."
+            )
+        if _sha256(target) != _sha256(backup):
+            raise StorageValidationError(
+                "The restored database does not match its verified recovery backup."
+            )
+        _write_failed_migration_marker(target, backup, failure)
+    finally:
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
+
+    repository = SQLiteRepository(target)
+    try:
+        complete_failed_migration_recovery(target)
+    except Exception:
+        repository.close()
+        raise
+    return repository
+
+
+def complete_failed_migration_recovery(database_path: str | Path) -> None:
+    """Remove a retained failed-upgrade backup after a later upgrade succeeds."""
+    target = Path(database_path).resolve()
+    recovery = failed_migration_recovery(target)
+    if recovery is None:
+        return
+    if not recovery.backup_path.exists():
+        _failed_migration_marker(target).unlink(missing_ok=True)
+        _sync_parent_directory(target.parent)
+        return
+    backup = _validated_schema_recovery_path(target, recovery.backup_path)
+    try:
+        backup.unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        backup.parent.rmdir()
+    except OSError:
+        # Diagnostic sidecars may share the private recovery directory.
+        pass
+    _failed_migration_marker(target).unlink(missing_ok=True)
+    _sync_parent_directory(target.parent)
 
 
 def archive_interrupted_setup(
@@ -406,6 +624,7 @@ def migrate_legacy_database(
                 default_workday_minutes=default_workday_minutes,
                 progress=progress,
                 cancelled=cancelled,
+                log_database_path=target,
             )
         except LegacyImportCancelled:
             for candidate in (
@@ -418,5 +637,8 @@ def migrate_legacy_database(
                 except FileNotFoundError:
                     pass
             raise
+        import_log_path = repository.last_import_log_path
         repository.close()
-        return _promote(staging, target)
+        promoted = _promote(staging, target)
+        promoted._last_import_log_path = import_log_path
+        return promoted

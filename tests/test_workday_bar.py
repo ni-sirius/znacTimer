@@ -391,6 +391,29 @@ class WorkdayBarTest(unittest.TestCase):
         self.assertTrue(changed)
         self.assertTrue(changes)
 
+    def test_presentation_refresh_does_not_emit_entries_changed(self):
+        table = TableWidget()
+        today_text = date.today().strftime("%d.%m.%Y")
+        table.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date=today_text,
+                    special="Normal day",
+                    start="--:--",
+                    end="--:--",
+                    interruption="00:00",
+                )
+            ]
+        )
+        changes = []
+        table.entriesChanged.connect(lambda: changes.append(True))
+
+        table.recalculate(today=date.today(), autosave=False)
+        table.refresh_theme()
+
+        self.assertEqual(changes, [])
+
     @patch("znactime.storage.csv_export.export_month")
     def test_csv_export_reloads_committed_month_instead_of_cached_snapshot(
         self, export_month

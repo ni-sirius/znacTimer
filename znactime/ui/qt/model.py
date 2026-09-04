@@ -24,7 +24,7 @@ from znactime.core.time_utils import (
     expected_end_time,
     parse_interruption_input,
 )
-from znactime.storage.errors import StorageError
+from znactime.storage.errors import StorageConflict, StorageError
 from znactime.ui.qt.color_scheme import (
     calendar_week_text_color_hex,
     is_dark_theme,
@@ -73,6 +73,8 @@ def _is_dark_theme():
 
 class MonthTableModel(QAbstractTableModel):
     overtimeChanged = Signal(float)
+    monthReloaded = Signal(object)
+    entryCommitted = Signal()
 
     def __init__(self, parent=None, repository=None):
         super().__init__(parent)
@@ -184,6 +186,7 @@ class MonthTableModel(QAbstractTableModel):
                 return False
             self._entries[row] = replace(entry, **changes)
             self.recalculate(autosave=True)
+            self.entryCommitted.emit()
             return True
         return False
 
@@ -478,6 +481,7 @@ class MonthTableModel(QAbstractTableModel):
             return False
         self._entries[index.row()] = replace(current, **changes)
         self.recalculate(autosave=True)
+        self.entryCommitted.emit()
         return True
 
     def _persist_changes(self, entry, changes):
@@ -535,11 +539,64 @@ class MonthTableModel(QAbstractTableModel):
                 fields=frozenset(fields),
                 **values,
             )
+        except StorageConflict:
+            self._reload_after_conflict(work_date, changes)
+            return False
         except (StorageError, ValueError) as error:
             QMessageBox.warning(None, "Save failed", str(error))
             return False
         self._records[work_date] = committed
         return True
+
+    def _reload_after_conflict(self, work_date, attempted_changes):
+        try:
+            refreshed = self.repository.load_month(self.year, self.month)
+        except StorageError as error:
+            QMessageBox.warning(
+                None,
+                "Save conflict",
+                "Your edit was not saved because the day changed after it was loaded. "
+                f"The current month could not be reloaded: {error}",
+            )
+            return
+        if refreshed is None:
+            QMessageBox.warning(
+                None,
+                "Save conflict",
+                "Your edit was not saved because the day changed after it was loaded. "
+                "The current month is no longer available.",
+            )
+            return
+
+        self.carry_over = refreshed.opening_balance_minutes / 60
+        self.month_closed = refreshed.status == "closed"
+        self.set_month_record(refreshed)
+        self.recalculate(today=self._today, autosave=False)
+        self.monthReloaded.emit(refreshed)
+
+        current = self.entry_for_date(work_date.strftime(DATE_FORMAT))
+        labels = {
+            "special": "Special day",
+            "start": "Start",
+            "end": "End",
+            "interruption": "Interruption",
+        }
+        comparison = []
+        if current is not None:
+            for field, attempted in attempted_changes.items():
+                current_value = getattr(current, field)
+                comparison.append(
+                    f"{labels.get(field, field)}: your edit {attempted!r}; "
+                    f"current value {current_value!r}"
+                )
+        details = "\n".join(comparison)
+        message = (
+            "Your edit was not saved because this day changed after it was loaded. "
+            "The current database values have been reloaded."
+        )
+        if details:
+            message += f"\n\n{details}"
+        QMessageBox.warning(None, "Save conflict", message)
 
     def recalculate(self, today=None, autosave=True):
         if today is None:

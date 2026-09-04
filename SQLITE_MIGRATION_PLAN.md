@@ -504,14 +504,12 @@ authority. The initial schema therefore includes tested triggers that:
 - reject direct edits to immutable UUID public IDs where present and to month/day logical
   calendar keys.
 
-Migration code builds a month in open state and inserts its records/results. Valid legacy
-months use the same close semantics. A historical month containing a state accepted by
-the CSV application but rejected for new data is reported as a warning and retained as
-an immutable snapshot. The staging transaction temporarily removes only the close-
-precondition trigger, performs the status transition, recreates the exact trigger, and
-then validates integrity and closed-record immutability before promotion. A rollback or
-crash rolls back the DDL and transition together; the promoted database always contains
-the full runtime triggers.
+Migration code builds a month in open state and normalizes legacy clock and break inputs
+that cannot satisfy current close invariants. Derived overtime and balance values are
+then recalculated by the ordinary close operation. The close-precondition trigger remains
+installed throughout import; no compatibility DDL or guard bypass is used. Each committed
+import also publishes a private detailed report of warnings and normalizations, and log
+publication failure rolls back the database transaction.
 
 ### Closure and carry-over state machine
 

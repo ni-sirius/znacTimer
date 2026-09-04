@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,13 +10,16 @@ from znactime.storage.errors import (
     ApplicationAlreadyRunning,
     StorageConflict,
     StorageLocked,
+    StorageValidationError,
 )
 from znactime.storage.sqlite.bootstrap import (
     _promote,
     archive_interrupted_setup,
     application_lock,
     assess_interrupted_setup,
+    failed_migration_recovery,
     inspect_bootstrap,
+    recover_failed_schema_migration,
     recover_interrupted_setup,
     startup_lock,
 )
@@ -142,6 +146,31 @@ class SQLiteBootstrapLockTest(unittest.TestCase):
             b"preserved journal",
         )
 
+    def test_staging_with_changed_schema_definition_is_not_recoverable(self):
+        staging = self.database.with_name(self.database.name + ".creating")
+        repository = SQLiteRepository.create(staging)
+        repository.close()
+        connection = sqlite3.connect(staging)
+        try:
+            connection.execute("DROP TRIGGER day_guard_delete")
+            connection.execute(
+                """
+                CREATE TRIGGER day_guard_delete
+                BEFORE DELETE ON day_entries
+                WHEN 0
+                BEGIN SELECT RAISE(ABORT, 'disabled'); END
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with startup_lock(self.database):
+            assessment = assess_interrupted_setup(inspect_bootstrap(self.database))
+
+        self.assertFalse(assessment.recoverable)
+        self.assertIn("schema definitions", assessment.detail)
+
     def test_interrupted_import_requires_a_committed_completion_record(self):
         staging = self.database.with_name(self.database.name + ".migrating")
         repository = SQLiteRepository.create(staging)
@@ -180,6 +209,63 @@ class SQLiteBootstrapLockTest(unittest.TestCase):
 
         self.assertEqual(self.database.read_bytes(), b"other process")
         self.assertEqual(staging.read_bytes(), b"staged database")
+
+    def _pre_upgrade_backup(self):
+        repository = SQLiteRepository.create(self.database)
+        repository.get_or_create_month(2024, 2)
+        repository.close()
+        recovery_directory = (
+            self.database.parent / "recovery" / "schema-v4-to-v5-test"
+        )
+        recovery_directory.mkdir(parents=True)
+        backup = recovery_directory / self.database.name
+        backup.write_bytes(self.database.read_bytes())
+        for path in (self.database, backup):
+            connection = sqlite3.connect(path, isolation_level=None)
+            connection.execute("UPDATE schema_migrations SET version = 4")
+            connection.execute("PRAGMA user_version = 4")
+            connection.close()
+        return backup
+
+    def test_failed_schema_migration_recovery_restores_upgrades_and_reopens(self):
+        backup = self._pre_upgrade_backup()
+        self.database.write_bytes(b"failed migration state")
+
+        recovered = recover_failed_schema_migration(
+            self.database,
+            backup,
+            "injected schema mismatch",
+        )
+        try:
+            self.assertEqual(len(recovered.load_month(2024, 2).days), 29)
+            self.assertEqual(
+                recovered._connection.execute("PRAGMA user_version").fetchone()[0],
+                5,
+            )
+        finally:
+            recovered.close()
+
+        self.assertFalse(backup.exists())
+        self.assertIsNone(failed_migration_recovery(self.database))
+
+    def test_failed_schema_recovery_rejects_unmanaged_backup_without_writing(self):
+        repository = SQLiteRepository.create(self.database)
+        repository.close()
+        original = self.database.read_bytes()
+        unmanaged = self.database.parent / "unmanaged.db"
+        unmanaged.write_bytes(original)
+
+        with self.assertRaises(StorageValidationError):
+            recover_failed_schema_migration(
+                self.database,
+                unmanaged,
+                "injected failure",
+            )
+
+        self.assertEqual(self.database.read_bytes(), original)
+        self.assertFalse(
+            self.database.with_name(self.database.name + ".upgrade-failed").exists()
+        )
 
 
 if __name__ == "__main__":

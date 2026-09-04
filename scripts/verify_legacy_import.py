@@ -88,7 +88,8 @@ def main(argv=None) -> int:
     print(f"Source:   {report.source_root}")
     print(f"Database: {report.database_path}")
     print(
-        f"Manifest: {report.preflight.file_count} files, "
+        f"Manifest: {report.preflight.file_count} recognized files, "
+        f"{report.preflight.ignored_file_count} unrelated entries ignored, "
         f"{len(report.preflight.months)} months, "
         f"{sum(len(month.days) for month in report.preflight.months)} source day rows"
     )
@@ -103,8 +104,12 @@ def main(argv=None) -> int:
         f"{report.local_only_days} generated/local-only calendar days"
     )
     print(
-        f"Inputs:   {report.exact_input_days}/{report.source_days_checked} source day rows "
+        f"Days:     {report.exact_input_days}/{report.source_days_checked} source day rows "
         f"match; {report.input_difference_days} SQLite-authoritative day(s) differ"
+    )
+    print(
+        f"Months:   {report.exact_input_months}/{len(report.preflight.months)} source month "
+        f"state(s) match; {report.input_difference_months} SQLite-authoritative month(s) differ"
     )
     print(
         f"Derived:  {report.derived_difference_days} open-month day(s) differ after "

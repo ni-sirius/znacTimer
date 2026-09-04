@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import uuid
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
@@ -27,6 +28,7 @@ from znactime.storage.errors import (
     StorageVersionUnsupported,
 )
 from znactime.storage.atomic_file import (
+    _sync_parent_directory,
     publish_staged_file,
     reject_protected_destination,
     sqlite_protected_paths,
@@ -39,8 +41,13 @@ from znactime.storage.sqlite.connection import (
     transaction,
     translate_error,
 )
-from znactime.storage.sqlite.migrations import MIGRATIONS
-from znactime.storage.sqlite.schema import SCHEMA_SQL, SCHEMA_VERSION
+from znactime.storage.sqlite.migrations import MIGRATIONS, migration_signature
+from znactime.storage.sqlite.schema import (
+    SCHEMA_SQL,
+    SCHEMA_VERSION,
+    schema_manifest,
+    schema_definition_mismatches,
+)
 
 
 _SCHEDULE_COLUMNS = (
@@ -134,6 +141,23 @@ def _validate_work_range(start_minute: int | None, end_minute: int | None) -> No
         )
 
 
+def _validate_break_layout(breaks: tuple[BreakRecord, ...]) -> None:
+    ordered = []
+    for pause in breaks:
+        _validate_minute(pause.start_minute)
+        _validate_minute(pause.end_minute)
+        if pause.start_minute is None:
+            raise StorageValidationError("A break requires a start time.")
+        if pause.end_minute is not None and pause.end_minute <= pause.start_minute:
+            raise StorageValidationError("A break end must be later than its start.")
+        ordered.append(pause)
+
+    ordered.sort(key=lambda pause: pause.start_minute)
+    for previous, current in zip(ordered, ordered[1:]):
+        if previous.end_minute is None or current.start_minute < previous.end_minute:
+            raise StorageValidationError("Break periods cannot overlap.")
+
+
 def _migration_statements(script: str):
     """Yield complete SQLite statements without breaking trigger bodies."""
     pending: list[str] = []
@@ -153,11 +177,22 @@ class SQLiteRepository:
     def __init__(self, path: str | Path):
         self._require_supported_sqlite()
         self.path = Path(path).resolve()
+        self._last_import_log_path: Path | None = None
         self._connection = connect_database(self.path)
+        migration_backup = None
         try:
-            self._upgrade_schema()
+            migration_backup = self._upgrade_schema()
+            if migration_backup is not None:
+                # Reopening proves that the committed file can be opened cleanly,
+                # independently of the connection that performed the migration.
+                self._connection.close()
+                self._connection = connect_database(self.path)
             self._verify_version()
-        except Exception:
+            if migration_backup is not None:
+                self._remove_migration_backup(migration_backup)
+        except Exception as error:
+            if migration_backup is not None:
+                self._add_recovery_location(error, migration_backup)
             self._connection.close()
             raise
 
@@ -182,9 +217,10 @@ class SQLiteRepository:
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
             ).fetchone():
                 raise StorageConflict("The target database is not empty.")
-            connection.executescript(SCHEMA_SQL)
             now = _utc_text()
-            with transaction(connection):
+            with transaction(connection) as db:
+                for statement in _migration_statements(SCHEMA_SQL):
+                    db.execute(statement)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at, app_version) VALUES (?, ?, ?)",
                     (SCHEMA_VERSION, now, VERSION),
@@ -204,9 +240,7 @@ class SQLiteRepository:
                     """,
                     (_uuid4(), dataset_id, *values, now, now),
                 )
-            checks = connection.execute("PRAGMA integrity_check").fetchone()[0]
-            if checks != "ok":
-                raise StorageValidationError("The created database failed integrity validation.")
+                cls._verify_current_database(connection)
         except sqlite3.Error as error:
             raise translate_error(error) from error
         finally:
@@ -223,22 +257,44 @@ class SQLiteRepository:
             )
 
     def _verify_version(self):
+        self._verify_current_database(self._connection)
+
+    @staticmethod
+    def _verify_current_database(connection: sqlite3.Connection) -> None:
+        schema_mismatches = ()
         try:
-            version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            migration = self._connection.execute(
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            schema_mismatches = schema_definition_mismatches(connection)
+            migration = connection.execute(
                 "SELECT MAX(version) FROM schema_migrations"
             ).fetchone()[0]
-            if self._connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                raise StorageCorrupt("The time database failed its startup integrity check.")
-            if self._connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-                raise StorageCorrupt("The time database contains invalid relationships.")
-            self._dataset_id()
         except sqlite3.Error as error:
+            if schema_mismatches:
+                names = ", ".join(name for _type, name in schema_mismatches)
+                raise StorageCorrupt(
+                    f"The time database schema definitions are incomplete: {names}."
+                ) from error
             raise translate_error(error) from error
         if version != SCHEMA_VERSION or migration != SCHEMA_VERSION:
             raise StorageVersionUnsupported(
                 f"Database schema {version!r}/{migration!r} is not supported."
             )
+        if schema_mismatches:
+            names = ", ".join(name for _object_type, name in schema_mismatches)
+            raise StorageCorrupt(
+                f"The time database schema definitions do not match version "
+                f"{SCHEMA_VERSION}: {names}."
+            )
+        try:
+            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise StorageCorrupt("The time database failed its startup integrity check.")
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise StorageCorrupt("The time database contains invalid relationships.")
+            datasets = connection.execute("SELECT id FROM datasets LIMIT 2").fetchall()
+            if len(datasets) != 1:
+                raise StorageCorrupt("The database must contain exactly one dataset.")
+        except sqlite3.Error as error:
+            raise translate_error(error) from error
 
     def _upgrade_schema(self):
         try:
@@ -247,41 +303,158 @@ class SQLiteRepository:
                 "SELECT MAX(version) FROM schema_migrations"
             ).fetchone()[0]
         except sqlite3.Error as error:
+            mismatches = schema_definition_mismatches(self._connection)
+            if mismatches:
+                names = ", ".join(name for _type, name in mismatches)
+                raise StorageCorrupt(
+                    f"The time database schema definitions are incomplete: {names}."
+                ) from error
             raise translate_error(error) from error
 
         if version == SCHEMA_VERSION and migration == SCHEMA_VERSION:
-            return
+            return None
         if version != migration or version not in MIGRATIONS:
-            return
+            return None
 
-        while version < SCHEMA_VERSION:
-            migration_sql = MIGRATIONS.get(version)
-            if migration_sql is None:
-                return
-            self._validate_migration_source(version)
+        backup_path = self._create_migration_backup(version, migration)
+        rebuilds_referenced_tables = version <= 4 < SCHEMA_VERSION
+        try:
+            if rebuilds_referenced_tables:
+                # SQLite cannot rebuild referenced tables while FK enforcement
+                # is enabled.  Keep dependent FK declarations pointed at the
+                # canonical table names while the v4 migration renames the old
+                # tables, then verify every relationship before committing.
+                self._connection.execute("PRAGMA foreign_keys = OFF")
+                self._connection.execute("PRAGMA legacy_alter_table = ON")
             with transaction(self._connection) as db:
-                for statement in _migration_statements(migration_sql):
-                    if (
-                        version == 3
-                        and statement.startswith(
-                            "ALTER TABLE day_entries ADD COLUMN local_input_revision"
+                while version < SCHEMA_VERSION:
+                    migration_sql = MIGRATIONS.get(version)
+                    if migration_sql is None:
+                        raise StorageVersionUnsupported(
+                            f"No migration is available from database schema {version}."
                         )
-                        and any(
-                            row["name"] == "local_input_revision"
-                            for row in db.execute(
-                                "PRAGMA table_info(day_entries)"
-                            ).fetchall()
-                        )
-                    ):
-                        continue
-                    db.execute(statement)
-                version += 1
-                db.execute(
-                    "INSERT INTO schema_migrations(version, applied_at, app_version) "
-                    "VALUES (?, ?, ?)",
-                    (version, _utc_text(), VERSION),
+                    self._validate_migration_source(version)
+                    for statement in _migration_statements(migration_sql):
+                        if (
+                            version == 3
+                            and statement.startswith(
+                                "ALTER TABLE day_entries ADD COLUMN local_input_revision"
+                            )
+                            and any(
+                                row["name"] == "local_input_revision"
+                                for row in db.execute(
+                                    "PRAGMA table_info(day_entries)"
+                                ).fetchall()
+                            )
+                        ):
+                            continue
+                        db.execute(statement)
+                    version += 1
+                    db.execute(
+                        "INSERT INTO schema_migrations(version, applied_at, app_version) "
+                        "VALUES (?, ?, ?)",
+                        (version, _utc_text(), VERSION),
+                    )
+                    db.execute(f"PRAGMA user_version = {version}")
+
+                # Validate the finished schema and data before the transaction
+                # is allowed to commit.
+                self._verify_version()
+        except Exception as error:
+            self._add_recovery_location(error, backup_path)
+            raise
+        finally:
+            if rebuilds_referenced_tables:
+                self._connection.execute("PRAGMA legacy_alter_table = OFF")
+                self._connection.execute("PRAGMA foreign_keys = ON")
+        return backup_path
+
+    @_repository_operation
+    def _create_migration_backup(self, version: int, migration: int) -> Path:
+        recovery_root = self.path.parent / "recovery"
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_directory = recovery_root / (
+            f"schema-v{version}-to-v{SCHEMA_VERSION}-{stamp}-{uuid.uuid4().hex[:8]}"
+        )
+        backup_path = backup_directory / self.path.name
+        backup = None
+        try:
+            recovery_root.mkdir(parents=True, exist_ok=True)
+            backup_directory.mkdir(mode=0o700)
+            backup = create_database(backup_path)
+            self._connection.backup(backup)
+            if backup.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise StorageCorrupt(
+                    "The pre-migration database backup failed its integrity check."
                 )
-                db.execute(f"PRAGMA user_version = {version}")
+            if backup.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise StorageCorrupt(
+                    "The pre-migration database backup contains invalid relationships."
+                )
+            backup_version = backup.execute("PRAGMA user_version").fetchone()[0]
+            backup_migration = backup.execute(
+                "SELECT MAX(version) FROM schema_migrations"
+            ).fetchone()[0]
+            if backup_version != version or backup_migration != migration:
+                raise StorageCorrupt(
+                    "The pre-migration database backup has inconsistent version metadata."
+                )
+            if schema_manifest(backup) != schema_manifest(self._connection):
+                raise StorageCorrupt(
+                    "The pre-migration database backup does not match the source schema."
+                )
+            backup.close()
+            backup = None
+            # Windows requires a writable file handle for FlushFileBuffers,
+            # which is what os.fsync delegates to there.
+            with backup_path.open("r+b") as handle:
+                os.fsync(handle.fileno())
+            _sync_parent_directory(backup_directory)
+            _sync_parent_directory(recovery_root)
+            return backup_path
+        except Exception:
+            if backup is not None:
+                backup.close()
+            for suffix in ("-journal", "-wal", "-shm", ""):
+                try:
+                    backup_path.with_name(backup_path.name + suffix).unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+            try:
+                backup_directory.rmdir()
+            except OSError:
+                pass
+            raise
+
+    @_repository_operation
+    def _remove_migration_backup(self, backup_path: Path) -> None:
+        recovery_root = (self.path.parent / "recovery").resolve()
+        resolved_backup = backup_path.resolve()
+        if (
+            resolved_backup.name != self.path.name
+            or resolved_backup.parent.parent != recovery_root
+        ):
+            raise StorageUnavailable(
+                "The verified migration backup path is outside the recovery directory."
+            )
+        resolved_backup.unlink()
+        _sync_parent_directory(resolved_backup.parent)
+        resolved_backup.parent.rmdir()
+        _sync_parent_directory(recovery_root)
+
+    @staticmethod
+    def _add_recovery_location(error: Exception, backup_path: Path) -> None:
+        recovery_text = f"Recovery backup: {backup_path}"
+        error.recovery_backup_path = backup_path
+        error.migration_signature = migration_signature()
+        if recovery_text not in str(error):
+            message = str(error)
+            error.args = (
+                f"{message} {recovery_text}" if message else recovery_text,
+                *error.args[1:],
+            )
 
     def _validate_migration_source(self, version: int) -> None:
         if version != 2:
@@ -613,7 +786,9 @@ class SQLiteRepository:
                 )
                 _validate_work_range(resulting_start, resulting_end)
             if "breaks" in fields:
-                supplied_ids = [pause.public_id for pause in breaks or () if pause.public_id]
+                final_breaks = breaks or ()
+                _validate_break_layout(final_breaks)
+                supplied_ids = [pause.public_id for pause in final_breaks if pause.public_id]
                 if len(supplied_ids) != len(set(supplied_ids)):
                     raise StorageValidationError("Break public identities must be unique.")
                 for public_id in supplied_ids:
@@ -630,45 +805,46 @@ class SQLiteRepository:
                     raise StorageValidationError(
                         "A break update referenced an identity not owned by the day."
                     )
+                stale_ids = {
+                    pause.public_id
+                    for pause in final_breaks
+                    if pause.public_id
+                    and pause.revision != existing_breaks[pause.public_id]["revision"]
+                }
+                if stale_ids:
+                    raise StorageConflict("A break changed since it was loaded.")
                 db.execute(
                     "UPDATE day_entries SET break_duration_minutes = NULL WHERE id = ?",
                     (row["id"],),
                 )
                 now = _utc_text()
-                retained_ids = set(supplied_ids)
-                if retained_ids:
-                    placeholders = ", ".join("?" for _item in retained_ids)
-                    db.execute(
-                        f"DELETE FROM break_periods WHERE day_entry_id = ? "
-                        f"AND public_id NOT IN ({placeholders})",
-                        (row["id"], *sorted(retained_ids)),
-                    )
-                    db.execute(
-                        f"UPDATE break_periods SET position = position + 10000 "
-                        f"WHERE day_entry_id = ? AND public_id IN ({placeholders})",
-                        (row["id"], *sorted(retained_ids)),
-                    )
-                else:
-                    db.execute(
-                        "DELETE FROM break_periods WHERE day_entry_id = ?", (row["id"],)
-                    )
-                for position, pause in enumerate(breaks or ()):
-                    _validate_minute(pause.start_minute)
-                    _validate_minute(pause.end_minute)
+                # Remove the old set before rebuilding it. The final layout was
+                # validated above, and the surrounding transaction makes this
+                # replacement atomic. This avoids overlap triggers observing a
+                # mixture of old and new intervals during swaps/reordering.
+                db.execute(
+                    "DELETE FROM break_periods WHERE day_entry_id = ?", (row["id"],)
+                )
+                for position, pause in enumerate(final_breaks):
                     if pause.public_id:
+                        prior = existing_breaks[pause.public_id]
                         db.execute(
                             """
-                            UPDATE break_periods SET position = ?, start_minute = ?,
-                                end_minute = ?, updated_at = ?, revision = revision + 1
-                            WHERE public_id = ? AND day_entry_id = ?
+                            INSERT INTO break_periods(
+                                id, public_id, day_entry_id, position,
+                                start_minute, end_minute, created_at, updated_at, revision
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
+                                prior["id"],
+                                prior["public_id"],
+                                row["id"],
                                 position,
                                 pause.start_minute,
                                 pause.end_minute,
+                                prior["created_at"],
                                 now,
-                                pause.public_id,
-                                row["id"],
+                                prior["revision"] + 1,
                             ),
                         )
                     else:
@@ -754,58 +930,80 @@ class SQLiteRepository:
                 raise ClosedPeriodError("The month is already closed.")
             if month_row["revision"] != expected_revision:
                 raise StorageConflict("The month changed since it was loaded.")
-            db.execute(
-                """
-                DELETE FROM closed_day_results WHERE day_entry_id IN (
-                    SELECT id FROM day_entries WHERE month_id = ?
-                )
-                """,
-                (month_row["id"],),
-            )
-            running = month_row["opening_balance_minutes"]
-            day_rows = db.execute(
-                "SELECT * FROM day_entries WHERE month_id = ? ORDER BY work_date",
-                (month_row["id"],),
-            ).fetchall()
-            for day in day_rows:
-                overtime = 0
-                if day["start_minute"] is not None and day["end_minute"] is not None:
-                    if day["break_duration_minutes"] is None:
-                        interruption = db.execute(
-                            """
-                            SELECT COALESCE(SUM(end_minute - start_minute), 0)
-                            FROM break_periods WHERE day_entry_id = ?
-                            """,
-                            (day["id"],),
-                        ).fetchone()[0]
-                    else:
-                        interruption = day["break_duration_minutes"]
-                    overtime = (
-                        day["end_minute"] - day["start_minute"]
-                        - interruption - day["expected_work_minutes"]
-                    )
-                running += overtime
-                db.execute(
-                    """
-                    INSERT INTO closed_day_results(
-                        day_entry_id, daily_overtime_minutes, running_balance_minutes
-                    ) VALUES (?, ?, ?)
-                    """,
-                    (day["id"], overtime, running),
-                )
-            now = _utc_text()
-            cursor = db.execute(
-                """
-                UPDATE months SET status = 'closed', closing_balance_minutes = ?,
-                    closed_at = ?, updated_at = ?, revision = revision + 1
-                WHERE id = ? AND revision = ?
-                """,
-                (running, now, now, month_row["id"], expected_revision),
-            )
-            require_changed(cursor, "The month changed since it was loaded.")
+            self._close_month_in_transaction(db, month_row)
         result = self.load_month(year, month)
         assert result is not None
         return result
+
+    def _close_month_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        month_row: sqlite3.Row,
+        *,
+        before_day=None,
+        now: str | None = None,
+    ) -> tuple[tuple[str, int, int], ...]:
+        """Close one loaded open month through the canonical calculation path."""
+        db.execute(
+            """
+            DELETE FROM closed_day_results WHERE day_entry_id IN (
+                SELECT id FROM day_entries WHERE month_id = ?
+            )
+            """,
+            (month_row["id"],),
+        )
+        running = month_row["opening_balance_minutes"]
+        calculated = []
+        day_rows = db.execute(
+            "SELECT * FROM day_entries WHERE month_id = ? ORDER BY work_date",
+            (month_row["id"],),
+        ).fetchall()
+        for day in day_rows:
+            if before_day is not None:
+                before_day()
+            overtime = 0
+            if day["start_minute"] is not None and day["end_minute"] is not None:
+                if day["break_duration_minutes"] is None:
+                    interruption = db.execute(
+                        """
+                        SELECT COALESCE(SUM(end_minute - start_minute), 0)
+                        FROM break_periods WHERE day_entry_id = ?
+                        """,
+                        (day["id"],),
+                    ).fetchone()[0]
+                else:
+                    interruption = day["break_duration_minutes"]
+                overtime = (
+                    day["end_minute"] - day["start_minute"]
+                    - interruption - day["expected_work_minutes"]
+                )
+            running += overtime
+            db.execute(
+                """
+                INSERT INTO closed_day_results(
+                    day_entry_id, daily_overtime_minutes, running_balance_minutes
+                ) VALUES (?, ?, ?)
+                """,
+                (day["id"], overtime, running),
+            )
+            calculated.append((day["work_date"], overtime, running))
+        timestamp = now or _utc_text()
+        cursor = db.execute(
+            """
+            UPDATE months SET status = 'closed', closing_balance_minutes = ?,
+                closed_at = ?, updated_at = ?, revision = revision + 1
+            WHERE id = ? AND revision = ?
+            """,
+            (
+                running,
+                timestamp,
+                timestamp,
+                month_row["id"],
+                month_row["revision"],
+            ),
+        )
+        require_changed(cursor, "The month changed since it was loaded.")
+        return tuple(calculated)
 
     @_repository_operation
     def list_work_schedules(self) -> tuple[WorkSchedulePeriod, ...]:
@@ -843,6 +1041,8 @@ class SQLiteRepository:
         effective_from: date,
         effective_to: date | None,
         weekday_minutes: tuple[int, int, int, int, int, int, int],
+        expected_public_id: str,
+        expected_revision: int,
     ) -> WorkSchedulePeriod:
         if len(weekday_minutes) != 7:
             raise StorageValidationError("A schedule requires seven weekday values.")
@@ -854,6 +1054,27 @@ class SQLiteRepository:
         public_id = _uuid4()
         with transaction(self._connection) as db:
             dataset_id = self._dataset_id(db)
+            active = db.execute(
+                """
+                SELECT * FROM work_schedule_periods
+                WHERE dataset_id = ? AND effective_from <= ?
+                  AND (effective_to IS NULL OR effective_to >= ?)
+                ORDER BY effective_from DESC LIMIT 1
+                """,
+                (
+                    dataset_id,
+                    effective_from.isoformat(),
+                    effective_from.isoformat(),
+                ),
+            ).fetchone()
+            if (
+                active is None
+                or active["public_id"] != expected_public_id
+                or active["revision"] != expected_revision
+            ):
+                raise StorageConflict(
+                    "The work schedule changed since it was loaded. Reload it and try again."
+                )
             exact = db.execute(
                 "SELECT * FROM work_schedule_periods WHERE dataset_id = ? AND effective_from = ?",
                 (dataset_id, effective_from.isoformat()),
@@ -1212,15 +1433,51 @@ class SQLiteRepository:
                     pass
 
     @_repository_operation
-    def merge_legacy(self, preflight, *, progress=None, cancelled=None):
+    def merge_legacy(
+        self,
+        preflight,
+        *,
+        progress=None,
+        cancelled=None,
+        log_database_path=None,
+    ):
+        from znactime.storage.legacy_import_log import write_legacy_import_log
         from znactime.storage.sqlite.legacy_import import merge_preflight
 
-        return merge_preflight(
-            self,
-            preflight,
-            progress=progress,
-            cancelled=cancelled,
-        )
+        generated_log = None
+
+        def create_log(result):
+            nonlocal generated_log
+            log_path = write_legacy_import_log(
+                log_database_path or self.path,
+                preflight,
+                result,
+            )
+            generated_log = log_path
+            return replace(result, log_path=log_path)
+
+        try:
+            result = merge_preflight(
+                self,
+                preflight,
+                progress=progress,
+                cancelled=cancelled,
+                before_commit=create_log,
+            )
+        except Exception:
+            if generated_log is not None:
+                try:
+                    generated_log.unlink()
+                except OSError:
+                    pass
+            raise
+        if not result.already_imported:
+            self._last_import_log_path = result.log_path
+        return result
+
+    @property
+    def last_import_log_path(self) -> Path | None:
+        return self._last_import_log_path
 
     @_repository_operation
     def close(self) -> None:

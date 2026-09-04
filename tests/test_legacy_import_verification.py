@@ -97,6 +97,40 @@ class LegacyImportVerificationTest(unittest.TestCase):
         )
         self.assertTrue(report.derived_differences)
 
+    def test_month_state_parity_is_reported_separately_from_day_inputs(self):
+        self._write_month(2)
+        self._import()
+
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute(
+                """
+                UPDATE months
+                SET opening_balance_minutes = 60,
+                    updated_at = '2024-03-01T00:00:00Z',
+                    revision = revision + 1
+                WHERE year = 2024 AND month = 2
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        report = verify_legacy_import(self.root, self.database)
+
+        self.assertTrue(report.structurally_valid)
+        self.assertEqual(report.exact_input_days, 29)
+        self.assertEqual(report.input_difference_days, 0)
+        self.assertEqual(report.exact_input_months, 0)
+        self.assertEqual(report.input_difference_months, 1)
+        self.assertTrue(
+            any(
+                issue.location == "2024-02"
+                and issue.field == "opening_balance_minutes"
+                for issue in report.local_differences
+            )
+        )
+
     def test_missing_source_day_is_a_structural_error(self):
         self._write_month(2)
         self._import()
@@ -170,6 +204,88 @@ class LegacyImportVerificationTest(unittest.TestCase):
                 and issue.field == "source_fingerprint"
                 for issue in report.errors
             )
+        )
+
+    def test_database_with_more_than_one_dataset_is_rejected(self):
+        self._write_month(2)
+        self._import()
+
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute(
+                """
+                INSERT INTO datasets(public_id, created_at)
+                VALUES ('00000000-0000-4000-8000-000000000001', '2024-01-01T00:00:00Z')
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        report = verify_legacy_import(self.root, self.database)
+
+        self.assertFalse(report.structurally_valid)
+        self.assertTrue(
+            any(issue.field == "dataset_count" for issue in report.errors)
+        )
+
+    def test_database_with_unsupported_version_is_rejected(self):
+        self._write_month(2)
+        self._import()
+
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute("PRAGMA user_version = 3")
+            connection.commit()
+        finally:
+            connection.close()
+
+        report = verify_legacy_import(self.root, self.database)
+
+        self.assertFalse(report.structurally_valid)
+        self.assertTrue(
+            any(issue.field == "schema_version" for issue in report.errors)
+        )
+
+    def test_database_with_incomplete_migration_history_is_rejected(self):
+        self._write_month(2)
+        self._import()
+
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute(
+                """
+                INSERT INTO schema_migrations(version, applied_at, app_version)
+                VALUES (2, '2024-01-01T00:00:00Z', 'test')
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        report = verify_legacy_import(self.root, self.database)
+
+        self.assertFalse(report.structurally_valid)
+        self.assertTrue(
+            any(issue.field == "migration_history" for issue in report.errors)
+        )
+
+    def test_database_with_missing_schema_object_is_rejected(self):
+        self._write_month(2)
+        self._import()
+
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute("DROP TRIGGER dataset_identity_immutable")
+            connection.commit()
+        finally:
+            connection.close()
+
+        report = verify_legacy_import(self.root, self.database)
+
+        self.assertFalse(report.structurally_valid)
+        self.assertTrue(
+            any(issue.field == "schema_definitions" for issue in report.errors)
         )
 
     def test_verification_can_be_cancelled_during_database_checks(self):

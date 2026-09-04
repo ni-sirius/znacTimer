@@ -1,7 +1,14 @@
-SCHEMA_VERSION = 4
+from __future__ import annotations
+
+import re
+import sqlite3
+from functools import lru_cache
 
 
-SCHEMA_SQL = r"""
+SCHEMA_VERSION = 5
+
+
+SCHEMA_TABLES_SQL = r"""
 CREATE TABLE schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL,
@@ -152,16 +159,18 @@ CREATE TABLE legacy_imports (
     warning_count INTEGER NOT NULL CHECK (warning_count >= 0),
     completed_at TEXT NOT NULL
 ) STRICT;
+"""
 
+SCHEMA_V5_TRIGGERS_SQL = r"""
 CREATE TRIGGER dataset_identity_immutable
 BEFORE UPDATE OF public_id ON datasets
 WHEN NEW.public_id != OLD.public_id
-BEGIN SELECT RAISE(ABORT, 'dataset public identity is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:DATASET_IDENTITY'); END;
 
 CREATE TRIGGER schedule_identity_immutable
 BEFORE UPDATE OF public_id ON work_schedule_periods
 WHEN NEW.public_id != OLD.public_id
-BEGIN SELECT RAISE(ABORT, 'schedule public identity is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:SCHEDULE_IDENTITY'); END;
 
 CREATE TRIGGER schedule_dates_valid_insert
 BEFORE INSERT ON work_schedule_periods
@@ -171,7 +180,7 @@ WHEN date(NEW.effective_from, '+0 days') IS NULL
       date(NEW.effective_to, '+0 days') IS NULL
       OR NEW.effective_to != date(NEW.effective_to, '+0 days')
   ))
-BEGIN SELECT RAISE(ABORT, 'work schedule dates must be canonical calendar dates'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:SCHEDULE_DATE'); END;
 
 CREATE TRIGGER schedule_dates_valid_update
 BEFORE UPDATE OF effective_from, effective_to ON work_schedule_periods
@@ -181,7 +190,7 @@ WHEN date(NEW.effective_from, '+0 days') IS NULL
       date(NEW.effective_to, '+0 days') IS NULL
       OR NEW.effective_to != date(NEW.effective_to, '+0 days')
   ))
-BEGIN SELECT RAISE(ABORT, 'work schedule dates must be canonical calendar dates'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:SCHEDULE_DATE'); END;
 
 CREATE TRIGGER schedule_no_overlap_insert
 BEFORE INSERT ON work_schedule_periods
@@ -191,7 +200,7 @@ WHEN EXISTS (
       AND COALESCE(old.effective_to, '9999-12-31') >= NEW.effective_from
       AND COALESCE(NEW.effective_to, '9999-12-31') >= old.effective_from
 )
-BEGIN SELECT RAISE(ABORT, 'work schedule periods overlap'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:SCHEDULE_OVERLAP'); END;
 
 CREATE TRIGGER schedule_no_overlap_update
 BEFORE UPDATE OF dataset_id, effective_from, effective_to ON work_schedule_periods
@@ -201,22 +210,22 @@ WHEN EXISTS (
       AND COALESCE(old.effective_to, '9999-12-31') >= NEW.effective_from
       AND COALESCE(NEW.effective_to, '9999-12-31') >= old.effective_from
 )
-BEGIN SELECT RAISE(ABORT, 'work schedule periods overlap'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:SCHEDULE_OVERLAP'); END;
 
 CREATE TRIGGER month_identity_immutable
 BEFORE UPDATE OF dataset_id, year, month ON months
 WHEN NEW.dataset_id != OLD.dataset_id OR NEW.year != OLD.year OR NEW.month != OLD.month
-BEGIN SELECT RAISE(ABORT, 'month calendar identity is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:MONTH_IDENTITY'); END;
 
 CREATE TRIGGER closed_month_no_update
 BEFORE UPDATE ON months
 WHEN OLD.status = 'closed'
-BEGIN SELECT RAISE(ABORT, 'closed month is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:MONTH_IMMUTABLE'); END;
 
 CREATE TRIGGER closed_month_no_delete
 BEFORE DELETE ON months
 WHEN OLD.status = 'closed'
-BEGIN SELECT RAISE(ABORT, 'closed month is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:MONTH_IMMUTABLE'); END;
 
 CREATE TRIGGER month_close_guard
 BEFORE UPDATE OF status ON months
@@ -280,7 +289,7 @@ WHEN OLD.status = 'open' AND NEW.status = 'closed' AND (
         OLD.opening_balance_minutes
     )
 )
-BEGIN SELECT RAISE(ABORT, 'month close preconditions failed'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:MONTH_CLOSE_PRECONDITION'); END;
 
 CREATE TRIGGER month_close_propagate_carry
 AFTER UPDATE OF status ON months
@@ -305,25 +314,25 @@ WHEN EXISTS (
         OR NEW.work_date NOT LIKE printf('%04d-%02d-%%', month.year, month.month)
     )
 )
-BEGIN SELECT RAISE(ABORT, 'day violates month state or date'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:DAY_PARENT_OR_DATE'); END;
 
 CREATE TRIGGER day_date_valid_insert
 BEFORE INSERT ON day_entries
 WHEN date(NEW.work_date, '+0 days') IS NULL
   OR NEW.work_date != date(NEW.work_date, '+0 days')
-BEGIN SELECT RAISE(ABORT, 'work date must be a canonical calendar date'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:WORK_DATE'); END;
 
 CREATE TRIGGER day_date_valid_update
 BEFORE UPDATE OF work_date ON day_entries
 WHEN date(NEW.work_date, '+0 days') IS NULL
   OR NEW.work_date != date(NEW.work_date, '+0 days')
-BEGIN SELECT RAISE(ABORT, 'work date must be a canonical calendar date'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:WORK_DATE'); END;
 
 CREATE TRIGGER day_guard_update
 BEFORE UPDATE ON day_entries
 WHEN NEW.work_date != OLD.work_date OR NEW.month_id != OLD.month_id
   OR EXISTS (SELECT 1 FROM months month WHERE month.id = OLD.month_id AND month.status = 'closed')
-BEGIN SELECT RAISE(ABORT, 'day is immutable or belongs to a closed month'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:DAY_PROTECTED'); END;
 
 CREATE TRIGGER day_guard_delete
 BEFORE DELETE ON day_entries
@@ -331,13 +340,13 @@ WHEN EXISTS (
     SELECT 1 FROM months month
     WHERE month.id = OLD.month_id AND month.status = 'closed'
 )
-BEGIN SELECT RAISE(ABORT, 'closed month day is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:DAY_DELETE'); END;
 
 CREATE TRIGGER day_duration_xor_update
 BEFORE UPDATE OF break_duration_minutes ON day_entries
 WHEN NEW.break_duration_minutes IS NOT NULL
  AND EXISTS (SELECT 1 FROM break_periods pause WHERE pause.day_entry_id = OLD.id)
-BEGIN SELECT RAISE(ABORT, 'duration and break periods are mutually exclusive'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:BREAK_REPRESENTATION'); END;
 
 CREATE TRIGGER break_guard_insert
 BEFORE INSERT ON break_periods
@@ -355,7 +364,7 @@ OR EXISTS (
       AND NEW.start_minute < COALESCE(old.end_minute, 1440)
       AND old.start_minute < COALESCE(NEW.end_minute, 1440)
 )
-BEGIN SELECT RAISE(ABORT, 'break violates parent state, representation, or overlap'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:BREAK_INSERT'); END;
 
 CREATE TRIGGER break_guard_update
 BEFORE UPDATE ON break_periods
@@ -370,7 +379,7 @@ WHEN NEW.public_id != OLD.public_id OR NEW.day_entry_id != OLD.day_entry_id
       AND NEW.start_minute < COALESCE(other.end_minute, 1440)
       AND other.start_minute < COALESCE(NEW.end_minute, 1440)
  )
-BEGIN SELECT RAISE(ABORT, 'break is immutable or overlaps'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:VALIDATION:BREAK_UPDATE'); END;
 
 CREATE TRIGGER break_guard_delete
 BEFORE DELETE ON break_periods
@@ -378,7 +387,7 @@ WHEN EXISTS (
     SELECT 1 FROM day_entries day JOIN months month ON month.id = day.month_id
     WHERE day.id = OLD.day_entry_id AND month.status = 'closed'
 )
-BEGIN SELECT RAISE(ABORT, 'closed month break is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:BREAK_DELETE'); END;
 
 CREATE TRIGGER result_guard_insert
 BEFORE INSERT ON closed_day_results
@@ -386,7 +395,7 @@ WHEN EXISTS (
     SELECT 1 FROM day_entries day JOIN months month ON month.id = day.month_id
     WHERE day.id = NEW.day_entry_id AND month.status = 'closed'
 )
-BEGIN SELECT RAISE(ABORT, 'closed result cannot be added after close'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:RESULT_INSERT'); END;
 
 CREATE TRIGGER result_guard_update
 BEFORE UPDATE ON closed_day_results
@@ -394,7 +403,7 @@ WHEN EXISTS (
     SELECT 1 FROM day_entries day JOIN months month ON month.id = day.month_id
     WHERE day.id = OLD.day_entry_id AND month.status = 'closed'
 )
-BEGIN SELECT RAISE(ABORT, 'closed result is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:RESULT_UPDATE'); END;
 
 CREATE TRIGGER result_guard_delete
 BEFORE DELETE ON closed_day_results
@@ -402,5 +411,78 @@ WHEN EXISTS (
     SELECT 1 FROM day_entries day JOIN months month ON month.id = day.month_id
     WHERE day.id = OLD.day_entry_id AND month.status = 'closed'
 )
-BEGIN SELECT RAISE(ABORT, 'closed result is immutable'); END;
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:RESULT_DELETE'); END;
 """
+
+
+SCHEMA_V5_TRIGGER_NAMES = (
+    "dataset_identity_immutable",
+    "schedule_identity_immutable",
+    "schedule_dates_valid_insert",
+    "schedule_dates_valid_update",
+    "schedule_no_overlap_insert",
+    "schedule_no_overlap_update",
+    "month_identity_immutable",
+    "closed_month_no_update",
+    "closed_month_no_delete",
+    "month_close_guard",
+    "month_close_propagate_carry",
+    "day_parent_and_date_insert",
+    "day_date_valid_insert",
+    "day_date_valid_update",
+    "day_guard_update",
+    "day_guard_delete",
+    "day_duration_xor_update",
+    "break_guard_insert",
+    "break_guard_update",
+    "break_guard_delete",
+    "result_guard_insert",
+    "result_guard_update",
+    "result_guard_delete",
+)
+
+
+SCHEMA_SQL = SCHEMA_TABLES_SQL + SCHEMA_V5_TRIGGERS_SQL
+
+
+def _normalized_schema_sql(sql: str) -> str:
+    sql = re.sub(r"\bIF\s+NOT\s+EXISTS\b", "", sql, flags=re.IGNORECASE)
+    return re.sub(r"\s+", "", sql).casefold()
+
+
+def schema_manifest(connection: sqlite3.Connection) -> dict[tuple[str, str], str]:
+    return {
+        (object_type, name): _normalized_schema_sql(sql)
+        for object_type, name, sql in connection.execute(
+            """
+            SELECT type, name, sql FROM sqlite_master
+            WHERE type IN ('table', 'index', 'trigger', 'view')
+              AND name NOT LIKE 'sqlite_%'
+            """
+        ).fetchall()
+        if sql is not None
+    }
+
+
+@lru_cache(maxsize=1)
+def expected_schema_manifest() -> dict[tuple[str, str], str]:
+    canonical = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        canonical.executescript(SCHEMA_SQL)
+        return schema_manifest(canonical)
+    finally:
+        canonical.close()
+
+
+def schema_definition_mismatches(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[str, str], ...]:
+    expected = expected_schema_manifest()
+    actual = schema_manifest(connection)
+    return tuple(
+        sorted(
+            key
+            for key in expected.keys() | actual.keys()
+            if expected.get(key) != actual.get(key)
+        )
+    )

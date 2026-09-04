@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 import sqlite3
 import uuid
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from znactime.storage.legacy_csv_import import (
     LegacyDay,
     LegacyMergeResult,
     LegacyMonth,
+    LegacyNormalization,
     LegacyPreflight,
     ProgressCallback,
     _cancel_if_requested,
@@ -21,6 +23,7 @@ from znactime.storage.legacy_csv_import import (
 )
 from znactime.storage.sqlite.connection import transaction, translate_error
 from znactime.storage.sqlite.repository import SQLiteRepository, _utc_text
+from znactime.storage.sqlite.schema import schema_definition_mismatches
 
 
 def _inferred_expected(day: LegacyDay, fallback: int) -> int:
@@ -163,58 +166,188 @@ def _legacy_opening(month: LegacyMonth, fallback: int) -> int:
     return first.running_balance_minutes - first.daily_overtime_minutes
 
 
+def _normalization(
+    day: LegacyDay,
+    field: str,
+    source_value,
+    imported_value,
+    reason: str,
+) -> LegacyNormalization:
+    return LegacyNormalization(
+        day.work_date.isoformat(),
+        field,
+        source_value,
+        imported_value,
+        reason,
+    )
+
+
+def _normalize_legacy_day(
+    day: LegacyDay,
+) -> tuple[LegacyDay, tuple[LegacyNormalization, ...]]:
+    """Return import-safe inputs that can be closed by the canonical guard."""
+    changes = []
+    invalid_window = (
+        (day.start_minute is None) != (day.end_minute is None)
+        or (
+            day.start_minute is not None
+            and day.end_minute is not None
+            and day.end_minute <= day.start_minute
+        )
+    )
+    start = day.start_minute
+    end = day.end_minute
+    duration = day.break_duration_minutes
+    breaks = day.breaks
+    if invalid_window:
+        changes.append(
+            _normalization(
+                day,
+                "work_interval",
+                (start, end),
+                (None, None),
+                "Incomplete or non-positive legacy work interval was removed.",
+            )
+        )
+        start = None
+        end = None
+
+    if start is None:
+        if duration not in (None, 0) or breaks:
+            changes.append(
+                _normalization(
+                    day,
+                    "interruptions",
+                    (duration, breaks),
+                    (0, ()),
+                    "Interruptions without a valid work interval were removed.",
+                )
+            )
+        duration = 0
+        breaks = ()
+    elif duration is not None:
+        if duration > end - start:
+            changes.append(
+                _normalization(
+                    day,
+                    "break_duration_minutes",
+                    duration,
+                    0,
+                    "Break duration exceeded the work interval and was removed.",
+                )
+            )
+            duration = 0
+    elif any(
+        pause.end_minute is None
+        or pause.start_minute < start
+        or pause.end_minute > end
+        for pause in breaks
+    ):
+        changes.append(
+            _normalization(
+                day,
+                "break_periods",
+                breaks,
+                (),
+                "Active or out-of-range legacy pauses were removed.",
+            )
+        )
+        breaks = ()
+
+    return (
+        replace(
+            day,
+            start_minute=start,
+            end_minute=end,
+            break_duration_minutes=duration,
+            breaks=breaks,
+        ),
+        tuple(changes),
+    )
+
+
 def _close_legacy_month(
+    repository: SQLiteRepository,
     db,
     month_row,
     legacy_month: LegacyMonth,
-    opening: int,
     now: str,
     *,
     cancelled: CancellationCallback | None,
-):
-    source_days = {item.work_date.isoformat(): item for item in legacy_month.days}
-    running = opening
-    all_days = db.execute(
-        "SELECT id, work_date FROM day_entries WHERE month_id = ? ORDER BY work_date",
-        (month_row["id"],),
-    ).fetchall()
-    for day_row in all_days:
-        _cancel_if_requested(cancelled)
-        source_day = source_days.get(day_row["work_date"])
-        if source_day is None:
-            daily_overtime = 0
-        else:
-            daily_overtime = source_day.daily_overtime_minutes
-            running = source_day.running_balance_minutes
-        db.execute(
-            """
-            INSERT INTO closed_day_results(
-                day_entry_id, daily_overtime_minutes, running_balance_minutes
-            ) VALUES (?, ?, ?)
-            """,
-            (day_row["id"], daily_overtime, running),
-        )
-
-    guard = db.execute(
-        """
-        SELECT sql FROM sqlite_master
-        WHERE type = 'trigger' AND name = 'month_close_guard'
-        """
-    ).fetchone()
-    if guard is None or not guard["sql"]:
-        raise StorageValidationError("The legacy import close guard is unavailable.")
-    # SQLite DDL is transactional. Only legacy closure preconditions are deferred;
-    # closed-record immutability triggers remain active and the exact guard is restored
-    # before this transaction can commit.
-    db.execute("DROP TRIGGER month_close_guard")
-    db.execute(
-        """
-        UPDATE months SET status = 'closed', closing_balance_minutes = ?,
-            closed_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ?
-        """,
-        (running, now, now, month_row["id"]),
+) -> tuple[LegacyNormalization, ...]:
+    calculated = repository._close_month_in_transaction(
+        db,
+        month_row,
+        before_day=lambda: _cancel_if_requested(cancelled),
+        now=now,
     )
-    db.execute(guard["sql"])
+    source_days = {item.work_date.isoformat(): item for item in legacy_month.days}
+    changes = []
+    for work_date, daily_overtime, running_balance in calculated:
+        source_day = source_days.get(work_date)
+        if source_day is None:
+            continue
+        if source_day.daily_overtime_minutes != daily_overtime:
+            changes.append(
+                _normalization(
+                    source_day,
+                    "daily_overtime_minutes",
+                    source_day.daily_overtime_minutes,
+                    daily_overtime,
+                    "Derived overtime was recalculated from normalized day inputs.",
+                )
+            )
+        if source_day.running_balance_minutes != running_balance:
+            changes.append(
+                _normalization(
+                    source_day,
+                    "running_balance_minutes",
+                    source_day.running_balance_minutes,
+                    running_balance,
+                    "Running balance was recalculated from the canonical overtime chain.",
+                )
+            )
+    if legacy_month.days and calculated:
+        source_closing = legacy_month.days[-1].running_balance_minutes
+        imported_closing = calculated[-1][2]
+        if source_closing != imported_closing:
+            changes.append(
+                LegacyNormalization(
+                    f"{legacy_month.year:04d}-{legacy_month.month:02d}",
+                    "closing_balance_minutes",
+                    source_closing,
+                    imported_closing,
+                    "Closing balance was aligned with the recalculated result chain.",
+                )
+            )
+    return tuple(changes)
+
+
+def _closure_block_reason(db, month_row) -> str | None:
+    if db.execute(
+        """
+        SELECT 1 FROM months
+        WHERE dataset_id = ? AND status = 'open'
+          AND year * 12 + month < ? * 12 + ?
+        LIMIT 1
+        """,
+        (month_row["dataset_id"], month_row["year"], month_row["month"]),
+    ).fetchone():
+        return "An earlier month is still open, so this imported month remained open."
+    successor_year, successor_month = (
+        (month_row["year"], month_row["month"] + 1)
+        if month_row["month"] < 12
+        else (month_row["year"] + 1, 1)
+    )
+    if db.execute(
+        """
+        SELECT 1 FROM months
+        WHERE dataset_id = ? AND year = ? AND month = ? AND status = 'closed'
+        """,
+        (month_row["dataset_id"], successor_year, successor_month),
+    ).fetchone():
+        return "The immediate successor is already closed, so this month remained open."
+    return None
 
 
 def _source_schema_versions(preflight: LegacyPreflight) -> str:
@@ -254,10 +387,12 @@ def _validate_import(db):
         raise StorageValidationError("Imported database failed foreign-key validation.")
     if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise StorageValidationError("Imported database failed integrity validation.")
-    if db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'month_close_guard'"
-    ).fetchone() is None:
-        raise StorageValidationError("Imported database is missing its month-close guard.")
+    mismatches = schema_definition_mismatches(db)
+    if mismatches:
+        names = ", ".join(name for _object_type, name in mismatches)
+        raise StorageValidationError(
+            f"Imported database does not retain its canonical schema: {names}."
+        )
     if db.execute(
         """
         SELECT 1 FROM months month
@@ -282,6 +417,7 @@ def merge_preflight(
     *,
     progress: ProgressCallback | None = None,
     cancelled: CancellationCallback | None = None,
+    before_commit=None,
 ) -> LegacyMergeResult:
     """Merge CSV history without replacing any authoritative local day."""
     if preflight.blocking_errors:
@@ -301,6 +437,8 @@ def merge_preflight(
     days_imported = 0
     days_kept_current = 0
     days_unchanged = 0
+    normalizations: list[LegacyNormalization] = []
+    completed_result = None
     now = _utc_text()
     try:
         if repository._connection.execute(
@@ -353,7 +491,7 @@ def merge_preflight(
                 month_had_local_data = any(
                     _local_day_has_data(db, row) for row in local_rows
                 )
-                month_conflicted = False
+                month_conflicted = month_had_local_data
                 source_by_date = {
                     item.work_date.isoformat(): item for item in legacy_month.days
                 }
@@ -372,39 +510,86 @@ def merge_preflight(
                     ):
                         days_unchanged += 1
                         continue
-                    fallback = day_row["expected_work_minutes"]
-                    expected = (
-                        _inferred_expected(legacy_day, fallback)
-                        if created
-                        else fallback
+                    normalized_day, day_normalizations = _normalize_legacy_day(
+                        legacy_day
                     )
-                    _apply_legacy_day(db, day_row, legacy_day, now, expected)
+                    fallback = day_row["expected_work_minutes"]
+                    expected = _inferred_expected(normalized_day, fallback)
+                    _apply_legacy_day(db, day_row, normalized_day, now, expected)
+                    normalizations.extend(day_normalizations)
                     days_imported += 1
 
                 if created or not month_had_local_data:
+                    previous_year, previous_month = (
+                        (legacy_month.year, legacy_month.month - 1)
+                        if legacy_month.month > 1
+                        else (legacy_month.year - 1, 12)
+                    )
+                    previous = db.execute(
+                        """
+                        SELECT closing_balance_minutes FROM months
+                        WHERE dataset_id = ? AND year = ? AND month = ?
+                          AND status = 'closed'
+                        """,
+                        (
+                            month_row["dataset_id"],
+                            previous_year,
+                            previous_month,
+                        ),
+                    ).fetchone()
+                    target_opening = (
+                        previous["closing_balance_minutes"]
+                        if previous is not None
+                        else source_opening
+                    )
+                    if target_opening != source_opening:
+                        normalizations.append(
+                            LegacyNormalization(
+                                f"{legacy_month.year:04d}-{legacy_month.month:02d}",
+                                "opening_balance_minutes",
+                                source_opening,
+                                target_opening,
+                                "Opening balance was aligned with the preceding closed month.",
+                            )
+                        )
                     db.execute(
                         """
-                        UPDATE months SET opening_balance_minutes = ?, updated_at = ?
-                        WHERE id = ?
+                        UPDATE months SET opening_balance_minutes = ?, updated_at = ?,
+                            revision = revision + 1
+                        WHERE id = ? AND opening_balance_minutes != ?
                         """,
-                        (source_opening, now, month_row["id"]),
+                        (target_opening, now, month_row["id"], target_opening),
                     )
                     month_row = db.execute(
                         "SELECT * FROM months WHERE id = ?", (month_row["id"],)
                     ).fetchone()
 
                 if legacy_month.closed:
-                    if month_conflicted:
+                    closure_block = (
+                        "Local day data was preserved, so the imported month remained open."
+                        if month_conflicted
+                        else _closure_block_reason(db, month_row)
+                    )
+                    if closure_block is not None:
                         closures_kept_open += 1
+                        normalizations.append(
+                            LegacyNormalization(
+                                f"{legacy_month.year:04d}-{legacy_month.month:02d}",
+                                "status",
+                                "closed",
+                                "open",
+                                closure_block,
+                            )
+                        )
                     else:
-                        _close_legacy_month(
+                        normalizations.extend(_close_legacy_month(
+                            repository,
                             db,
                             month_row,
                             legacy_month,
-                            month_row["opening_balance_minutes"],
                             now,
                             cancelled=cancelled,
-                        )
+                        ))
                         months_closed += 1
 
                 _report_progress(
@@ -418,6 +603,21 @@ def merge_preflight(
             _report_progress(progress, "Validating imported database", 0, 0)
             _record_import(db, preflight, now)
             _validate_import(db)
+            completed_result = LegacyMergeResult(
+                preflight.source_root,
+                False,
+                months_created,
+                months_merged,
+                months_closed,
+                closures_kept_open,
+                days_imported,
+                days_kept_current,
+                days_unchanged,
+                len(preflight.warnings),
+                tuple(normalizations),
+            )
+            if before_commit is not None:
+                completed_result = before_commit(completed_result)
     except sqlite3.Error as error:
         _cancel_if_requested(cancelled)
         raise translate_error(error) from error
@@ -427,18 +627,9 @@ def merge_preflight(
     finally:
         repository._connection.set_progress_handler(None, 0)
 
-    return LegacyMergeResult(
-        preflight.source_root,
-        False,
-        months_created,
-        months_merged,
-        months_closed,
-        closures_kept_open,
-        days_imported,
-        days_kept_current,
-        days_unchanged,
-        len(preflight.warnings),
-    )
+    if completed_result is None:
+        raise StorageValidationError("Legacy import completed without an outcome record.")
+    return completed_result
 
 
 def import_preflight(
@@ -448,6 +639,7 @@ def import_preflight(
     default_workday_minutes: int = 480,
     progress: ProgressCallback | None = None,
     cancelled: CancellationCallback | None = None,
+    log_database_path: str | Path | None = None,
 ) -> SQLiteRepository:
     if preflight.blocking_errors:
         raise StorageValidationError(
@@ -458,11 +650,11 @@ def import_preflight(
         default_workday_minutes=default_workday_minutes,
     )
     try:
-        merge_preflight(
-            repository,
+        repository.merge_legacy(
             preflight,
             progress=progress,
             cancelled=cancelled,
+            log_database_path=log_database_path,
         )
         return repository
     except Exception:
