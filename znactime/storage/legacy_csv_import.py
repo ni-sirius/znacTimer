@@ -12,11 +12,13 @@ from pathlib import Path
 from typing import Callable
 
 from znactime.core.constants import NORMAL_DAY
+from znactime.core.validation import special_day_text_problem
 from znactime.storage.csv_format import (
     CSV_SCHEMA_VERSION,
     CSV_VERSION_MARKER,
     decode_spreadsheet_safe_text,
 )
+from znactime.storage.errors import StorageValidationError
 
 
 _MONTH_FILE = re.compile(r"^(?P<year>\d{4})_tmp_(?P<month>\d{2})\.csv$")
@@ -397,7 +399,10 @@ def _parse_month(
 ) -> tuple[LegacyMonth | None, str]:
     path = source.path
     match = _MONTH_FILE.match(path.name)
-    assert match is not None
+    if match is None:
+        raise StorageValidationError(
+            "A recognized monthly CSV no longer matches its validated file name."
+        )
     year = int(match.group("year"))
     month = int(match.group("month"))
     relative = path.relative_to(root).as_posix()
@@ -463,15 +468,20 @@ def _parse_month(
         duration, periods = _interruption(row[4], relative_path=relative, line=line, issues=issues)
         daily = _result(row[5], relative_path=relative, line=line, field="daily overtime", issues=issues)
         running = _result(row[6], relative_path=relative, line=line, field="running balance", issues=issues)
+        decoded_special_day = decode_spreadsheet_safe_text(row[1], schema_version)
+        special_day_problem = (
+            special_day_text_problem(decoded_special_day)
+            if decoded_special_day
+            else None
+        )
+        special_day = decoded_special_day.strip() or NORMAL_DAY
+        if special_day_problem is not None:
+            issues.append(
+                ImportIssue("error", relative, line, special_day_problem)
+            )
         parsed[work_date] = LegacyDay(
             work_date=work_date,
-            special_day=(
-                decode_spreadsheet_safe_text(
-                    row[1].strip(),
-                    schema_version,
-                )
-                or NORMAL_DAY
-            ),
+            special_day=special_day,
             start_minute=start,
             end_minute=end,
             break_duration_minutes=duration,
@@ -604,7 +614,10 @@ def preflight_legacy_data(
     month_files = [source for source in files if _MONTH_FILE.fullmatch(source.path.name)]
     for index, source in enumerate(month_files, 1):
         match = _MONTH_FILE.fullmatch(source.path.name)
-        assert match is not None
+        if match is None:
+            raise StorageValidationError(
+                "A recognized monthly CSV no longer matches its validated file name."
+            )
         key = (int(match.group("year")), int(match.group("month")))
         try:
             parsed, encoding = _parse_month(

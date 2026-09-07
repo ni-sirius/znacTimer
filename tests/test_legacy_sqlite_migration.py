@@ -22,6 +22,7 @@ from znactime.storage.sqlite.bootstrap import (
     migrate_legacy_database,
 )
 from znactime.storage.sqlite.repository import SQLiteRepository
+from znactime.core.validation import MAX_SPECIAL_DAY_LENGTH
 
 
 class LegacySQLiteMigrationTest(unittest.TestCase):
@@ -124,6 +125,21 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
 
         self.assertTrue(result.blocking_errors)
         self.assertTrue(any("Invalid start" in issue.message for issue in result.blocking_errors))
+
+    def test_preflight_rejects_oversized_and_control_special_day_text(self):
+        path = self._write_month(2024, 2)
+        with path.open(newline="", encoding="utf-8") as stream:
+            rows = list(csv.reader(stream))
+        rows[1][1] = "x" * (MAX_SPECIAL_DAY_LENGTH + 1)
+        rows[2][1] = "\tformula-like control"
+        with path.open("w", newline="", encoding="utf-8") as stream:
+            csv.writer(stream).writerows(rows)
+
+        result = preflight_legacy_data(self.root)
+
+        messages = tuple(issue.message for issue in result.blocking_errors)
+        self.assertTrue(any("cannot exceed" in message for message in messages))
+        self.assertTrue(any("control characters" in message for message in messages))
 
     def test_closed_then_open_month_migrates_without_touching_source(self):
         january = self._write_month(2024, 1, closed=True)

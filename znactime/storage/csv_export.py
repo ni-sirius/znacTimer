@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from znactime.core.models import DayRecord, MonthRecord
+from znactime.core.validation import special_day_text_problem
 from znactime.storage.atomic_file import (
     publish_staged_file,
     reject_protected_destination,
@@ -15,6 +16,7 @@ from znactime.storage.csv_format import (
     CSV_VERSION_MARKER,
     spreadsheet_safe_text,
 )
+from znactime.storage.errors import ExportError
 
 
 
@@ -51,6 +53,11 @@ def month_rows(month: MonthRecord):
     running = month.opening_balance_minutes
     yield [CSV_VERSION_MARKER, str(CSV_SCHEMA_VERSION)]
     for day in month.days:
+        special_day_problem = special_day_text_problem(day.special_day)
+        if special_day_problem is not None:
+            raise ExportError(
+                f"Cannot export {day.work_date.isoformat()}: {special_day_problem}"
+            )
         interruption, interruption_minutes, complete = _interruption(day)
         if day.daily_overtime_minutes is not None and day.running_balance_minutes is not None:
             overtime = day.daily_overtime_minutes

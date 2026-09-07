@@ -238,7 +238,10 @@ def _verify_database_identity(db, database, errors):
 
 def _verify_import_metadata(db, preflight, errors):
     row = db.execute(
-        "SELECT * FROM legacy_imports WHERE source_fingerprint = ?",
+        """
+        SELECT manifest_digest, file_count, month_count, day_count, warning_count
+        FROM legacy_imports WHERE source_fingerprint = ?
+        """,
         (preflight.source_fingerprint,),
     ).fetchone()
     if row is None:
@@ -488,7 +491,8 @@ def verify_legacy_import(
             month_location = _month_location(source_month.year, source_month.month)
             month_row = db.execute(
                 """
-                SELECT * FROM months
+                SELECT id, status, opening_balance_minutes, closing_balance_minutes
+                FROM months
                 WHERE dataset_id = ? AND year = ? AND month = ?
                 """,
                 (dataset_id, source_month.year, source_month.month),
@@ -536,7 +540,11 @@ def verify_legacy_import(
                 )
 
             day_rows = db.execute(
-                "SELECT * FROM day_entries WHERE month_id = ? ORDER BY work_date",
+                """
+                SELECT id, work_date, special_day, start_minute, end_minute,
+                       break_duration_minutes, expected_work_minutes
+                FROM day_entries WHERE month_id = ? ORDER BY work_date
+                """,
                 (month_row["id"],),
             ).fetchall()
             expected_calendar_days = calendar.monthrange(
@@ -563,7 +571,9 @@ def verify_legacy_import(
                 row["day_entry_id"]: row
                 for row in db.execute(
                     """
-                    SELECT result.* FROM closed_day_results result
+                    SELECT result.day_entry_id, result.daily_overtime_minutes,
+                           result.running_balance_minutes
+                    FROM closed_day_results result
                     JOIN day_entries day ON day.id = result.day_entry_id
                     WHERE day.month_id = ?
                     """,

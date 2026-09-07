@@ -4,15 +4,18 @@ import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Barrier, Lock
 from unittest.mock import patch
 
 from znactime.core.models import BreakRecord
+from znactime.core.validation import MAX_SPECIAL_DAY_LENGTH
 from znactime.storage.atomic_file import sqlite_protected_paths
 from znactime.storage.errors import (
     ClosedPeriodError,
+    ExportError,
     StorageConflict,
     StorageCorrupt,
     StorageError,
@@ -182,7 +185,8 @@ class SQLiteRepositoryTest(unittest.TestCase):
                 if statement.lstrip().upper().startswith("SELECT")
             ]
             self.assertEqual(len(records), expected_months)
-            self.assertEqual(len(selects), 5)
+            self.assertEqual(len(selects), 4)
+            self.assertFalse(any("FROM datasets" in item for item in selects))
             self.assertTrue(any(item == "BEGIN" for item in statements))
             self.assertTrue(any(item == "COMMIT" for item in statements))
 
@@ -202,7 +206,8 @@ class SQLiteRepositoryTest(unittest.TestCase):
             if statement.lstrip().upper().startswith("SELECT")
         ]
         self.assertEqual(loaded.work_date, work_date)
-        self.assertEqual(len(selects), 4)
+        self.assertEqual(len(selects), 3)
+        self.assertFalse(any("FROM datasets" in item for item in selects))
         self.assertTrue(any(item == "BEGIN" for item in statements))
         self.assertTrue(any(item == "COMMIT" for item in statements))
 
@@ -1291,8 +1296,6 @@ class SQLiteRepositoryTest(unittest.TestCase):
             "+SUM(A1:A2)",
             "-1+2",
             "@command",
-            "\t=1+1",
-            "\r=1+1",
             "'=literal apostrophe",
         )
         for day, special in zip(month.days, special_values):
@@ -1325,6 +1328,47 @@ class SQLiteRepositoryTest(unittest.TestCase):
             list(special_values),
         )
 
+    def test_special_day_text_is_bounded_before_storage_and_export(self):
+        month = self.repository.get_or_create_month(2024, 2)
+        day = month.days[0]
+        for invalid in (
+            "control\ttext",
+            "line\nbreak",
+            "x" * (MAX_SPECIAL_DAY_LENGTH + 1),
+        ):
+            with self.assertRaises(StorageValidationError):
+                self.repository.update_day(
+                    day.work_date,
+                    expected_revision=day.revision,
+                    special_day=invalid,
+                    fields=frozenset(("special_day",)),
+                )
+
+        maximum = "x" * MAX_SPECIAL_DAY_LENGTH
+        stored = self.repository.update_day(
+            day.work_date,
+            expected_revision=day.revision,
+            special_day=maximum,
+            fields=frozenset(("special_day",)),
+        )
+        self.assertEqual(stored.special_day, maximum)
+
+        unsafe_month = replace(
+            month,
+            days=(replace(day, special_day="control\rtext"), *month.days[1:]),
+        )
+        destination = Path(self.temporary.name) / "unsafe.csv"
+        with self.assertRaises(ExportError):
+            export_month(unsafe_month, destination)
+        self.assertFalse(destination.exists())
+
+        self.sql.execute(
+            "UPDATE day_entries SET special_day = ? WHERE work_date = ?",
+            ("stored\x00control", day.work_date.isoformat()),
+        )
+        with self.assertRaises(StorageCorrupt):
+            self.repository.load_month(2024, 2)
+
     def test_sqlite_and_legacy_write_boundaries_are_isolated(self):
         root = Path(__file__).resolve().parents[1] / "znactime"
         sqlite_importers = []
@@ -1340,6 +1384,14 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.assertNotIn("csv_store", app_text)
         self.assertNotIn("csv_store", model_text)
         self.assertNotIn("workday_timer/", app_text)
+        for path in (root / "storage" / "sqlite").rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text.upper(), r"SELECT\s+(?:\w+\.)?\*")
+        for path in root.rglob("*.py"):
+            self.assertNotRegex(
+                path.read_text(encoding="utf-8"),
+                r"(?m)^\s*assert\s",
+            )
 
 
 if __name__ == "__main__":

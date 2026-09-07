@@ -170,7 +170,7 @@ labels, colors, and calculated open-month balances do not belong here.
 | `id` | Local relationship key. |
 | `month_id` | Parent month. The date must belong to this month. |
 | `work_date` | ISO `YYYY-MM-DD` calendar date. This is the natural day identity within the dataset. |
-| `special_day` | Semantic label such as `Normal day`, `Weekend`, holiday, vacation, or user-defined text. |
+| `special_day` | Semantic label such as `Normal day`, `Weekend`, holiday, vacation, or user-defined text. Application writes, legacy imports, persisted-row loading, and CSV export enforce a maximum of 256 Unicode characters and reject control characters. |
 | `start_minute` | Local wall-clock work start (`0..1439`), or `NULL` when unset. |
 | `end_minute` | Local wall-clock work end (`0..1439`), or `NULL` when unset. Overnight work is not currently supported. |
 | `break_duration_minutes` | Total break duration when only a duration is known. It is mutually exclusive with rows in `break_periods`. `0` means no break. |

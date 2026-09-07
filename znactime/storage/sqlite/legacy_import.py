@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import calendar
 import sqlite3
 import uuid
 from dataclasses import replace
-from datetime import date
 from pathlib import Path
 
 from znactime.config import VERSION
 from znactime.core.constants import NORMAL_DAY
+from znactime.core.validation import special_day_text_problem
 from znactime.storage.errors import StorageValidationError
 from znactime.storage.legacy_csv_import import (
     CancellationCallback,
@@ -74,7 +73,11 @@ def _local_day_has_data(db, day_row) -> bool:
 def _ensure_month(repository: SQLiteRepository, db, year: int, month: int, now: str):
     dataset_id = repository._dataset_id(db)
     existing = db.execute(
-        "SELECT * FROM months WHERE dataset_id = ? AND year = ? AND month = ?",
+        """
+        SELECT id, dataset_id, year, month, status, opening_balance_minutes,
+               revision
+        FROM months WHERE dataset_id = ? AND year = ? AND month = ?
+        """,
         (dataset_id, year, month),
     ).fetchone()
     if existing is not None:
@@ -98,29 +101,21 @@ def _ensure_month(repository: SQLiteRepository, db, year: int, month: int, now: 
         """,
         (dataset_id, year, month, opening, now, now),
     ).lastrowid
-    for day_number in range(1, calendar.monthrange(year, month)[1] + 1):
-        work_date = date(year, month, day_number)
-        db.execute(
-            """
-            INSERT INTO day_entries(
-                month_id, work_date, special_day, start_minute, end_minute,
-                break_duration_minutes, expected_work_minutes,
-                expected_minutes_overridden, created_at, updated_at
-            ) VALUES (?, ?, ?, NULL, NULL, 0, ?, 0, ?, ?)
-            """,
-            (
-                month_id,
-                work_date.isoformat(),
-                NORMAL_DAY,
-                repository._expected_minutes(work_date, db),
-                now,
-                now,
-            ),
-        )
-    return db.execute("SELECT * FROM months WHERE id = ?", (month_id,)).fetchone(), True
+    repository._insert_calendar_days(db, month_id, year, month, now)
+    return db.execute(
+        """
+        SELECT id, dataset_id, year, month, status, opening_balance_minutes,
+               closing_balance_minutes, closed_at, created_at, updated_at, revision
+        FROM months WHERE id = ?
+        """,
+        (month_id,),
+    ).fetchone(), True
 
 
 def _apply_legacy_day(db, day_row, legacy_day: LegacyDay, now: str, expected: int):
+    special_day_problem = special_day_text_problem(legacy_day.special_day)
+    if special_day_problem is not None:
+        raise StorageValidationError(special_day_problem)
     db.execute("DELETE FROM break_periods WHERE day_entry_id = ?", (day_row["id"],))
     db.execute(
         """
@@ -139,14 +134,14 @@ def _apply_legacy_day(db, day_row, legacy_day: LegacyDay, now: str, expected: in
             day_row["id"],
         ),
     )
-    for position, pause in enumerate(legacy_day.breaks):
-        db.execute(
-            """
-            INSERT INTO break_periods(
-                public_id, day_entry_id, position, start_minute, end_minute,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+    db.executemany(
+        """
+        INSERT INTO break_periods(
+            public_id, day_entry_id, position, start_minute, end_minute,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
             (
                 str(uuid.uuid4()),
                 day_row["id"],
@@ -155,8 +150,10 @@ def _apply_legacy_day(db, day_row, legacy_day: LegacyDay, now: str, expected: in
                 pause.end_minute,
                 now,
                 now,
-            ),
-        )
+            )
+            for position, pause in enumerate(legacy_day.breaks)
+        ),
+    )
 
 
 def _legacy_opening(month: LegacyMonth, fallback: int) -> int:
@@ -485,7 +482,12 @@ def merge_preflight(
                     legacy_month, month_row["opening_balance_minutes"]
                 )
                 local_rows = db.execute(
-                    "SELECT * FROM day_entries WHERE month_id = ? ORDER BY work_date",
+                    """
+                    SELECT id, work_date, special_day, start_minute, end_minute,
+                           break_duration_minutes, expected_work_minutes,
+                           expected_minutes_overridden, local_input_revision
+                    FROM day_entries WHERE month_id = ? ORDER BY work_date
+                    """,
                     (month_row["id"],),
                 ).fetchall()
                 month_had_local_data = any(
@@ -561,7 +563,12 @@ def merge_preflight(
                         (target_opening, now, month_row["id"], target_opening),
                     )
                     month_row = db.execute(
-                        "SELECT * FROM months WHERE id = ?", (month_row["id"],)
+                        """
+                        SELECT id, dataset_id, year, month, status,
+                               opening_balance_minutes, revision
+                        FROM months WHERE id = ?
+                        """,
+                        (month_row["id"],),
                     ).fetchone()
 
                 if legacy_month.closed:
