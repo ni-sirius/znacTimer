@@ -6,7 +6,6 @@ import tempfile
 from pathlib import Path
 
 from znactime.core.models import DayRecord, MonthRecord
-from znactime.core.constants import effective_expected_work_minutes
 from znactime.core.validation import special_day_text_problem
 from znactime.storage.atomic_file import (
     publish_staged_file,
@@ -50,6 +49,30 @@ def _interruption(day: DayRecord) -> tuple[str, int, bool]:
     return _clock(duration), duration, True
 
 
+def _valid_open_day(day: DayRecord, interruption_minutes: int, complete: bool) -> bool:
+    if (
+        day.start_minute is None
+        or day.end_minute is None
+        or day.end_minute <= day.start_minute
+        or not complete
+        or interruption_minutes < 0
+        or interruption_minutes > day.end_minute - day.start_minute
+    ):
+        return False
+    previous_end = None
+    for pause in sorted(day.breaks, key=lambda item: item.start_minute):
+        if (
+            pause.end_minute is None
+            or pause.end_minute <= pause.start_minute
+            or pause.start_minute < day.start_minute
+            or pause.end_minute > day.end_minute
+            or (previous_end is not None and pause.start_minute < previous_end)
+        ):
+            return False
+        previous_end = pause.end_minute
+    return True
+
+
 def month_rows(month: MonthRecord):
     running = month.opening_balance_minutes
     yield [CSV_VERSION_MARKER, str(CSV_SCHEMA_VERSION)]
@@ -63,12 +86,10 @@ def month_rows(month: MonthRecord):
         if day.daily_overtime_minutes is not None and day.running_balance_minutes is not None:
             overtime = day.daily_overtime_minutes
             running = day.running_balance_minutes
-        elif day.start_minute is not None and day.end_minute is not None and complete:
+        elif _valid_open_day(day, interruption_minutes, complete):
             overtime = (
                 day.end_minute - day.start_minute
-                - interruption_minutes - effective_expected_work_minutes(
-                    day.special_day, day.expected_work_minutes
-                )
+                - interruption_minutes - day.expected_work_minutes
             )
             running += overtime
         else:

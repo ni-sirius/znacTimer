@@ -235,23 +235,27 @@ class TimeTrackerApp(QMainWindow):
 
     def open_work_schedule_settings(self):
         initial_weekday_minutes = None
+        initial_special_day_minutes = 0
         active_schedule = None
         if self.repository is not None:
-            today = datetime.today().date()
+            selected_month = date(self.header.year(), self.header.month(), 1)
             active_schedule = _schedule_for_date(
-                self.repository.list_work_schedules(), today
+                self.repository.list_work_schedules(), selected_month
             )
             if active_schedule is not None:
                 initial_weekday_minutes = active_schedule.weekday_minutes
+                initial_special_day_minutes = active_schedule.special_day_minutes
         dialog = WorkScheduleDialog(
             self,
             self.theme_controller.settings,
             initial_weekday_minutes=initial_weekday_minutes,
+            initial_special_day_minutes=initial_special_day_minutes,
             persist_workday=self.repository is None,
         )
         dialog.exec()
         self._apply_work_schedule_settings(
             weekday_minutes=dialog.schedule_widget.weekday_minutes(),
+            special_day_minutes=dialog.schedule_widget.special_day_minutes(),
             show_expected_end=dialog.schedule_widget.show_expected_end(),
             expected_schedule=active_schedule,
         )
@@ -265,6 +269,7 @@ class TimeTrackerApp(QMainWindow):
         show_expected_end=None,
         *,
         weekday_minutes=None,
+        special_day_minutes=None,
         expected_schedule=None,
     ):
         if (
@@ -278,11 +283,14 @@ class TimeTrackerApp(QMainWindow):
                 day_hours = loaded_day_hours
         if weekday_minutes is None:
             weekday_minutes = (round(day_hours * 60),) * 5 + (0, 0)
+        if special_day_minutes is None:
+            special_day_minutes = getattr(expected_schedule, "special_day_minutes", 0)
         today = datetime.today().date()
         selected_day_hours = weekday_minutes[today.weekday()] / 60
         schedule_changed = (
             expected_schedule is None
             or weekday_minutes != expected_schedule.weekday_minutes
+            or special_day_minutes != getattr(expected_schedule, "special_day_minutes", 0)
         )
         if (
             not schedule_changed
@@ -298,20 +306,33 @@ class TimeTrackerApp(QMainWindow):
                     "The active work schedule could not be loaded. Reopen the settings and try again.",
                 )
                 return
+            selected_month = (
+                date(self.header.year(), self.header.month(), 1)
+                if getattr(self, "header", None) is not None
+                else datetime.today().date().replace(day=1)
+            )
+            if getattr(self, "month_closed", False):
+                QMessageBox.warning(
+                    self,
+                    "Schedule update unavailable",
+                    "The selected month is closed. Reopen it before changing the work schedule.",
+                )
+                return
             try:
                 self.repository.replace_work_schedule(
-                    effective_from=today,
+                    effective_from=selected_month,
                     effective_to=None,
                     weekday_minutes=weekday_minutes,
+                    special_day_minutes=special_day_minutes,
                     expected_public_id=expected_schedule.public_id,
                     expected_revision=expected_schedule.revision,
                 )
             except StorageConflict:
                 current = _schedule_for_date(
-                    self.repository.list_work_schedules(), today
+                    self.repository.list_work_schedules(), selected_month
                 )
                 if current is not None:
-                    self.day_hours = current.weekday_minutes[today.weekday()] / 60
+                    self.day_hours = current.weekday_minutes[selected_month.weekday()] / 60
                 self.load_month()
                 QMessageBox.warning(
                     self,
@@ -389,7 +410,7 @@ class TimeTrackerApp(QMainWindow):
         if self.repository is None:
             return
         try:
-            record = self.repository.get_or_create_month(year, month)
+            record = self.repository.view_month(year, month)
             carry_discontinuity = self.repository.month_has_carry_discontinuity(
                 year, month
             )
@@ -710,9 +731,11 @@ class TimeTrackerApp(QMainWindow):
         opening = hours_to_hhmm(preview.opening_balance_minutes / 60)
         if unresolved_count:
             close_text = (
-                f"{unresolved_count} normal day(s) have no work times.\n\n"
+                f"{unresolved_count} day(s) with planned work have no work times.\n\n"
                 "If you continue, each of those days will be explicitly marked "
-                f"as No data.\n\nOpening balance: {opening}\n"
+                "as No data. No data uses the configured special-day planned time; "
+                "if that value is positive, closing will still require valid work times."
+                f"\n\nOpening balance: {opening}\n"
                 f"Calculated closing balance: {closing}\n\n"
                 "Mark these days as No data and close the month?"
             )

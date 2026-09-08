@@ -20,7 +20,7 @@ from znactime.storage.sqlite.schema import (
 from znactime.core.constants import (
     NO_DATA_DAY,
     NORMAL_DAY,
-    effective_expected_work_minutes,
+    WEEKEND_DAY,
 )
 
 
@@ -340,9 +340,7 @@ def _open_results(month_row, day_rows, breaks_by_day):
                     row["end_minute"]
                     - row["start_minute"]
                     - interruption
-                    - effective_expected_work_minutes(
-                        row["special_day"], row["expected_work_minutes"]
-                    )
+                    - row["expected_work_minutes"]
                 )
         running += overtime
         results[row["work_date"]] = (overtime, running)
@@ -626,6 +624,15 @@ def verify_legacy_import(
                     )
                     continue
                 expected_special_day = source_day.special_day
+                if (
+                    source_day.special_day == NORMAL_DAY
+                    and source_day.start_minute is None
+                    and source_day.end_minute is None
+                    and source_day.break_duration_minutes in (None, 0)
+                    and not source_day.breaks
+                    and day_row["special_day"] == WEEKEND_DAY
+                ):
+                    expected_special_day = WEEKEND_DAY
                 if (
                     month_row["status"] == "closed"
                     and source_day.special_day == NORMAL_DAY

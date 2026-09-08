@@ -14,6 +14,8 @@ from znactime.storage.legacy_csv_import import LegacyMergeResult, LegacyPrefligh
 
 
 class Repository(Protocol):
+    def view_month(self, year: int, month: int) -> MonthRecord: ...
+
     def get_or_create_month(self, year: int, month: int) -> MonthRecord: ...
 
     def load_month(self, year: int, month: int) -> MonthRecord | None: ...
@@ -64,6 +66,7 @@ class Repository(Protocol):
         effective_from: date,
         effective_to: date | None,
         weekday_minutes: tuple[int, int, int, int, int, int, int],
+        special_day_minutes: int,
         expected_public_id: str,
         expected_revision: int,
     ) -> WorkSchedulePeriod: ...

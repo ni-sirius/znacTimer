@@ -140,9 +140,9 @@ class QtModelInterruptionTest(unittest.TestCase):
                 DayEntry("", "19.06.2024", "", "08:00", "17:00", "00:00"),
                 DayEntry("", "20.06.2024", "", "--:--", "--:--", "00:00"),
                 DayEntry("", "22.06.2024", "Weekend", "--:--", "--:--", "00:00",
-                         row_color="weekend"),
+                         row_color="weekend", expected_work_minutes=0),
                 DayEntry("", "24.06.2024", "Vacation", "--:--", "--:--", "00:00",
-                         row_color="special_day"),
+                         row_color="special_day", expected_work_minutes=0),
             ]
         )
         model.recalculate(today=date(2024, 6, 18), autosave=False)
@@ -711,6 +711,52 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(badge["texts"], ["Normal day"])
         self.assertEqual(badge["state"], "valid_day_today")
         self.assertTrue(badge["full_width"])
+
+    def test_weekend_badge_color_is_driven_only_by_text_after_recalculation(self):
+        model = MonthTableModel()
+        model.set_entries(
+            [
+                DayEntry(
+                    cw="",
+                    date="17.06.2024",
+                    special="Weekend",
+                    start="--:--",
+                    end="--:--",
+                    interruption="00:00",
+                    expected_work_minutes=0,
+                ),
+                DayEntry(
+                    cw="",
+                    date="18.06.2024",
+                    special="Weekend",
+                    start="--:--",
+                    end="--:--",
+                    interruption="00:00",
+                    expected_work_minutes=480,
+                ),
+                DayEntry(
+                    cw="",
+                    date="15.06.2024",
+                    special="Normal day",
+                    start="--:--",
+                    end="--:--",
+                    interruption="00:00",
+                    expected_work_minutes=0,
+                ),
+            ]
+        )
+
+        model.recalculate(today=date(2024, 6, 20), autosave=False)
+
+        zero_planned = model.index(0, 2).data(BADGE_ROLE)
+        positive_planned = model.index(1, 2).data(BADGE_ROLE)
+        calendar_weekend_with_normal_text = model.index(2, 2).data(BADGE_ROLE)
+        self.assertEqual(zero_planned["state"], "weekend")
+        self.assertEqual(positive_planned["state"], "weekend")
+        self.assertEqual(calendar_weekend_with_normal_text["state"], "valid_day")
+        with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
+            colors = CurrentTimeDelegate()._badge_colors(positive_planned["state"])
+        self.assertEqual(colors["fill"].name(), "#e1edff")
 
     def test_day_badge_text_is_derived_from_its_fill_color(self):
         delegate = CurrentTimeDelegate()

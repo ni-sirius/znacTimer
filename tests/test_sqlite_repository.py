@@ -3,6 +3,7 @@ import csv
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -28,7 +29,7 @@ from znactime.storage.csv_format import spreadsheet_safe_text
 from znactime.storage.legacy_csv_import import preflight_legacy_data
 from znactime.storage.legacy_csv_import import LegacyImportCancelled
 from znactime.storage.sqlite.repository import SQLiteRepository
-from znactime.storage.sqlite.schema import SCHEMA_VERSION
+from znactime.storage.sqlite.schema import SCHEMA_VERSION, SCHEMA_V6_INITIAL_SQL
 
 
 class SQLiteRepositoryTest(unittest.TestCase):
@@ -50,6 +51,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
         effective_from,
         effective_to,
         weekday_minutes,
+        special_day_minutes=0,
         repository=None,
     ):
         repository = repository or self.repository
@@ -63,6 +65,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
             effective_from=effective_from,
             effective_to=effective_to,
             weekday_minutes=weekday_minutes,
+            special_day_minutes=special_day_minutes,
             expected_public_id=active.public_id,
             expected_revision=active.revision,
         )
@@ -84,6 +87,230 @@ class SQLiteRepositoryTest(unittest.TestCase):
             self.assertEqual(created.list_months(), ())
         finally:
             created.close()
+
+    def test_viewing_virtual_month_does_not_materialize_database_rows(self):
+        viewed = self.repository.view_month(2024, 6)
+
+        self.assertFalse(viewed.materialized)
+        self.assertEqual(len(viewed.days), 30)
+        self.assertTrue(
+            all(
+                day.special_day == "Weekend"
+                for day in viewed.days
+                if day.work_date.weekday() >= 5
+            )
+        )
+        self.assertIsNone(self.repository.load_month(2024, 6))
+        self.assertEqual(self.sql.execute("SELECT COUNT(*) FROM months").fetchone()[0], 0)
+        self.assertEqual(
+            self.sql.execute("SELECT COUNT(*) FROM day_entries").fetchone()[0], 0
+        )
+
+    def test_first_valid_edit_materializes_calendar_but_invalid_edit_rolls_back(self):
+        viewed = self.repository.view_month(2024, 6)
+        monday = next(day for day in viewed.days if day.work_date.weekday() == 0)
+
+        with self.assertRaisesRegex(StorageValidationError, "requires a start"):
+            self.repository.update_day(
+                monday.work_date,
+                expected_revision=0,
+                end_minute=600,
+                fields=frozenset(("end_minute",)),
+            )
+        self.assertIsNone(self.repository.load_month(2024, 6))
+
+        self.repository.update_day(
+            monday.work_date,
+            expected_revision=0,
+            start_minute=480,
+            fields=frozenset(("start_minute",)),
+        )
+        materialized = self.repository.load_month(2024, 6)
+        self.assertEqual(len(materialized.days), 30)
+        self.assertTrue(
+            all(
+                day.special_day == "Weekend"
+                for day in materialized.days
+                if day.work_date.weekday() >= 5
+            )
+        )
+
+    def test_opening_materialized_month_repairs_normal_weekend_classification(self):
+        self._replace_schedule(
+            effective_from=date(2024, 6, 1),
+            effective_to=None,
+            weekday_minutes=(480, 480, 480, 480, 480, 120, 120),
+            special_day_minutes=30,
+        )
+        month = self.repository.get_or_create_month(2024, 6)
+        saturday = next(day for day in month.days if day.work_date.weekday() == 5)
+        sunday = next(day for day in month.days if day.work_date.weekday() == 6)
+        normal_saturday = self.repository.update_day(
+            saturday.work_date,
+            expected_revision=saturday.revision,
+            special_day="Normal day",
+            fields=frozenset(("special_day",)),
+        )
+        vacation_sunday = self.repository.update_day(
+            sunday.work_date,
+            expected_revision=sunday.revision,
+            special_day="Vacation",
+            fields=frozenset(("special_day",)),
+        )
+        self.assertEqual(normal_saturday.expected_work_minutes, 120)
+
+        opened = self.repository.view_month(2024, 6)
+
+        repaired_saturday = next(
+            day for day in opened.days if day.work_date == saturday.work_date
+        )
+        preserved_sunday = next(
+            day for day in opened.days if day.work_date == sunday.work_date
+        )
+        self.assertEqual(repaired_saturday.special_day, "Weekend")
+        self.assertEqual(repaired_saturday.expected_work_minutes, 30)
+        self.assertEqual(repaired_saturday.revision, normal_saturday.revision + 1)
+        self.assertFalse(repaired_saturday.expected_minutes_overridden)
+        self.assertEqual(preserved_sunday, vacation_sunday)
+
+    def test_virtual_close_rejects_month_materialized_after_preview(self):
+        virtual = self.repository.view_month(2024, 6)
+        other = SQLiteRepository(self.path)
+        try:
+            other.get_or_create_month(2024, 6)
+            with self.assertRaisesRegex(StorageConflict, "month changed"):
+                self.repository.close_month(
+                    2024,
+                    6,
+                    expected_revision=virtual.revision,
+                    mark_unresolved_no_data=True,
+                )
+        finally:
+            other.close()
+
+    def test_virtual_day_edit_rejects_row_changed_after_render(self):
+        virtual = self.repository.view_month(2024, 6)
+        monday = next(day for day in virtual.days if day.work_date.weekday() == 0)
+        other = SQLiteRepository(self.path)
+        try:
+            materialized = other.get_or_create_month(2024, 6)
+            persisted_monday = next(
+                day for day in materialized.days if day.work_date == monday.work_date
+            )
+            changed = other.update_day(
+                monday.work_date,
+                expected_revision=persisted_monday.revision,
+                special_day="Vacation",
+                fields=frozenset(("special_day",)),
+            )
+
+            with self.assertRaisesRegex(StorageConflict, "day changed"):
+                self.repository.update_day(
+                    monday.work_date,
+                    expected_revision=monday.revision,
+                    start_minute=480,
+                    fields=frozenset(("start_minute",)),
+                )
+
+            preserved = self.repository.load_month(2024, 6)
+            preserved_monday = next(
+                day for day in preserved.days if day.work_date == monday.work_date
+            )
+            self.assertEqual(preserved_monday, changed)
+        finally:
+            other.close()
+
+    def test_close_preview_does_not_materialize_virtual_month(self):
+        preview = self.repository.preview_month_close(2024, 6)
+
+        self.assertGreater(len(preview.unresolved_days), 0)
+        self.assertIsNone(self.repository.load_month(2024, 6))
+
+    def test_confirmed_virtual_close_materializes_and_closes_atomically(self):
+        virtual = self.repository.view_month(2024, 6)
+
+        closed = self.repository.close_month(
+            2024,
+            6,
+            expected_revision=virtual.revision,
+            mark_unresolved_no_data=True,
+        )
+
+        self.assertTrue(closed.materialized)
+        self.assertEqual(closed.status, "closed")
+        self.assertEqual(len(closed.days), 30)
+        self.assertTrue(
+            all(day.daily_overtime_minutes is not None for day in closed.days)
+        )
+        self.assertTrue(
+            all(day.running_balance_minutes is not None for day in closed.days)
+        )
+        self.assertEqual(self.repository.load_month(2024, 6), closed)
+
+    def test_positive_special_schedule_rolls_back_no_data_close_conversion(self):
+        self._replace_schedule(
+            effective_from=date(2024, 6, 1),
+            effective_to=None,
+            weekday_minutes=(480, 480, 480, 480, 480, 0, 0),
+            special_day_minutes=60,
+        )
+        month = self.repository.get_or_create_month(2024, 6)
+        before = tuple(
+            (day.special_day, day.expected_work_minutes, day.revision)
+            for day in month.days
+        )
+
+        with self.assertRaisesRegex(StorageValidationError, "still requires planned work"):
+            self.repository.close_month(
+                2024,
+                6,
+                expected_revision=month.revision,
+                mark_unresolved_no_data=True,
+            )
+
+        preserved = self.repository.load_month(2024, 6)
+        self.assertEqual(preserved.status, "open")
+        self.assertEqual(
+            tuple(
+                (day.special_day, day.expected_work_minutes, day.revision)
+                for day in preserved.days
+            ),
+            before,
+        )
+
+    def test_initial_v6_schema_is_amended_with_backup_then_backup_is_removed(self):
+        legacy_path = Path(self.temporary.name) / "initial-v6.db"
+        sql = sqlite3.connect(legacy_path)
+        sql.executescript(SCHEMA_V6_INITIAL_SQL)
+        sql.execute(
+            "INSERT INTO schema_migrations(version, applied_at, app_version) VALUES(6, 'x', 'x')"
+        )
+        sql.execute("PRAGMA user_version = 6")
+        dataset_id = sql.execute(
+            "INSERT INTO datasets(public_id, created_at) VALUES(?, 'x')",
+            (str(uuid.uuid4()),),
+        ).lastrowid
+        sql.execute(
+            """
+            INSERT INTO work_schedule_periods(
+                public_id, dataset_id, effective_from,
+                monday_minutes, tuesday_minutes, wednesday_minutes,
+                thursday_minutes, friday_minutes, saturday_minutes, sunday_minutes,
+                created_at, updated_at
+            ) VALUES (?, ?, '0001-01-01', 480, 480, 480, 480, 480, 0, 0, 'x', 'x')
+            """,
+            (str(uuid.uuid4()), dataset_id),
+        )
+        sql.commit()
+        sql.close()
+
+        upgraded = SQLiteRepository(legacy_path)
+        try:
+            self.assertEqual(upgraded.list_work_schedules()[0].special_day_minutes, 0)
+        finally:
+            upgraded.close()
+        recovery = legacy_path.parent / "recovery"
+        self.assertFalse(recovery.exists() and any(recovery.iterdir()))
 
     def test_schema_creation_failure_rolls_back_all_ddl(self):
         failed_path = Path(self.temporary.name) / "failed-create.db"
@@ -509,6 +736,38 @@ class SQLiteRepositoryTest(unittest.TestCase):
         )
         self.assertEqual(changed.special_day, "Changed")
 
+    def test_invalid_open_breaks_contribute_zero_to_lazy_carry(self):
+        june = self.repository.get_or_create_month(2024, 6)
+        july = self.repository.get_or_create_month(2024, 7)
+        open_pause_day = june.days[2]
+        outside_pause_day = june.days[3]
+        self.repository.update_day(
+            open_pause_day.work_date,
+            expected_revision=open_pause_day.revision,
+            start_minute=480,
+            end_minute=1020,
+            breaks=(BreakRecord("", 0, 720, None),),
+            fields=frozenset(("start_minute", "end_minute", "breaks")),
+        )
+        self.repository.update_day(
+            outside_pause_day.work_date,
+            expected_revision=outside_pause_day.revision,
+            start_minute=480,
+            end_minute=1020,
+            breaks=(BreakRecord("", 0, 420, 450),),
+            fields=frozenset(("start_minute", "end_minute", "breaks")),
+        )
+
+        self.assertEqual(
+            self.repository.preview_month_close(2024, 6).closing_balance_minutes,
+            0,
+        )
+        self.assertEqual(
+            self.repository.get_or_create_month(2024, 7).opening_balance_minutes,
+            0,
+        )
+        self.assertEqual(july.opening_balance_minutes, 0)
+
     def test_close_requires_blank_normal_days_to_be_explicitly_classified(self):
         month = self.repository.get_or_create_month(2024, 6)
         preview = self.repository.preview_month_close(2024, 6)
@@ -561,7 +820,13 @@ class SQLiteRepositoryTest(unittest.TestCase):
 
         preserved = self.repository.load_month(year, month_number)
         self.assertEqual(preserved.status, "open")
-        self.assertTrue(all(day.special_day == "Normal day" for day in preserved.days))
+        self.assertTrue(
+            all(
+                day.special_day
+                == ("Weekend" if day.work_date.weekday() >= 5 else "Normal day")
+                for day in preserved.days
+            )
+        )
 
     def test_special_day_work_adds_all_worked_minutes(self):
         month = self.repository.get_or_create_month(2024, 6)
@@ -586,7 +851,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
         )
 
         stored = next(day for day in closed.days if day.work_date == monday.work_date)
-        self.assertEqual(stored.expected_work_minutes, 480)
+        self.assertEqual(stored.expected_work_minutes, 0)
         self.assertEqual(stored.daily_overtime_minutes, 240)
 
     def test_open_csv_export_uses_zero_expectation_for_special_day(self):
@@ -612,11 +877,37 @@ class SQLiteRepositoryTest(unittest.TestCase):
         exported = next(row for row in rows[1:] if row[0] == monday.work_date.strftime("%d.%m.%Y"))
         self.assertEqual(exported[5], "04:00")
 
-    def test_configured_weekend_expectation_is_authoritative(self):
+    def test_open_csv_export_gives_invalid_break_row_zero_overtime(self):
+        month = self.repository.get_or_create_month(2024, 6)
+        monday = next(day for day in month.days if day.work_date.weekday() == 0)
+        self.repository.update_day(
+            monday.work_date,
+            expected_revision=monday.revision,
+            start_minute=480,
+            end_minute=1020,
+            breaks=(BreakRecord("", 0, 450, 480),),
+            fields=frozenset(("start_minute", "end_minute", "breaks")),
+        )
+        target = Path(self.temporary.name) / "invalid-break.csv"
+
+        export_month(self.repository.load_month(2024, 6), target)
+
+        with target.open(newline="", encoding="utf-8") as stream:
+            rows = list(csv.reader(stream))
+        exported = next(
+            row
+            for row in rows[1:]
+            if row[0] == monday.work_date.strftime("%d.%m.%Y")
+        )
+        self.assertEqual(exported[5], "00:00")
+        self.assertEqual(exported[6], "00:00")
+
+    def test_configured_special_day_expectation_is_authoritative_for_weekend(self):
         self._replace_schedule(
             effective_from=date(2024, 6, 1),
             effective_to=None,
             weekday_minutes=(480, 480, 480, 480, 480, 240, 0),
+            special_day_minutes=240,
         )
         month = self.repository.get_or_create_month(2024, 6)
         saturday = next(day for day in month.days if day.work_date.weekday() == 5)
@@ -630,15 +921,12 @@ class SQLiteRepositoryTest(unittest.TestCase):
             fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
         )
 
-        closed = self.repository.close_month(
-            2024,
-            6,
-            expected_revision=month.revision,
-            mark_unresolved_no_data=True,
+        stored = next(
+            day
+            for day in self.repository.load_month(2024, 6).days
+            if day.work_date == saturday.work_date
         )
-
-        stored = next(day for day in closed.days if day.work_date == saturday.work_date)
-        self.assertEqual(stored.daily_overtime_minutes, -120)
+        self.assertEqual(stored.expected_work_minutes, 240)
 
     def test_reopened_history_can_be_reclosed_without_rewriting_closed_successor(self):
         january = self.repository.get_or_create_month(2024, 1)
@@ -1093,9 +1381,9 @@ class SQLiteRepositoryTest(unittest.TestCase):
         with self.assertRaises(StorageCorrupt):
             SQLiteRepository(invalid_path)
 
-    def test_schedule_changes_only_open_non_overridden_days(self):
+    def test_schedule_changes_all_open_days_and_resets_test_only_override(self):
         month = self.repository.get_or_create_month(2024, 6)
-        override = month.days[0]
+        override = next(day for day in month.days if day.work_date.weekday() == 0)
         self.repository.set_day_work_limit(
             override.work_date, 300, expected_revision=override.revision
         )
@@ -1105,11 +1393,128 @@ class SQLiteRepositoryTest(unittest.TestCase):
             weekday_minutes=(420, 420, 420, 420, 420, 0, 0),
         )
         changed = self.repository.load_month(2024, 6)
-        self.assertEqual(changed.days[0].expected_work_minutes, 300)
+        changed_override = next(
+            day for day in changed.days if day.work_date == override.work_date
+        )
+        self.assertEqual(changed_override.expected_work_minutes, 420)
+        self.assertFalse(changed_override.expected_minutes_overridden)
         self.assertEqual(changed.days[1].expected_work_minutes, 0)
         self.assertEqual(changed.days[3].expected_work_minutes, 420)
 
-    def test_backdated_schedule_is_bounded_by_the_following_period(self):
+    def test_schedule_change_updates_selected_and_later_materialized_months_only(self):
+        self.repository.get_or_create_month(2024, 5)
+        self.repository.get_or_create_month(2024, 6)
+        self.repository.get_or_create_month(2024, 7)
+
+        self._replace_schedule(
+            effective_from=date(2024, 6, 1),
+            effective_to=None,
+            weekday_minutes=(420,) * 7,
+            special_day_minutes=90,
+        )
+
+        may = self.repository.load_month(2024, 5)
+        june = self.repository.load_month(2024, 6)
+        july = self.repository.load_month(2024, 7)
+        self.assertEqual(
+            next(day for day in may.days if day.work_date.weekday() == 0).expected_work_minutes,
+            480,
+        )
+        self.assertEqual(
+            next(day for day in june.days if day.work_date.weekday() == 0).expected_work_minutes,
+            420,
+        )
+        self.assertEqual(
+            next(day for day in july.days if day.work_date.weekday() == 0).expected_work_minutes,
+            420,
+        )
+        self.assertTrue(
+            all(
+                day.expected_work_minutes == 90
+                for month in (june, july)
+                for day in month.days
+                if day.special_day == "Weekend"
+            )
+        )
+
+    def test_schedule_change_does_not_materialize_virtual_selected_month(self):
+        self._replace_schedule(
+            effective_from=date(2024, 6, 1),
+            effective_to=None,
+            weekday_minutes=(420,) * 7,
+            special_day_minutes=90,
+        )
+
+        self.assertIsNone(self.repository.load_month(2024, 6))
+        virtual = self.repository.view_month(2024, 6)
+        self.assertFalse(virtual.materialized)
+        self.assertEqual(
+            next(
+                day for day in virtual.days if day.work_date.weekday() == 0
+            ).expected_work_minutes,
+            420,
+        )
+        self.assertTrue(
+            all(
+                day.expected_work_minutes == 90
+                for day in virtual.days
+                if day.special_day == "Weekend"
+            )
+        )
+
+    def test_day_classification_change_rereads_schedule_in_same_write(self):
+        self._replace_schedule(
+            effective_from=date(2024, 6, 1),
+            effective_to=None,
+            weekday_minutes=(420,) * 7,
+            special_day_minutes=90,
+        )
+        month = self.repository.get_or_create_month(2024, 6)
+        monday = next(day for day in month.days if day.work_date.weekday() == 0)
+
+        vacation = self.repository.update_day(
+            monday.work_date,
+            expected_revision=monday.revision,
+            special_day="Vacation",
+            fields=frozenset(("special_day",)),
+        )
+        normal = self.repository.update_day(
+            monday.work_date,
+            expected_revision=vacation.revision,
+            special_day="Normal day",
+            fields=frozenset(("special_day",)),
+        )
+
+        self.assertEqual(vacation.expected_work_minutes, 90)
+        self.assertEqual(normal.expected_work_minutes, 420)
+
+    def test_schedule_change_for_closed_selected_month_is_rejected(self):
+        month = self.repository.get_or_create_month(2024, 6)
+        closed = self.repository.close_month(
+            2024,
+            6,
+            expected_revision=month.revision,
+            mark_unresolved_no_data=True,
+        )
+        active = next(
+            schedule
+            for schedule in self.repository.list_work_schedules()
+            if schedule.effective_from <= date(2024, 6, 1)
+            and (schedule.effective_to is None or schedule.effective_to >= date(2024, 6, 1))
+        )
+
+        with self.assertRaisesRegex(ClosedPeriodError, "selected month is closed"):
+            self.repository.replace_work_schedule(
+                effective_from=date(2024, 6, 1),
+                effective_to=None,
+                weekday_minutes=(420,) * 7,
+                special_day_minutes=0,
+                expected_public_id=active.public_id,
+                expected_revision=active.revision,
+            )
+        self.assertEqual(self.repository.load_month(2024, 6), closed)
+
+    def test_backdated_selected_month_schedule_supersedes_later_periods(self):
         self.repository.get_or_create_month(2024, 5)
         self.repository.get_or_create_month(2024, 6)
         self.repository.get_or_create_month(2024, 7)
@@ -1129,18 +1534,18 @@ class SQLiteRepositoryTest(unittest.TestCase):
 
         may = self._replace_schedule(
             effective_from=date(2024, 5, 1),
-            effective_to=date(2024, 5, 31),
+            effective_to=None,
             weekday_minutes=(450, 450, 450, 450, 450, 0, 0),
         )
 
-        self.assertEqual(may.effective_to, date(2024, 5, 31))
-        june = next(
-            item
-            for item in self.repository.list_work_schedules()
-            if item.effective_from == date(2024, 6, 1)
+        self.assertIsNone(may.effective_to)
+        self.assertFalse(
+            any(
+                item.effective_from == date(2024, 6, 1)
+                for item in self.repository.list_work_schedules()
+            )
         )
-        self.assertIsNone(june.effective_to)
-        self.assertEqual(
+        self.assertNotEqual(
             dict(
                 self.sql.execute(
                     """
@@ -1309,6 +1714,8 @@ class SQLiteRepositoryTest(unittest.TestCase):
     def test_workday_transitions_are_derived_from_day_data(self):
         work_date = date(2024, 6, 3)
         now = datetime(2024, 6, 3, 8, tzinfo=timezone.utc)
+        self.assertIsNone(self.repository.load_month(2024, 6))
+
         started = self.repository.start_workday(work_date, 480, now)
         self.assertEqual(started.start_minute, 480)
 

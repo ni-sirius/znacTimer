@@ -4,12 +4,19 @@ import hashlib
 
 from znactime.storage.sqlite.schema import (
     SCHEMA_SQL,
+    SCHEMA_TABLES_SQL,
     SCHEMA_VERSION,
     SCHEMA_V5_TRIGGER_NAMES,
     SCHEMA_V5_TRIGGERS_SQL,
     SCHEMA_V6_TRIGGER_NAMES,
     SCHEMA_V6_TRIGGERS_SQL,
 )
+
+
+def _table_definition(name: str) -> str:
+    start = SCHEMA_TABLES_SQL.index(f"CREATE TABLE {name} (")
+    end = SCHEMA_TABLES_SQL.index(") STRICT;", start) + len(") STRICT;")
+    return SCHEMA_TABLES_SQL[start:end]
 
 
 MIGRATION_1_TO_2 = r"""
@@ -253,15 +260,37 @@ MIGRATION_4_TO_5 = (
 
 
 # Version 6 introduces an explicit reopen transition, removes eager carry-over
-# propagation, and enforces complete, chronological, non-future month closure.
-MIGRATION_5_TO_6 = (
+# propagation, enforces complete, chronological, non-future month closure, and
+# stores one planned-minute value for every special-day classification.
+MIGRATION_V6_AMENDMENT = (
     "\n".join(
         f"DROP TRIGGER IF EXISTS {name};"
         for name in dict.fromkeys((*SCHEMA_V5_TRIGGER_NAMES, *SCHEMA_V6_TRIGGER_NAMES))
     )
     + "\n"
+    + "ALTER TABLE work_schedule_periods RENAME TO work_schedule_periods_v6_initial;\n"
+    + _table_definition("work_schedule_periods")
+    + "\n"
+    + r"""
+INSERT INTO work_schedule_periods(
+    id, public_id, dataset_id, effective_from, effective_to,
+    monday_minutes, tuesday_minutes, wednesday_minutes, thursday_minutes,
+    friday_minutes, saturday_minutes, sunday_minutes, special_day_minutes,
+    created_at, updated_at, revision
+)
+SELECT
+    id, public_id, dataset_id, effective_from, effective_to,
+    monday_minutes, tuesday_minutes, wednesday_minutes, thursday_minutes,
+    friday_minutes, saturday_minutes, sunday_minutes, 0,
+    created_at, updated_at, revision
+FROM work_schedule_periods_v6_initial;
+
+DROP TABLE work_schedule_periods_v6_initial;
+"""
     + SCHEMA_V6_TRIGGERS_SQL
 )
+
+MIGRATION_5_TO_6 = MIGRATION_V6_AMENDMENT
 
 
 MIGRATIONS = {

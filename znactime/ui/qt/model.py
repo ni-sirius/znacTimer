@@ -13,7 +13,6 @@ from znactime.core.constants import (
     UNSET_TIME,
     ZERO_DURATION,
     DayStatus,
-    effective_expected_work_minutes,
 )
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import (
@@ -183,9 +182,13 @@ class MonthTableModel(QAbstractTableModel):
         for row, entry in enumerate(self._entries):
             if entry.date != date_text:
                 continue
-            if self.repository is not None and not self._persist_changes(entry, changes):
-                return False
-            self._entries[row] = replace(entry, **changes)
+            if self.repository is not None:
+                committed = self._persist_changes(entry, changes)
+                if committed is None:
+                    return False
+                self._entries[row] = day_record_to_entry(committed)
+            else:
+                self._entries[row] = replace(entry, **changes)
             self.recalculate(autosave=True)
             self.entryCommitted.emit()
             return True
@@ -406,9 +409,7 @@ class MonthTableModel(QAbstractTableModel):
                 entry.start,
                 entry.interruption,
                 (
-                    effective_expected_work_minutes(
-                        entry.special, entry.expected_work_minutes
-                    ) / 60
+                    entry.expected_work_minutes / 60
                     if entry.expected_work_minutes is not None
                     else self.day_hours
                 ),
@@ -480,9 +481,13 @@ class MonthTableModel(QAbstractTableModel):
 
         current = self._entries[index.row()]
         changes = {ENTRY_FIELDS[column]: value}
-        if self.repository is not None and not self._persist_changes(current, changes):
-            return False
-        self._entries[index.row()] = replace(current, **changes)
+        if self.repository is not None:
+            committed = self._persist_changes(current, changes)
+            if committed is None:
+                return False
+            self._entries[index.row()] = day_record_to_entry(committed)
+        else:
+            self._entries[index.row()] = replace(current, **changes)
         self.recalculate(autosave=True)
         self.entryCommitted.emit()
         return True
@@ -492,7 +497,7 @@ class MonthTableModel(QAbstractTableModel):
         record = self._records.get(work_date)
         if record is None:
             QMessageBox.warning(None, "Save failed", "The selected day is not loaded from SQLite.")
-            return False
+            return None
         fields = set()
         values = {}
         if "special" in changes:
@@ -544,12 +549,35 @@ class MonthTableModel(QAbstractTableModel):
             )
         except StorageConflict:
             self._reload_after_conflict(work_date, changes)
-            return False
+            return None
         except (StorageError, ValueError) as error:
             QMessageBox.warning(None, "Save failed", str(error))
-            return False
-        self._records[work_date] = committed
-        return True
+            return None
+        if record.revision == 0:
+            try:
+                refreshed = self.repository.load_month(self.year, self.month)
+            except StorageError as error:
+                self._records[work_date] = committed
+                QMessageBox.warning(
+                    None,
+                    "Saved; reload failed",
+                    f"The edit was saved, but the materialized month could not be reloaded: {error}",
+                )
+                return committed
+            if refreshed is None:
+                self._records[work_date] = committed
+                QMessageBox.warning(
+                    None,
+                    "Saved; reload failed",
+                    "The edit was saved, but the newly created month could not be reloaded.",
+                )
+                return committed
+            self._records = {item.work_date: item for item in refreshed.days}
+            committed = self._records[work_date]
+            self.monthReloaded.emit(refreshed)
+        else:
+            self._records[work_date] = committed
+        return committed
 
     def _reload_after_conflict(self, work_date, attempted_changes):
         try:

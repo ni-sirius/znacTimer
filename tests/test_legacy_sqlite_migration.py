@@ -520,6 +520,8 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
             imported = repository.load_month(2024, 2).days[0]
             self.assertEqual(imported.start_minute, 480)
             self.assertEqual(imported.end_minute, 1020)
+            self.assertEqual(imported.expected_work_minutes, 480)
+            self.assertFalse(imported.expected_minutes_overridden)
             self.assertEqual(result.days_imported, 1)
             self.assertEqual(result.days_kept_current, 0)
         finally:

@@ -170,6 +170,7 @@ class WindowSettingsTest(unittest.TestCase):
                 None,
                 settings,
                 initial_weekday_minutes=values,
+                initial_special_day_minutes=75,
                 persist_workday=False,
             )
 
@@ -178,6 +179,35 @@ class WindowSettingsTest(unittest.TestCase):
             saturday_hours.setValue(5)
             saturday_minutes.setValue(15)
             self.assertEqual(dialog.schedule_widget.weekday_minutes()[5], 315)
+            self.assertEqual(dialog.schedule_widget.special_day_minutes(), 75)
+
+    def test_schedule_change_is_rejected_when_selected_month_is_closed(self):
+        schedule = SimpleNamespace(
+            public_id="schedule-id",
+            revision=1,
+            weekday_minutes=(480, 480, 480, 480, 480, 0, 0),
+            special_day_minutes=0,
+        )
+        repository = Mock()
+        window = SimpleNamespace(
+            repository=repository,
+            month_closed=True,
+            day_hours=8.0,
+            show_expected_end=True,
+            header=SimpleNamespace(year=lambda: 2024, month=lambda: 6),
+        )
+
+        with patch("znactime.ui.qt.app.QMessageBox.warning") as warning:
+            TimeTrackerApp._apply_work_schedule_settings(
+                window,
+                weekday_minutes=(420,) * 7,
+                special_day_minutes=0,
+                show_expected_end=True,
+                expected_schedule=schedule,
+            )
+
+        repository.replace_work_schedule.assert_not_called()
+        self.assertIn("closed", warning.call_args.args[2])
 
     def test_schedule_conflict_reloads_winning_schedule_and_warns(self):
         stale = SimpleNamespace(

@@ -44,8 +44,9 @@ The current schema version is **6**. Version 5 replaces human-language trigger
 definitions of `work_schedule_periods` and `day_entries` for databases that reached v4
 through historical migrations and removes the obsolete `month_no_insert_before_closed`
 trigger. Version 6 adds the controlled month-reopen transition, guarded completeness and
-chronological-close rules, and lazy carry-over semantics. The v5-to-v6 migration changes
-triggers only; existing time-tracking rows, schedule values, and identities are unchanged.
+chronological-close rules, lazy carry-over semantics, and the shared special-day schedule
+value. An earlier v6 definition is upgraded through a backup-first, in-version amendment;
+the schema number remains 6 and the verified temporary backup is removed after success.
 
 | Column | Description |
 |---|---|
@@ -126,6 +127,7 @@ Stores effective-dated work-limit policies. Periods for one dataset cannot overl
 | `friday_minutes` | Expected work minutes for Friday. |
 | `saturday_minutes` | Expected work minutes for Saturday. |
 | `sunday_minutes` | Expected work minutes for Sunday. |
+| `special_day_minutes` | Expected work minutes shared by every non-normal classification, including `Weekend` and `No data`. |
 | `created_at` | UTC creation timestamp. |
 | `updated_at` | UTC timestamp of the latest change. |
 | `revision` | Schedule concurrency version. |
@@ -135,15 +137,16 @@ active when editing began. Both are checked in the write transaction; a differen
 identity or revision is an optimistic-concurrency conflict and cannot silently overwrite
 the winning schedule.
 
-When a schedule changes, eligible open days within that schedule period and without a
-per-day override receive the new applicable value. Only days whose derived value actually
-changes receive a new generic revision. Closed days never change, and schedule
-recalculation never changes `local_input_revision`.
+When Settings changes a schedule, the first day of the selected open month becomes the
+new effective date. Later schedule periods are superseded. Every day in that selected
+month and every later materialized open month receives the new applicable weekday or
+special-day value. Earlier and closed months never change, and schedule recalculation
+never changes `local_input_revision`.
 
 Fresh databases use the configured workday duration for Monday-Friday and zero for
-Saturday-Sunday. The desktop editor exposes all seven values independently. A change is a
-new or replaced effective-dated policy beginning on the change date; it does not rewrite
-earlier day expectations.
+Saturday-Sunday and special days. The desktop editor exposes all seven weekday values and
+the shared special-day value independently. A change is a new or replaced effective-dated
+policy beginning at the selected month; it does not rewrite earlier day expectations.
 
 ## `months`
 
@@ -190,7 +193,7 @@ labels, colors, and calculated open-month balances do not belong here.
 | `end_minute` | Local wall-clock work end (`0..1439`), or `NULL` when unset. Overnight work is not currently supported. |
 | `break_duration_minutes` | Total break duration when only a duration is known. It is mutually exclusive with rows in `break_periods`. `0` means no break. |
 | `expected_work_minutes` | Work limit actually applicable to this day. Storing the value makes the day self-contained and supports historical policy changes. |
-| `expected_minutes_overridden` | `0`: value comes from the effective schedule. `1`: explicit per-day limit; schedule changes must not replace it. |
+| `expected_minutes_overridden` | Compatibility/test-only marker. Normal UI, timer, import, and schedule flows store `0`; only `set_day_work_limit()` may set `1` for repository tests. A later ordinary edit or schedule application resets it to `0`. |
 | `created_at` | UTC creation timestamp. |
 | `updated_at` | UTC timestamp of the latest input change. |
 | `revision` | Day concurrency version. UI edits supply the revision they loaded; a mismatch is a conflict. |
@@ -213,11 +216,21 @@ This validation happens against the complete resulting row before any table or t
 change is committed. Equal times are not used to represent zero work; leave both values
 unset or select the applicable special-day classification.
 
-An explicit special day has zero effective planned minutes for overtime calculation while
-retaining its stored `expected_work_minutes`. This lets changing it back to `Normal day`
-restore the applicable historical schedule. Work recorded on a special day is therefore
-entirely positive overtime. Calendar weekends follow their stored schedule: the default is
-zero, but an explicitly configured weekend expectation remains authoritative.
+Every calculation reads `expected_work_minutes` directly from the day row. It never
+changes the value according to a label, weekday, or calendar weekend. Changing a day
+classification re-resolves and stores either the applicable weekday value (`Normal day`)
+or the shared special-day value (every other label) in the same transaction.
+
+Navigating to a month that has no database row renders an in-memory calendar only. The
+first user edit, timer start, or close action atomically creates the month and all its day
+rows. At that point Saturdays and Sundays are stored with the `Weekend` label and the
+shared special-day planned minutes; viewing alone never persists them.
+
+An incomplete or invalid open-day interval remains visible for correction but contributes
+zero to daily overtime, running balance, lazy carry-over, and open-month CSV export. This
+includes non-positive work ranges, unfinished or reversed interruptions, interruptions
+outside the work window, overlapping interruptions, and an interruption longer than the
+work interval. Month closure continues to reject such a row.
 
 ## `break_periods`
 
@@ -305,7 +318,8 @@ not overwritten when any of these apply:
 - its parent month is already closed;
 - its `local_input_revision` shows that a user has changed it, even if the user later
   restored visible values to their defaults;
-- it contains local start/end, special-day, duration, or exact-break data; or
+- it contains local start/end, user-entered special-day, duration, or exact-break data
+  (a generated `Weekend` row with `local_input_revision = 0` is not user input); or
 - `expected_minutes_overridden = 1`.
 
 Generic `revision` remains the optimistic-concurrency token, but it is not used as a proxy
@@ -345,9 +359,11 @@ data differences and should therefore be protected like the database itself.
 - Work-schedule periods cannot overlap.
 - Exact breaks cannot overlap and cannot coexist with a duration representation.
 - Closing requires a non-future month, chronological continuity after the latest closed
-  checkpoint, complete valid normal-day inputs, one result per day, a valid running-balance
-  chain, and no open pause. Confirmed unresolved scheduled days are first persisted as
-  `No data` in the same transaction.
+  checkpoint, valid inputs for every blank row whose persisted planned time is positive,
+  one result per day, a valid running-balance chain, and no open pause. Confirmed
+  unresolved rows are first persisted as `No data` with the current special-day planned
+  value in the same transaction; if that value remains positive, valid work times are
+  still required.
 - Legacy imports normalize invalid clock/break inputs and use the same guarded calculation
   path as ordinary month closure; no trigger is disabled for compatibility.
 

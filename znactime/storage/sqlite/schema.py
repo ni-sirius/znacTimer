@@ -8,7 +8,7 @@ from functools import lru_cache
 SCHEMA_VERSION = 6
 
 
-SCHEMA_TABLES_SQL = r"""
+SCHEMA_V6_INITIAL_TABLES_SQL = r"""
 CREATE TABLE schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL,
@@ -160,6 +160,17 @@ CREATE TABLE legacy_imports (
     completed_at TEXT NOT NULL
 ) STRICT;
 """
+
+
+SCHEMA_TABLES_SQL = SCHEMA_V6_INITIAL_TABLES_SQL.replace(
+    "    sunday_minutes INTEGER NOT NULL CHECK (sunday_minutes BETWEEN 0 AND 1440),\n"
+    "    created_at TEXT NOT NULL,",
+    "    sunday_minutes INTEGER NOT NULL CHECK (sunday_minutes BETWEEN 0 AND 1440),\n"
+    "    special_day_minutes INTEGER NOT NULL DEFAULT 0 "
+    "CHECK (special_day_minutes BETWEEN 0 AND 1440),\n"
+    "    created_at TEXT NOT NULL,",
+    1,
+)
 
 SCHEMA_V5_TRIGGERS_SQL = r"""
 CREATE TRIGGER dataset_identity_immutable
@@ -557,22 +568,22 @@ BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:MONTH_CLOSE_PRECONDITION'); END;
 """
 
 
-SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
+SCHEMA_V6_INITIAL_TRIGGERS_SQL = _replace_trigger(
     SCHEMA_V5_TRIGGERS_SQL,
     "closed_month_no_update",
     _CLOSED_MONTH_NO_UPDATE_V6,
 )
-SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
-    SCHEMA_V6_TRIGGERS_SQL,
+SCHEMA_V6_INITIAL_TRIGGERS_SQL = _replace_trigger(
+    SCHEMA_V6_INITIAL_TRIGGERS_SQL,
     "month_close_guard",
     _MONTH_CLOSE_GUARD_V6,
 )
-SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
-    SCHEMA_V6_TRIGGERS_SQL,
+SCHEMA_V6_INITIAL_TRIGGERS_SQL = _replace_trigger(
+    SCHEMA_V6_INITIAL_TRIGGERS_SQL,
     "month_close_propagate_carry",
     "",
 )
-SCHEMA_V6_TRIGGERS_SQL += r"""
+SCHEMA_V6_INITIAL_TRIGGERS_SQL += r"""
 
 CREATE TRIGGER month_reopen_clear_results
 AFTER UPDATE OF status ON months
@@ -589,7 +600,32 @@ SCHEMA_V6_TRIGGER_NAMES = tuple(
 ) + ("month_reopen_clear_results",)
 
 
+_MONTH_CLOSE_GUARD_V6_PLANNED_MINUTES = _MONTH_CLOSE_GUARD_V6.replace(
+    """            OR (
+                lower(trim(day.special_day)) IN ('', 'normal day')
+                AND day.start_minute IS NULL
+                AND NOT (
+                    day.expected_work_minutes = 0
+                    AND strftime('%w', day.work_date) IN ('0', '6')
+                )
+            )""",
+    """            OR (
+                day.start_minute IS NULL
+                AND day.expected_work_minutes > 0
+            )""",
+)
+
+SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
+    SCHEMA_V6_INITIAL_TRIGGERS_SQL,
+    "month_close_guard",
+    _MONTH_CLOSE_GUARD_V6_PLANNED_MINUTES,
+)
+
+
 SCHEMA_SQL = SCHEMA_TABLES_SQL + SCHEMA_V6_TRIGGERS_SQL
+SCHEMA_V6_INITIAL_SQL = (
+    SCHEMA_V6_INITIAL_TABLES_SQL + SCHEMA_V6_INITIAL_TRIGGERS_SQL
+)
 
 
 def _normalized_schema_sql(sql: str) -> str:
@@ -616,6 +652,17 @@ def expected_schema_manifest() -> dict[tuple[str, str], str]:
     canonical = sqlite3.connect(":memory:", isolation_level=None)
     try:
         canonical.executescript(SCHEMA_SQL)
+        return schema_manifest(canonical)
+    finally:
+        canonical.close()
+
+
+@lru_cache(maxsize=1)
+def initial_v6_schema_manifest() -> dict[tuple[str, str], str]:
+    """Recognize databases created by the first released v6 definition."""
+    canonical = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        canonical.executescript(SCHEMA_V6_INITIAL_SQL)
         return schema_manifest(canonical)
     finally:
         canonical.close()

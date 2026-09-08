@@ -57,7 +57,6 @@ def _local_day_has_data(db, day_row) -> bool:
     """Return whether a day contains local user input that import must preserve."""
     if (
         day_row["local_input_revision"] > 0
-        or day_row["special_day"] != NORMAL_DAY
         or day_row["start_minute"] is not None
         or day_row["end_minute"] is not None
         or day_row["break_duration_minutes"] not in (None, 0)
@@ -275,14 +274,28 @@ def _close_legacy_month(
 ) -> tuple[LegacyNormalization, ...]:
     unresolved = repository._unresolved_close_days(db, month_row["id"])
     if unresolved:
+        no_data_minutes = tuple(
+            repository._expected_minutes(
+                date.fromisoformat(row["work_date"]), NO_DATA_DAY, db
+            )
+            for row in unresolved
+        )
         db.executemany(
             """
-            UPDATE day_entries SET special_day = ?, updated_at = ?,
+            UPDATE day_entries SET special_day = ?, expected_work_minutes = ?,
+                expected_minutes_overridden = 0, updated_at = ?,
                 revision = revision + 1
             WHERE id = ?
             """,
-            ((NO_DATA_DAY, now, row["id"]) for row in unresolved),
+            (
+                (NO_DATA_DAY, minutes, now, row["id"])
+                for row, minutes in zip(unresolved, no_data_minutes)
+            ),
         )
+        if repository._unresolved_close_days(db, month_row["id"]):
+            raise StorageValidationError(
+                "Imported No data rows still require planned work under the special-day schedule."
+            )
     calculated = repository._close_month_in_transaction(
         db,
         month_row,
@@ -541,7 +554,11 @@ def merge_preflight(
                     normalized_day, day_normalizations = _normalize_legacy_day(
                         legacy_day
                     )
-                    fallback = day_row["expected_work_minutes"]
+                    fallback = repository._expected_minutes(
+                        normalized_day.work_date,
+                        normalized_day.special_day,
+                        db,
+                    )
                     expected = _inferred_expected(normalized_day, fallback)
                     _apply_legacy_day(db, day_row, normalized_day, now, expected)
                     normalizations.extend(day_normalizations)

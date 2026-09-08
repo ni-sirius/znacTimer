@@ -1,5 +1,6 @@
 import unittest
 from datetime import date
+from unittest.mock import patch
 
 from znactime.core.calculator import recalculate
 from znactime.core.constants import DayStatus, UNSET_TIME
@@ -53,6 +54,32 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[1].daily_ot, "00:00")
         self.assertEqual(result[1].monthly_balance, "02:00")
 
+    def test_monthly_overtime_adds_the_finalized_daily_overtime_column_value(self):
+        entries = [
+            DayEntry(
+                cw="",
+                date=day,
+                special="Normal day",
+                start="08:00",
+                end="16:00",
+                interruption="00:00",
+                expected_work_minutes=480,
+            )
+            for day in ("17.06.2024", "18.06.2024")
+        ]
+
+        with patch(
+            "znactime.core.calculator._calculate_worked_hours",
+            return_value=8 + 0.5 / 60,
+        ):
+            result = recalculate(entries, 0.0, 8.0, date(2024, 6, 19), False)
+
+        self.assertEqual([entry.daily_ot for entry in result], ["00:00", "00:00"])
+        self.assertEqual(
+            [entry.monthly_balance for entry in result],
+            ["00:00", "00:00"],
+        )
+
     def test_recalculate_subtracts_multiple_interruption_periods(self):
         entries = [
             DayEntry(
@@ -105,8 +132,8 @@ class CalculatorTest(unittest.TestCase):
         result = recalculate(entries, 0.0, 8.0, date(2024, 6, 18), False)
 
         self.assertEqual(result[0].interruption, "14:00-13:00")
-        self.assertEqual(result[0].daily_ot, "01:00")
-        self.assertEqual(result[0].monthly_balance, "01:00")
+        self.assertEqual(result[0].daily_ot, "00:00")
+        self.assertEqual(result[0].monthly_balance, "00:00")
         self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_marks_day_missing_when_any_pause_is_outside_workday(self):
@@ -129,6 +156,8 @@ class CalculatorTest(unittest.TestCase):
             result[0].interruption,
             "07:45-08:00;12:00-12:30",
         )
+        self.assertEqual(result[0].daily_ot, "00:00")
+        self.assertEqual(result[0].monthly_balance, "00:00")
         self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
     def test_recalculate_normalizes_malformed_time_values_to_zero(self):
@@ -172,7 +201,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].monthly_balance, "01:00")
         self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
-    def test_incomplete_interruption_is_not_subtracted_and_marks_day_missing(self):
+    def test_incomplete_interruption_contributes_zero_and_marks_day_missing(self):
         entries = [
             DayEntry(
                 cw="",
@@ -186,10 +215,11 @@ class CalculatorTest(unittest.TestCase):
 
         result = recalculate(entries, 0.0, 8.0, date(2024, 6, 18), False)
 
-        self.assertEqual(result[0].daily_ot, "01:00")
+        self.assertEqual(result[0].daily_ot, "00:00")
+        self.assertEqual(result[0].monthly_balance, "00:00")
         self.assertEqual(result[0].row_color, DayStatus.MISSING_TIMES)
 
-    def test_recalculate_weekend_auto_marks_special(self):
+    def test_calendar_weekend_does_not_override_stored_normal_classification(self):
         entries = [
             DayEntry(
                 cw="",
@@ -198,34 +228,70 @@ class CalculatorTest(unittest.TestCase):
                 start=UNSET_TIME,
                 end=UNSET_TIME,
                 interruption="00:00",
+                expected_work_minutes=0,
             )
         ]
 
         result = recalculate(entries, 0.0, 8.0, date(2024, 6, 17), False)
 
-        self.assertEqual(result[0].special, "Weekend")
+        self.assertEqual(result[0].special, "Normal day")
         self.assertEqual(result[0].daily_ot, "00:00")
         self.assertEqual(result[0].monthly_balance, "00:00")
-        self.assertEqual(result[0].row_color, DayStatus.WEEKEND)
+        self.assertEqual(result[0].row_color, DayStatus.VALID_DAY)
 
     def test_recalculate_weekend_with_times_counts_like_normal_day(self):
         entries = [
             DayEntry(
                 cw="",
                 date="15.06.2024",
-                special="Normal day",
+                special="Weekend",
                 start="08:00",
                 end="18:00",
                 interruption="01:00",
+                expected_work_minutes=0,
             )
         ]
 
         result = recalculate(entries, 1.0, 8.0, date(2024, 6, 17), False)
 
         self.assertEqual(result[0].special, "Weekend")
-        self.assertEqual(result[0].daily_ot, "01:00")
-        self.assertEqual(result[0].monthly_balance, "02:00")
+        self.assertEqual(result[0].daily_ot, "09:00")
+        self.assertEqual(result[0].monthly_balance, "10:00")
         self.assertEqual(result[0].row_color, DayStatus.WEEKEND)
+
+    def test_special_day_color_has_priority_over_missing_or_invalid_times(self):
+        entries = [
+            DayEntry(
+                cw="",
+                date="17.06.2024",
+                special="Sick",
+                start=UNSET_TIME,
+                end=UNSET_TIME,
+                interruption="00:00",
+                expected_work_minutes=480,
+            ),
+            DayEntry(
+                cw="",
+                date="18.06.2024",
+                special="Vacation",
+                start="17:00",
+                end="08:00",
+                interruption="00:00",
+                expected_work_minutes=480,
+            ),
+        ]
+
+        result = recalculate(entries, 0.0, 8.0, date(2024, 6, 19), False)
+
+        self.assertEqual(
+            [entry.row_color for entry in result],
+            [DayStatus.SPECIAL_DAY, DayStatus.SPECIAL_DAY],
+        )
+        self.assertEqual([entry.daily_ot for entry in result], ["00:00", "00:00"])
+        self.assertEqual(
+            [entry.monthly_balance for entry in result],
+            ["00:00", "00:00"],
+        )
 
     def test_recalculate_special_day_work_is_all_positive_overtime(self):
         entries = [
@@ -236,6 +302,7 @@ class CalculatorTest(unittest.TestCase):
                 start="08:00",
                 end="18:00",
                 interruption="01:00",
+                expected_work_minutes=0,
             )
         ]
 

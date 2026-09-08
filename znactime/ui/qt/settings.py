@@ -253,6 +253,7 @@ class WorkScheduleWidget(QWidget):
         *,
         initial_workday_minutes=None,
         initial_weekday_minutes=None,
+        initial_special_day_minutes=0,
         persist_workday=True,
     ):
         super().__init__(parent)
@@ -285,6 +286,16 @@ class WorkScheduleWidget(QWidget):
             minutes_box.setSuffix(" min")
             duration_layout.addWidget(minutes_box, row, 2)
             self.weekday_boxes.append((hours_box, minutes_box))
+        special_row = len(WEEKDAY_NAMES) + 1
+        duration_layout.addWidget(QLabel("Special day", frame), special_row, 0)
+        self.special_hours_box = QSpinBox(frame)
+        self.special_hours_box.setRange(0, 23)
+        self.special_hours_box.setSuffix(" h")
+        duration_layout.addWidget(self.special_hours_box, special_row, 1)
+        self.special_minutes_box = QSpinBox(frame)
+        self.special_minutes_box.setRange(0, 59)
+        self.special_minutes_box.setSuffix(" min")
+        duration_layout.addWidget(self.special_minutes_box, special_row, 2)
         duration_layout.setColumnStretch(3, 1)
         frame_layout.addLayout(duration_layout)
 
@@ -320,11 +331,15 @@ class WorkScheduleWidget(QWidget):
         ):
             hours_box.setValue(total_minutes // 60)
             minutes_box.setValue(total_minutes % 60)
+        self.special_hours_box.setValue(initial_special_day_minutes // 60)
+        self.special_minutes_box.setValue(initial_special_day_minutes % 60)
         self.expected_end_checkbox.setChecked(show_expected_end)
 
         for hours_box, minutes_box in self.weekday_boxes:
             hours_box.valueChanged.connect(self._save_settings)
             minutes_box.valueChanged.connect(self._save_settings)
+        self.special_hours_box.valueChanged.connect(self._save_settings)
+        self.special_minutes_box.valueChanged.connect(self._save_settings)
         self.expected_end_checkbox.toggled.connect(self._save_settings)
 
         layout.addWidget(frame)
@@ -349,6 +364,9 @@ class WorkScheduleWidget(QWidget):
             for hours_box, minutes_box in self.weekday_boxes
         )
 
+    def special_day_minutes(self):
+        return self.special_hours_box.value() * 60 + self.special_minutes_box.value()
+
     def show_expected_end(self):
         return self.expected_end_checkbox.isChecked()
 
@@ -361,6 +379,7 @@ class WorkScheduleDialog(SettingsDialog):
         *,
         initial_workday_minutes=None,
         initial_weekday_minutes=None,
+        initial_special_day_minutes=0,
         persist_workday=True,
     ):
         super().__init__(
@@ -375,6 +394,7 @@ class WorkScheduleDialog(SettingsDialog):
             self,
             initial_workday_minutes=initial_workday_minutes,
             initial_weekday_minutes=initial_weekday_minutes,
+            initial_special_day_minutes=initial_special_day_minutes,
             persist_workday=persist_workday,
         )
         self.add_section("Work schedule", self.schedule_widget)

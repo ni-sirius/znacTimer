@@ -57,6 +57,7 @@ class MonthRecord:
     closing_balance_minutes: int | None
     revision: int
     days: tuple[DayRecord, ...]
+    materialized: bool = True
 
 
 @dataclass(frozen=True)
@@ -75,3 +76,4 @@ class WorkSchedulePeriod:
     effective_to: date | None
     weekday_minutes: tuple[int, int, int, int, int, int, int]
     revision: int
+    special_day_minutes: int = 0

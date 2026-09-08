@@ -44,7 +44,7 @@ class MonthLifecycleUiTest(unittest.TestCase):
 
         TimeTrackerApp.close_month(window)
 
-        self.assertIn("2 normal day(s)", question.call_args.args[2])
+        self.assertIn("2 day(s) with planned work", question.call_args.args[2])
         self.assertIn("No data", question.call_args.args[2])
         repository.close_month.assert_called_once_with(
             2024,

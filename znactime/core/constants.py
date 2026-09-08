@@ -19,10 +19,6 @@ def is_normal_day(value) -> bool:
     return str(value or "").strip().casefold() in ("", NORMAL_DAY.casefold())
 
 
-def effective_expected_work_minutes(special_day, expected_work_minutes):
-    """Apply day classification without destroying the underlying schedule value."""
-    return expected_work_minutes if is_normal_day(special_day) else 0
-
 END_OF_DAY = "23:59"
 OPEN_END_MARKER = "..."
 INTERRUPTION_SEPARATOR = ";"
