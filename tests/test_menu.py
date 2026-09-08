@@ -46,6 +46,24 @@ class MenuBarTest(unittest.TestCase):
             ],
         )
 
+    def test_reopen_action_is_available_only_for_closed_month(self):
+        reopen = Mock()
+        menu = MenuBar(
+            None,
+            close_month_command=Mock(),
+            appearance_command=Mock(),
+            work_schedule_command=Mock(),
+            about_command=Mock(),
+            reopen_month_command=reopen,
+        )
+
+        self.assertFalse(menu.reopen_month_action.isEnabled())
+        menu.set_month_closed(True)
+        self.assertTrue(menu.reopen_month_action.isEnabled())
+        self.assertFalse(menu.close_month_action.isEnabled())
+        menu.reopen_month_action.trigger()
+        reopen.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

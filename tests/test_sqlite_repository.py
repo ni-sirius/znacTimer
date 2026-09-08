@@ -116,6 +116,11 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.assertEqual(month.days[0].work_date, date(2024, 2, 1))
         self.assertEqual(month.days[-1].work_date, date(2024, 2, 29))
         self.assertEqual(month.days[0].expected_work_minutes, 480)
+        self.assertEqual(
+            self.repository.list_work_schedules()[0].weekday_minutes,
+            (480, 480, 480, 480, 480, 0, 0),
+        )
+        self.assertEqual(month.days[2].expected_work_minutes, 0)
 
     def test_concurrent_month_creation_converges_after_both_observe_missing(self):
         original_load = SQLiteRepository.load_month
@@ -447,10 +452,10 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.assertEqual(preserved.breaks, original.breaks)
         self.assertEqual(preserved.revision, original.revision)
 
-    def test_close_is_atomic_immutable_and_carries_to_successor(self):
+    def test_close_is_atomic_and_successor_carry_refreshes_only_when_visited(self):
         june = self.repository.get_or_create_month(2024, 6)
         july = self.repository.get_or_create_month(2024, 7)
-        first = june.days[0]
+        first = june.days[2]
         self.repository.update_day(
             first.work_date,
             expected_revision=first.revision,
@@ -460,10 +465,19 @@ class SQLiteRepositoryTest(unittest.TestCase):
             fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
         )
 
-        closed = self.repository.close_month(2024, 6, expected_revision=june.revision)
+        closed = self.repository.close_month(
+            2024,
+            6,
+            expected_revision=june.revision,
+            mark_unresolved_no_data=True,
+        )
         self.assertEqual(closed.status, "closed")
         self.assertEqual(closed.closing_balance_minutes, 30)
-        self.assertEqual(self.repository.load_month(2024, 7).opening_balance_minutes, 30)
+        self.assertEqual(self.repository.load_month(2024, 7).opening_balance_minutes, 0)
+        self.assertEqual(
+            self.repository.get_or_create_month(2024, 7).opening_balance_minutes,
+            30,
+        )
         self.assertEqual(
             self.sql.execute(
                 """
@@ -475,10 +489,6 @@ class SQLiteRepositoryTest(unittest.TestCase):
             ).fetchone()[0],
             len(closed.days),
         )
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.sql.execute(
-                "UPDATE months SET status = 'open' WHERE year = 2024 AND month = 6"
-            )
         with self.assertRaises(ClosedPeriodError):
             self.repository.update_day(
                 first.work_date,
@@ -486,22 +496,190 @@ class SQLiteRepositoryTest(unittest.TestCase):
                 special_day="Changed",
                 fields=frozenset(("special_day",)),
             )
-
-    def test_later_closed_month_does_not_freeze_unrelated_open_history(self):
-        january = self.repository.get_or_create_month(2024, 1)
-        february = self.repository.get_or_create_month(2024, 2)
-        self.repository.close_month(2024, 2, expected_revision=february.revision)
-
+        reopened = self.repository.reopen_month(
+            2024, 6, expected_revision=closed.revision
+        )
+        self.assertEqual(reopened.status, "open")
+        self.assertTrue(all(day.daily_overtime_minutes is None for day in reopened.days))
         changed = self.repository.update_day(
-            january.days[0].work_date,
-            expected_revision=january.days[0].revision,
-            special_day="Corrected",
+            first.work_date,
+            expected_revision=reopened.days[2].revision,
+            special_day="Changed",
             fields=frozenset(("special_day",)),
         )
+        self.assertEqual(changed.special_day, "Changed")
 
-        self.assertEqual(changed.special_day, "Corrected")
-        with self.assertRaises(ClosedPeriodError):
-            self.repository.close_month(2024, 1, expected_revision=january.revision)
+    def test_close_requires_blank_normal_days_to_be_explicitly_classified(self):
+        month = self.repository.get_or_create_month(2024, 6)
+        preview = self.repository.preview_month_close(2024, 6)
+
+        self.assertTrue(preview.unresolved_days)
+        self.assertTrue(all(item.weekday() < 5 for item in preview.unresolved_days))
+        with self.assertRaisesRegex(StorageValidationError, "No data"):
+            self.repository.close_month(
+                2024, 6, expected_revision=month.revision
+            )
+
+        closed = self.repository.close_month(
+            2024,
+            6,
+            expected_revision=month.revision,
+            mark_unresolved_no_data=True,
+        )
+        classified = {
+            day.work_date for day in closed.days if day.special_day == "No data"
+        }
+        self.assertEqual(classified, set(preview.unresolved_days))
+
+    def test_current_month_can_close_when_unresolved_days_are_confirmed_no_data(self):
+        today = date.today()
+        month = self.repository.get_or_create_month(today.year, today.month)
+
+        closed = self.repository.close_month(
+            today.year,
+            today.month,
+            expected_revision=month.revision,
+            mark_unresolved_no_data=True,
+        )
+
+        self.assertEqual(closed.status, "closed")
+
+    def test_future_month_close_is_rejected_without_reclassifying_days(self):
+        today = date.today()
+        year, month_number = (
+            (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+        )
+        month = self.repository.get_or_create_month(year, month_number)
+
+        with self.assertRaisesRegex(StorageValidationError, "future month"):
+            self.repository.close_month(
+                year,
+                month_number,
+                expected_revision=month.revision,
+                mark_unresolved_no_data=True,
+            )
+
+        preserved = self.repository.load_month(year, month_number)
+        self.assertEqual(preserved.status, "open")
+        self.assertTrue(all(day.special_day == "Normal day" for day in preserved.days))
+
+    def test_special_day_work_adds_all_worked_minutes(self):
+        month = self.repository.get_or_create_month(2024, 6)
+        monday = next(day for day in month.days if day.work_date.weekday() == 0)
+        self.repository.update_day(
+            monday.work_date,
+            expected_revision=monday.revision,
+            special_day="Vacation",
+            start_minute=480,
+            end_minute=720,
+            break_duration_minutes=0,
+            fields=frozenset(
+                ("special_day", "start_minute", "end_minute", "break_duration_minutes")
+            ),
+        )
+
+        closed = self.repository.close_month(
+            2024,
+            6,
+            expected_revision=month.revision,
+            mark_unresolved_no_data=True,
+        )
+
+        stored = next(day for day in closed.days if day.work_date == monday.work_date)
+        self.assertEqual(stored.expected_work_minutes, 480)
+        self.assertEqual(stored.daily_overtime_minutes, 240)
+
+    def test_open_csv_export_uses_zero_expectation_for_special_day(self):
+        month = self.repository.get_or_create_month(2024, 6)
+        monday = next(day for day in month.days if day.work_date.weekday() == 0)
+        self.repository.update_day(
+            monday.work_date,
+            expected_revision=monday.revision,
+            special_day="Vacation",
+            start_minute=480,
+            end_minute=720,
+            break_duration_minutes=0,
+            fields=frozenset(
+                ("special_day", "start_minute", "end_minute", "break_duration_minutes")
+            ),
+        )
+        target = Path(self.temporary.name) / "special.csv"
+
+        export_month(self.repository.load_month(2024, 6), target)
+
+        with target.open(newline="", encoding="utf-8") as stream:
+            rows = list(csv.reader(stream))
+        exported = next(row for row in rows[1:] if row[0] == monday.work_date.strftime("%d.%m.%Y"))
+        self.assertEqual(exported[5], "04:00")
+
+    def test_configured_weekend_expectation_is_authoritative(self):
+        self._replace_schedule(
+            effective_from=date(2024, 6, 1),
+            effective_to=None,
+            weekday_minutes=(480, 480, 480, 480, 480, 240, 0),
+        )
+        month = self.repository.get_or_create_month(2024, 6)
+        saturday = next(day for day in month.days if day.work_date.weekday() == 5)
+        self.assertIn(saturday.work_date, self.repository.preview_month_close(2024, 6).unresolved_days)
+        self.repository.update_day(
+            saturday.work_date,
+            expected_revision=saturday.revision,
+            start_minute=480,
+            end_minute=600,
+            break_duration_minutes=0,
+            fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
+        )
+
+        closed = self.repository.close_month(
+            2024,
+            6,
+            expected_revision=month.revision,
+            mark_unresolved_no_data=True,
+        )
+
+        stored = next(day for day in closed.days if day.work_date == saturday.work_date)
+        self.assertEqual(stored.daily_overtime_minutes, -120)
+
+    def test_reopened_history_can_be_reclosed_without_rewriting_closed_successor(self):
+        january = self.repository.get_or_create_month(2024, 1)
+        february = self.repository.get_or_create_month(2024, 2)
+        with self.assertRaisesRegex(StorageValidationError, "earlier month"):
+            self.repository.close_month(
+                2024, 2, expected_revision=february.revision,
+                mark_unresolved_no_data=True,
+            )
+        january = self.repository.close_month(
+            2024, 1, expected_revision=january.revision,
+            mark_unresolved_no_data=True,
+        )
+        february = self.repository.get_or_create_month(2024, 2)
+        february = self.repository.close_month(
+            2024, 2, expected_revision=february.revision,
+            mark_unresolved_no_data=True,
+        )
+        january = self.repository.reopen_month(
+            2024, 1, expected_revision=january.revision
+        )
+        first = january.days[0]
+        self.repository.update_day(
+            first.work_date,
+            expected_revision=first.revision,
+            special_day="Normal day",
+            start_minute=480,
+            end_minute=1020,
+            break_duration_minutes=30,
+            fields=frozenset(
+                ("special_day", "start_minute", "end_minute", "break_duration_minutes")
+            ),
+        )
+        january = self.repository.close_month(
+            2024, 1, expected_revision=january.revision
+        )
+
+        preserved_february = self.repository.load_month(2024, 2)
+        self.assertEqual(january.closing_balance_minutes, 30)
+        self.assertEqual(preserved_february, february)
+        self.assertTrue(self.repository.month_has_carry_discontinuity(2024, 2))
 
     def test_direct_sql_close_requires_a_valid_running_balance_chain(self):
         month = self.repository.get_or_create_month(2024, 6)
@@ -535,6 +713,44 @@ class SQLiteRepositoryTest(unittest.TestCase):
                 """,
                 (month_id, month.revision),
             )
+
+    def test_direct_sql_reopen_allows_only_lifecycle_fields_and_clears_results(self):
+        month = self.repository.get_or_create_month(2024, 6)
+        closed = self.repository.close_month(
+            2024,
+            6,
+            expected_revision=month.revision,
+            mark_unresolved_no_data=True,
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.sql.execute(
+                """
+                UPDATE months SET status = 'open', opening_balance_minutes = 1,
+                    closing_balance_minutes = NULL, closed_at = NULL,
+                    updated_at = '2024-07-01T00:00:00Z', revision = revision + 1
+                WHERE year = 2024 AND month = 6
+                """
+            )
+        self.sql.execute(
+            """
+            UPDATE months SET status = 'open', closing_balance_minutes = NULL,
+                closed_at = NULL, updated_at = '2024-07-01T00:00:00Z',
+                revision = revision + 1
+            WHERE year = 2024 AND month = 6 AND revision = ?
+            """,
+            (closed.revision,),
+        )
+        self.assertEqual(
+            self.sql.execute(
+                """
+                SELECT COUNT(*) FROM closed_day_results result
+                JOIN day_entries day ON day.id = result.day_entry_id
+                JOIN months month ON month.id = day.month_id
+                WHERE month.year = 2024 AND month.month = 6
+                """
+            ).fetchone()[0],
+            0,
+        )
 
     def test_schema_has_no_independent_active_workday_state(self):
         table = self.sql.execute(
@@ -632,7 +848,10 @@ class SQLiteRepositoryTest(unittest.TestCase):
             special_day="Vacation",
             fields=frozenset(("special_day",)),
         )
-        legacy.close_month(2024, 6, expected_revision=month.revision)
+        legacy.close_month(
+            2024, 6, expected_revision=month.revision,
+            mark_unresolved_no_data=True,
+        )
         legacy.close()
 
         sql = sqlite3.connect(legacy_path, isolation_level=None)
@@ -945,10 +1164,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
             SELECT work_date, revision FROM day_entries ORDER BY work_date
             """
         ).fetchall()
-        self.assertTrue(
-            all(revision == (2 if date.fromisoformat(work_date).weekday() >= 5 else 1)
-                for work_date, revision in rows)
-        )
+        self.assertTrue(all(revision == 1 for _work_date, revision in rows))
 
         repeated = self._replace_schedule(
             effective_from=date(2024, 6, 1),

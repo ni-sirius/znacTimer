@@ -4,6 +4,7 @@ from znactime.ui.qt import (
     QCheckBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -32,6 +33,7 @@ SHOW_EXPECTED_END_KEY = "work_schedule/show_expected_end"
 DEFAULT_WORKDAY_MINUTES = round(DEFAULT_DAY_HOURS * 60)
 MIN_WORKDAY_MINUTES = 1
 MAX_WORKDAY_MINUTES = 23 * 60 + 59
+WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
 def load_startup_window_settings(settings):
@@ -250,6 +252,7 @@ class WorkScheduleWidget(QWidget):
         parent=None,
         *,
         initial_workday_minutes=None,
+        initial_weekday_minutes=None,
         persist_workday=True,
     ):
         super().__init__(parent)
@@ -266,17 +269,23 @@ class WorkScheduleWidget(QWidget):
         frame_layout.setSpacing(10)
         frame_layout.addWidget(QLabel("Work schedule", frame))
 
-        duration_layout = QHBoxLayout()
-        duration_layout.addWidget(QLabel("Workday duration", frame))
-        self.workday_hours_box = QSpinBox(frame)
-        self.workday_hours_box.setRange(0, 23)
-        self.workday_hours_box.setSuffix(" h")
-        duration_layout.addWidget(self.workday_hours_box)
-        self.workday_minutes_box = QSpinBox(frame)
-        self.workday_minutes_box.setRange(0, 59)
-        self.workday_minutes_box.setSuffix(" min")
-        duration_layout.addWidget(self.workday_minutes_box)
-        duration_layout.addStretch(1)
+        duration_layout = QGridLayout()
+        duration_layout.addWidget(QLabel("Day", frame), 0, 0)
+        duration_layout.addWidget(QLabel("Hours", frame), 0, 1)
+        duration_layout.addWidget(QLabel("Minutes", frame), 0, 2)
+        self.weekday_boxes = []
+        for row, weekday in enumerate(WEEKDAY_NAMES, 1):
+            duration_layout.addWidget(QLabel(weekday, frame), row, 0)
+            hours_box = QSpinBox(frame)
+            hours_box.setRange(0, 23)
+            hours_box.setSuffix(" h")
+            duration_layout.addWidget(hours_box, row, 1)
+            minutes_box = QSpinBox(frame)
+            minutes_box.setRange(0, 59)
+            minutes_box.setSuffix(" min")
+            duration_layout.addWidget(minutes_box, row, 2)
+            self.weekday_boxes.append((hours_box, minutes_box))
+        duration_layout.setColumnStretch(3, 1)
         frame_layout.addLayout(duration_layout)
 
         self.expected_end_checkbox = QCheckBox(
@@ -297,35 +306,33 @@ class WorkScheduleWidget(QWidget):
         day_hours, show_expected_end = load_work_schedule_settings(
             self.settings
         )
-        total_minutes = (
-            round(day_hours * 60)
-            if initial_workday_minutes is None
-            else initial_workday_minutes
-        )
-        self.workday_hours_box.setValue(total_minutes // 60)
-        self.workday_minutes_box.setValue(total_minutes % 60)
+        if initial_weekday_minutes is None:
+            total_minutes = (
+                round(day_hours * 60)
+                if initial_workday_minutes is None
+                else initial_workday_minutes
+            )
+            initial_weekday_minutes = (total_minutes,) * 5 + (0, 0)
+        if len(initial_weekday_minutes) != 7:
+            raise ValueError("A work schedule requires seven weekday values.")
+        for (hours_box, minutes_box), total_minutes in zip(
+            self.weekday_boxes, initial_weekday_minutes
+        ):
+            hours_box.setValue(total_minutes // 60)
+            minutes_box.setValue(total_minutes % 60)
         self.expected_end_checkbox.setChecked(show_expected_end)
 
-        self.workday_hours_box.valueChanged.connect(self._save_settings)
-        self.workday_minutes_box.valueChanged.connect(self._save_settings)
+        for hours_box, minutes_box in self.weekday_boxes:
+            hours_box.valueChanged.connect(self._save_settings)
+            minutes_box.valueChanged.connect(self._save_settings)
         self.expected_end_checkbox.toggled.connect(self._save_settings)
 
         layout.addWidget(frame)
         layout.addStretch(1)
 
     def _save_settings(self, _value=None):
-        total_minutes = (
-            self.workday_hours_box.value() * 60
-            + self.workday_minutes_box.value()
-        )
-        if total_minutes < MIN_WORKDAY_MINUTES:
-            was_blocked = self.workday_minutes_box.blockSignals(True)
-            self.workday_minutes_box.setValue(MIN_WORKDAY_MINUTES)
-            self.workday_minutes_box.blockSignals(was_blocked)
-            total_minutes = MIN_WORKDAY_MINUTES
-
         if self.persist_workday:
-            self.settings.setValue(WORKDAY_MINUTES_KEY, total_minutes)
+            self.settings.setValue(WORKDAY_MINUTES_KEY, self.day_minutes())
         self.settings.setValue(
             SHOW_EXPECTED_END_KEY,
             self.expected_end_checkbox.isChecked(),
@@ -333,7 +340,14 @@ class WorkScheduleWidget(QWidget):
         self.settings.sync()
 
     def day_minutes(self):
-        return self.workday_hours_box.value() * 60 + self.workday_minutes_box.value()
+        hours_box, minutes_box = self.weekday_boxes[0]
+        return hours_box.value() * 60 + minutes_box.value()
+
+    def weekday_minutes(self):
+        return tuple(
+            hours_box.value() * 60 + minutes_box.value()
+            for hours_box, minutes_box in self.weekday_boxes
+        )
 
     def show_expected_end(self):
         return self.expected_end_checkbox.isChecked()
@@ -346,19 +360,21 @@ class WorkScheduleDialog(SettingsDialog):
         settings,
         *,
         initial_workday_minutes=None,
+        initial_weekday_minutes=None,
         persist_workday=True,
     ):
         super().__init__(
             parent,
             "Work schedule",
             width=560,
-            height=300,
+            height=520,
         )
 
         self.schedule_widget = WorkScheduleWidget(
             settings,
             self,
             initial_workday_minutes=initial_workday_minutes,
+            initial_weekday_minutes=initial_weekday_minutes,
             persist_workday=persist_workday,
         )
         self.add_section("Work schedule", self.schedule_widget)

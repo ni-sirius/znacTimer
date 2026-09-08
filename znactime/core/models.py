@@ -60,6 +60,15 @@ class MonthRecord:
 
 
 @dataclass(frozen=True)
+class MonthClosePreview:
+    year: int
+    month: int
+    opening_balance_minutes: int
+    closing_balance_minutes: int
+    unresolved_days: tuple[date, ...]
+
+
+@dataclass(frozen=True)
 class WorkSchedulePeriod:
     public_id: str
     effective_from: date

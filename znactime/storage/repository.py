@@ -6,6 +6,7 @@ from typing import Callable, Protocol
 from znactime.core.models import (
     BreakRecord,
     DayRecord,
+    MonthClosePreview,
     MonthRecord,
     WorkSchedulePeriod,
 )
@@ -39,8 +40,21 @@ class Repository(Protocol):
     def get_carry_over(self, year: int, month: int) -> int: ...
 
     def close_month(
+        self,
+        year: int,
+        month: int,
+        *,
+        expected_revision: int,
+        mark_unresolved_no_data: bool = False,
+    ) -> MonthRecord: ...
+
+    def preview_month_close(self, year: int, month: int) -> MonthClosePreview: ...
+
+    def reopen_month(
         self, year: int, month: int, *, expected_revision: int
     ) -> MonthRecord: ...
+
+    def month_has_carry_discontinuity(self, year: int, month: int) -> bool: ...
 
     def list_work_schedules(self) -> tuple[WorkSchedulePeriod, ...]: ...
 

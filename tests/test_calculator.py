@@ -227,7 +227,7 @@ class CalculatorTest(unittest.TestCase):
         self.assertEqual(result[0].monthly_balance, "02:00")
         self.assertEqual(result[0].row_color, DayStatus.WEEKEND)
 
-    def test_recalculate_special_day_with_times_counts_like_normal_day(self):
+    def test_recalculate_special_day_work_is_all_positive_overtime(self):
         entries = [
             DayEntry(
                 cw="",
@@ -241,8 +241,8 @@ class CalculatorTest(unittest.TestCase):
 
         result = recalculate(entries, 1.0, 8.0, date(2024, 6, 18), False)
 
-        self.assertEqual(result[0].daily_ot, "01:00")
-        self.assertEqual(result[0].monthly_balance, "02:00")
+        self.assertEqual(result[0].daily_ot, "09:00")
+        self.assertEqual(result[0].monthly_balance, "10:00")
         self.assertEqual(result[0].row_color, DayStatus.SPECIAL_DAY)
 
     def test_recalculate_missing_times_have_no_daily_overtime(self):

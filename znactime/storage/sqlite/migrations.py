@@ -7,6 +7,8 @@ from znactime.storage.sqlite.schema import (
     SCHEMA_VERSION,
     SCHEMA_V5_TRIGGER_NAMES,
     SCHEMA_V5_TRIGGERS_SQL,
+    SCHEMA_V6_TRIGGER_NAMES,
+    SCHEMA_V6_TRIGGERS_SQL,
 )
 
 
@@ -250,11 +252,24 @@ MIGRATION_4_TO_5 = (
 )
 
 
+# Version 6 introduces an explicit reopen transition, removes eager carry-over
+# propagation, and enforces complete, chronological, non-future month closure.
+MIGRATION_5_TO_6 = (
+    "\n".join(
+        f"DROP TRIGGER IF EXISTS {name};"
+        for name in dict.fromkeys((*SCHEMA_V5_TRIGGER_NAMES, *SCHEMA_V6_TRIGGER_NAMES))
+    )
+    + "\n"
+    + SCHEMA_V6_TRIGGERS_SQL
+)
+
+
 MIGRATIONS = {
     1: MIGRATION_1_TO_2,
     2: MIGRATION_2_TO_3,
     3: MIGRATION_3_TO_4,
     4: MIGRATION_4_TO_5,
+    5: MIGRATION_5_TO_6,
 }
 
 

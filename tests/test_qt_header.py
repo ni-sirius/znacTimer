@@ -32,6 +32,17 @@ class QtHeaderTest(unittest.TestCase):
             header.overtime_label.text(),
         )
 
+    def test_closed_month_discontinuity_is_visible_in_overtime_badge(self):
+        header = HeaderWidget()
+
+        header.set_overtime_text(
+            "Overtime: 01:00",
+            closed=True,
+            carry_discontinuity=True,
+        )
+
+        self.assertIn("carry-over discontinuity", header.overtime_label.text())
+
     def test_period_controls_use_generated_theme_chevrons(self):
         header = HeaderWidget()
         asset_paths = re.findall(
@@ -56,6 +67,7 @@ class QtHeaderTest(unittest.TestCase):
         app.header.set_overtime_text.assert_called_once_with(
             "Overtime: 01:30",
             closed=True,
+            carry_discontinuity=False,
         )
 
 

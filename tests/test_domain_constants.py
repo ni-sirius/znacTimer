@@ -7,6 +7,7 @@ from znactime.core.constants import (
     END_OF_DAY,
     INTERRUPTION_SEPARATOR,
     NORMAL_DAY,
+    NO_DATA_DAY,
     OPEN_END_MARKER,
     PERIOD_SEPARATOR,
     TIME_FORMAT,
@@ -25,6 +26,7 @@ class DomainConstantsTest(unittest.TestCase):
         self.assertEqual(UNSET_TIME, "--:--")
         self.assertEqual(ZERO_DURATION, "00:00")
         self.assertEqual(NORMAL_DAY, "Normal day")
+        self.assertEqual(NO_DATA_DAY, "No data")
         self.assertEqual(WEEKEND_DAY, "Weekend")
         self.assertEqual(END_OF_DAY, "23:59")
         self.assertEqual(OPEN_END_MARKER, "...")

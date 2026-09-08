@@ -11,10 +11,16 @@ from functools import wraps
 from pathlib import Path
 
 from znactime.config import VERSION
-from znactime.core.constants import NORMAL_DAY
+from znactime.core.constants import (
+    NO_DATA_DAY,
+    NORMAL_DAY,
+    effective_expected_work_minutes,
+    is_normal_day,
+)
 from znactime.core.models import (
     BreakRecord,
     DayRecord,
+    MonthClosePreview,
     MonthRecord,
     WorkSchedulePeriod,
 )
@@ -159,6 +165,21 @@ def _validate_break_layout(breaks: tuple[BreakRecord, ...]) -> None:
             raise StorageValidationError("Break periods cannot overlap.")
 
 
+def _month_index(year: int, month: int) -> int:
+    return year * 12 + month
+
+
+def _unresolved_normal_day(row) -> bool:
+    if not is_normal_day(row["special_day"]):
+        return False
+    if row["start_minute"] is not None or row["end_minute"] is not None:
+        return False
+    return not (
+        row["expected_work_minutes"] == 0
+        and _stored_date(row["work_date"], "work date").weekday() >= 5
+    )
+
+
 def _migration_statements(script: str):
     """Yield complete SQLite statements without breaking trigger bodies."""
     pending: list[str] = []
@@ -233,7 +254,7 @@ class SQLiteRepository:
                     "INSERT INTO datasets(public_id, created_at) VALUES (?, ?)",
                     (dataset_public_id or _uuid4(), now),
                 ).lastrowid
-                values = (default_workday_minutes,) * 7
+                values = (default_workday_minutes,) * 5 + (0, 0)
                 connection.execute(
                     f"""
                     INSERT INTO work_schedule_periods(
@@ -565,6 +586,107 @@ class SQLiteRepository:
             ),
         )
 
+    @staticmethod
+    def _day_overtime_minutes(row) -> int:
+        start = row["start_minute"]
+        end = row["end_minute"]
+        if start is None or end is None or end <= start:
+            return 0
+        interruption = row["interruption_minutes"]
+        if interruption is None or interruption < 0 or interruption > end - start:
+            return 0
+        expected = effective_expected_work_minutes(
+            row["special_day"], row["expected_work_minutes"]
+        )
+        return end - start - interruption - expected
+
+    @staticmethod
+    def _calculation_rows(db, *, month_id: int | None = None, where="", parameters=()):
+        month_filter = "day.month_id = ?" if month_id is not None else where
+        values = (month_id,) if month_id is not None else tuple(parameters)
+        return db.execute(
+            f"""
+            SELECT day.id, day.work_date, day.special_day, day.start_minute,
+                   day.end_minute, day.expected_work_minutes,
+                   CASE
+                       WHEN day.break_duration_minutes IS NOT NULL
+                           THEN day.break_duration_minutes
+                       WHEN COUNT(pause.id) = 0 THEN 0
+                       WHEN SUM(pause.end_minute IS NULL) > 0 THEN NULL
+                       ELSE SUM(pause.end_minute - pause.start_minute)
+                   END AS interruption_minutes
+            FROM day_entries day
+            JOIN months month ON month.id = day.month_id
+            LEFT JOIN break_periods pause ON pause.day_entry_id = day.id
+            WHERE {month_filter}
+            GROUP BY day.id
+            ORDER BY day.work_date
+            """,
+            values,
+        ).fetchall()
+
+    def _derived_opening_balance(self, db, year: int, month: int) -> int:
+        target = _month_index(year, month)
+        checkpoint = db.execute(
+            """
+            SELECT year, month, closing_balance_minutes
+            FROM months
+            WHERE dataset_id = ? AND status = 'closed'
+              AND year * 12 + month < ?
+            ORDER BY year DESC, month DESC LIMIT 1
+            """,
+            (self._dataset_id(db), target),
+        ).fetchone()
+        if checkpoint is None:
+            anchor = db.execute(
+                """
+                SELECT year, month, opening_balance_minutes
+                FROM months
+                WHERE dataset_id = ? AND year * 12 + month <= ?
+                ORDER BY year, month LIMIT 1
+                """,
+                (self._dataset_id(db), target),
+            ).fetchone()
+            if anchor is None:
+                return 0
+            checkpoint_index = _month_index(anchor["year"], anchor["month"]) - 1
+            running = anchor["opening_balance_minutes"]
+        else:
+            checkpoint_index = _month_index(checkpoint["year"], checkpoint["month"])
+            running = checkpoint["closing_balance_minutes"]
+        rows = self._calculation_rows(
+            db,
+            where=(
+                "month.dataset_id = ? AND month.status = 'open' "
+                "AND month.year * 12 + month.month > ? "
+                "AND month.year * 12 + month.month < ?"
+            ),
+            parameters=(self._dataset_id(db), checkpoint_index, target),
+        )
+        return running + sum(self._day_overtime_minutes(row) for row in rows)
+
+    def _refresh_open_month_carry(self, year: int, month: int) -> None:
+        with transaction(self._connection) as db:
+            row = db.execute(
+                """
+                SELECT id, status, opening_balance_minutes FROM months
+                WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (self._dataset_id(db), year, month),
+            ).fetchone()
+            if row is None or row["status"] != "open":
+                return
+            opening = self._derived_opening_balance(db, year, month)
+            if opening != row["opening_balance_minutes"]:
+                now = _utc_text()
+                db.execute(
+                    """
+                    UPDATE months SET opening_balance_minutes = ?, updated_at = ?,
+                        revision = revision + 1 WHERE id = ?
+                    """,
+                    (opening, now, row["id"]),
+                )
+
     @_repository_operation
     def get_or_create_month(self, year: int, month: int) -> MonthRecord:
         try:
@@ -573,6 +695,12 @@ class SQLiteRepository:
             raise StorageValidationError("Invalid calendar month.") from error
         existing = self.load_month(year, month)
         if existing is not None:
+            if existing.status == "open":
+                self._refresh_open_month_carry(year, month)
+                refreshed = self.load_month(year, month)
+                if refreshed is None:
+                    raise StorageCorrupt("The selected month disappeared while loading.")
+                return refreshed
             return existing
         now = _utc_text()
         with transaction(self._connection) as db:
@@ -607,6 +735,7 @@ class SQLiteRepository:
                     (dataset_id, year, month, opening, now, now),
                 ).lastrowid
                 self._insert_calendar_days(db, month_id, year, month, now)
+        self._refresh_open_month_carry(year, month)
         result = self.load_month(year, month)
         if result is None:
             raise StorageCorrupt("The newly created month disappeared before it was loaded.")
@@ -975,12 +1104,159 @@ class SQLiteRepository:
             ).fetchone()
             return previous[0] if previous else 0
 
+    @staticmethod
+    def _month_close_rows(db, month_id: int):
+        return db.execute(
+            """
+            SELECT id, work_date, special_day, start_minute, end_minute,
+                   break_duration_minutes, expected_work_minutes
+            FROM day_entries WHERE month_id = ? ORDER BY work_date
+            """,
+            (month_id,),
+        ).fetchall()
+
+    def _unresolved_close_days(self, db, month_id: int):
+        return tuple(
+            row for row in self._month_close_rows(db, month_id)
+            if _unresolved_normal_day(row)
+        )
+
+    def _earlier_open_chain_exists(self, db, year: int, month: int) -> bool:
+        target = _month_index(year, month)
+        return db.execute(
+            """
+            SELECT 1 FROM months prior_open
+            WHERE prior_open.dataset_id = ? AND prior_open.status = 'open'
+              AND prior_open.year * 12 + prior_open.month < ?
+              AND prior_open.year * 12 + prior_open.month > COALESCE(
+                  (
+                      SELECT MAX(prior_closed.year * 12 + prior_closed.month)
+                      FROM months prior_closed
+                      WHERE prior_closed.dataset_id = prior_open.dataset_id
+                        AND prior_closed.status = 'closed'
+                        AND prior_closed.year * 12 + prior_closed.month < ?
+                  ),
+                  0
+              )
+            LIMIT 1
+            """,
+            (self._dataset_id(db), target, target),
+        ).fetchone() is not None
+
+    def _preview_in_transaction(self, db, month_row) -> MonthClosePreview:
+        running = month_row["opening_balance_minutes"]
+        calculation_rows = self._calculation_rows(db, month_id=month_row["id"])
+        running += sum(self._day_overtime_minutes(row) for row in calculation_rows)
+        unresolved = tuple(
+            _stored_date(row["work_date"], "work date")
+            for row in self._unresolved_close_days(db, month_row["id"])
+        )
+        return MonthClosePreview(
+            year=month_row["year"],
+            month=month_row["month"],
+            opening_balance_minutes=month_row["opening_balance_minutes"],
+            closing_balance_minutes=running,
+            unresolved_days=unresolved,
+        )
+
     @_repository_operation
-    def close_month(self, year: int, month: int, *, expected_revision: int) -> MonthRecord:
+    def preview_month_close(self, year: int, month: int) -> MonthClosePreview:
+        with read_transaction(self._connection) as db:
+            month_row = db.execute(
+                """
+                SELECT id, year, month, status, opening_balance_minutes
+                FROM months WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (self._dataset_id(db), year, month),
+            ).fetchone()
+            if month_row is None:
+                raise StorageValidationError("The month does not exist.")
+            if month_row["status"] == "closed":
+                raise ClosedPeriodError("The month is already closed.")
+            return self._preview_in_transaction(db, month_row)
+
+    @_repository_operation
+    def month_has_carry_discontinuity(self, year: int, month: int) -> bool:
+        with read_transaction(self._connection) as db:
+            current = db.execute(
+                """
+                SELECT status, opening_balance_minutes FROM months
+                WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (self._dataset_id(db), year, month),
+            ).fetchone()
+            if current is None or current["status"] != "closed":
+                return False
+            previous_year, previous_month = (
+                (year, month - 1) if month > 1 else (year - 1, 12)
+            )
+            previous = db.execute(
+                """
+                SELECT id, status, closing_balance_minutes
+                FROM months WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (self._dataset_id(db), previous_year, previous_month),
+            ).fetchone()
+            if previous is None:
+                return False
+            if previous["status"] == "closed":
+                expected = previous["closing_balance_minutes"]
+            else:
+                expected = self._derived_opening_balance(
+                    db, previous_year, previous_month
+                ) + sum(
+                    self._day_overtime_minutes(row)
+                    for row in self._calculation_rows(db, month_id=previous["id"])
+                )
+            return current["opening_balance_minutes"] != expected
+
+    @_repository_operation
+    def reopen_month(self, year: int, month: int, *, expected_revision: int) -> MonthRecord:
+        now = _utc_text()
+        with transaction(self._connection) as db:
+            row = db.execute(
+                """
+                SELECT id, status, revision FROM months
+                WHERE dataset_id = ? AND year = ? AND month = ?
+                """,
+                (self._dataset_id(db), year, month),
+            ).fetchone()
+            if row is None:
+                raise StorageValidationError("The month does not exist.")
+            if row["status"] != "closed":
+                raise StorageValidationError("The month is already open.")
+            if row["revision"] != expected_revision:
+                raise StorageConflict("The month changed since it was loaded.")
+            cursor = db.execute(
+                """
+                UPDATE months SET status = 'open', closing_balance_minutes = NULL,
+                    closed_at = NULL, updated_at = ?, revision = revision + 1
+                WHERE id = ? AND revision = ?
+                """,
+                (now, row["id"], expected_revision),
+            )
+            require_changed(cursor, "The month changed since it was loaded.")
+        result = self.load_month(year, month)
+        if result is None:
+            raise StorageCorrupt("The reopened month disappeared before it was reloaded.")
+        return result
+
+    @_repository_operation
+    def close_month(
+        self,
+        year: int,
+        month: int,
+        *,
+        expected_revision: int,
+        mark_unresolved_no_data: bool = False,
+    ) -> MonthRecord:
+        current_date = date.today()
+        if date(year, month, 1) > date(current_date.year, current_date.month, 1):
+            raise StorageValidationError("A future month cannot be closed.")
         with transaction(self._connection) as db:
             month_row = db.execute(
                 """
-                SELECT id, status, opening_balance_minutes, revision
+                SELECT id, year, month, status, opening_balance_minutes, revision
                 FROM months WHERE dataset_id = ? AND year = ? AND month = ?
                 """,
                 (self._dataset_id(db), year, month),
@@ -991,6 +1267,32 @@ class SQLiteRepository:
                 raise ClosedPeriodError("The month is already closed.")
             if month_row["revision"] != expected_revision:
                 raise StorageConflict("The month changed since it was loaded.")
+            derived_opening = self._derived_opening_balance(db, year, month)
+            if derived_opening != month_row["opening_balance_minutes"]:
+                raise StorageConflict(
+                    "The carry-over changed. Reload the month and review it before closing."
+                )
+            if self._earlier_open_chain_exists(db, year, month):
+                raise StorageValidationError(
+                    "An earlier month after the latest closed checkpoint is still open."
+                )
+            unresolved = self._unresolved_close_days(db, month_row["id"])
+            if unresolved and not mark_unresolved_no_data:
+                raise StorageValidationError(
+                    f"{len(unresolved)} normal day(s) have no work times. "
+                    "Fill them or explicitly mark them as No data."
+                )
+            if unresolved:
+                timestamp = _utc_text()
+                db.executemany(
+                    """
+                    UPDATE day_entries SET special_day = ?, updated_at = ?,
+                        revision = revision + 1,
+                        local_input_revision = local_input_revision + 1
+                    WHERE id = ?
+                    """,
+                    ((NO_DATA_DAY, timestamp, row["id"]) for row in unresolved),
+                )
             self._close_month_in_transaction(db, month_row)
         result = self.load_month(year, month)
         if result is None:
@@ -1018,7 +1320,7 @@ class SQLiteRepository:
         calculated = []
         day_rows = db.execute(
             """
-            SELECT id, work_date, start_minute, end_minute,
+            SELECT id, work_date, special_day, start_minute, end_minute,
                    break_duration_minutes, expected_work_minutes
             FROM day_entries WHERE month_id = ? ORDER BY work_date
             """,
@@ -1051,7 +1353,9 @@ class SQLiteRepository:
                     interruption = day["break_duration_minutes"]
                 overtime = (
                     day["end_minute"] - day["start_minute"]
-                    - interruption - day["expected_work_minutes"]
+                    - interruption - effective_expected_work_minutes(
+                        day["special_day"], day["expected_work_minutes"]
+                    )
                 )
             running += overtime
             result_rows.append((day["id"], overtime, running))

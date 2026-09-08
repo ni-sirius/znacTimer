@@ -25,6 +25,7 @@ from znactime.storage.sqlite.bootstrap import (
 )
 from znactime.storage.sqlite.bootstrap import BootstrapState
 from znactime.storage.sqlite.repository import SQLiteRepository
+from znactime.storage.sqlite.schema import SCHEMA_VERSION
 
 
 def _hold_application_lock(database, acquired, release):
@@ -240,7 +241,7 @@ class SQLiteBootstrapLockTest(unittest.TestCase):
             self.assertEqual(len(recovered.load_month(2024, 2).days), 29)
             self.assertEqual(
                 recovered._connection.execute("PRAGMA user_version").fetchone()[0],
-                5,
+                SCHEMA_VERSION,
             )
         finally:
             recovered.close()

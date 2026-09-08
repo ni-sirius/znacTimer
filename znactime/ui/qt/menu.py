@@ -15,6 +15,7 @@ class MenuBar(QMenuBar):
         export_pdf_command=None,
         backup_command=None,
         import_csv_command=None,
+        reopen_month_command=None,
     ):
         super().__init__(parent)
         self.setObjectName("mainMenu")
@@ -23,6 +24,11 @@ class MenuBar(QMenuBar):
         self.close_month_action = QAction("Close Month", self)
         self.close_month_action.triggered.connect(close_month_command)
         self.month_menu.addAction(self.close_month_action)
+        self.reopen_month_action = QAction("Reopen Month", self)
+        if reopen_month_command is not None:
+            self.reopen_month_action.triggered.connect(reopen_month_command)
+            self.reopen_month_action.setEnabled(False)
+            self.month_menu.addAction(self.reopen_month_action)
         self.month_menu.addSeparator()
 
         exit_action = QAction("Exit", self)
@@ -133,3 +139,5 @@ class MenuBar(QMenuBar):
 
     def set_month_closed(self, month_closed):
         self.close_month_action.setEnabled(not month_closed)
+        if self.reopen_month_action in self.month_menu.actions():
+            self.reopen_month_action.setEnabled(bool(month_closed))

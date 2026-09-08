@@ -5,6 +5,7 @@ from znactime.core.calendar_utils import calendar_week_tag, is_weekend
 from znactime.core.constants import (
     DATE_FORMAT,
     DayStatus,
+    effective_expected_work_minutes,
     NORMAL_DAY,
     TIME_FORMAT,
     UNSET_TIME,
@@ -105,9 +106,13 @@ def recalculate(
                     entry.end,
                     entry.interruption,
                 )
+                effective_expected = effective_expected_work_minutes(
+                    entry.special,
+                    entry.expected_work_minutes,
+                )
                 expected_hours = (
-                    entry.expected_work_minutes / 60
-                    if entry.expected_work_minutes is not None
+                    effective_expected / 60
+                    if effective_expected is not None
                     else day_hours
                 )
                 daily_ot = worked - expected_hours

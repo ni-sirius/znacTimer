@@ -17,6 +17,11 @@ from znactime.storage.sqlite.schema import (
     SCHEMA_VERSION,
     schema_definition_mismatches,
 )
+from znactime.core.constants import (
+    NO_DATA_DAY,
+    NORMAL_DAY,
+    effective_expected_work_minutes,
+)
 
 
 @dataclass(frozen=True)
@@ -335,7 +340,9 @@ def _open_results(month_row, day_rows, breaks_by_day):
                     row["end_minute"]
                     - row["start_minute"]
                     - interruption
-                    - row["expected_work_minutes"]
+                    - effective_expected_work_minutes(
+                        row["special_day"], row["expected_work_minutes"]
+                    )
                 )
         running += overtime
         results[row["work_date"]] = (overtime, running)
@@ -618,11 +625,23 @@ def verify_legacy_import(
                         )
                     )
                     continue
+                expected_special_day = source_day.special_day
+                if (
+                    month_row["status"] == "closed"
+                    and source_day.special_day == NORMAL_DAY
+                    and source_day.start_minute is None
+                    and source_day.end_minute is None
+                    and (
+                        day_row["expected_work_minutes"] > 0
+                        or source_day.work_date.weekday() < 5
+                    )
+                ):
+                    expected_special_day = NO_DATA_DAY
                 _compare_value(
                     local_differences,
                     location,
                     "special_day",
-                    source_day.special_day,
+                    expected_special_day,
                     day_row["special_day"],
                 )
                 _compare_value(

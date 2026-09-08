@@ -13,6 +13,7 @@ from znactime.core.constants import (
     UNSET_TIME,
     ZERO_DURATION,
     DayStatus,
+    effective_expected_work_minutes,
 )
 from znactime.core.models import DayEntry
 from znactime.core.time_utils import (
@@ -405,7 +406,9 @@ class MonthTableModel(QAbstractTableModel):
                 entry.start,
                 entry.interruption,
                 (
-                    entry.expected_work_minutes / 60
+                    effective_expected_work_minutes(
+                        entry.special, entry.expected_work_minutes
+                    ) / 60
                     if entry.expected_work_minutes is not None
                     else self.day_hours
                 ),

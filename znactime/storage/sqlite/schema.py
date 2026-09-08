@@ -5,7 +5,7 @@ import sqlite3
 from functools import lru_cache
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 SCHEMA_TABLES_SQL = r"""
@@ -442,7 +442,154 @@ SCHEMA_V5_TRIGGER_NAMES = (
 )
 
 
-SCHEMA_SQL = SCHEMA_TABLES_SQL + SCHEMA_V5_TRIGGERS_SQL
+def _replace_trigger(bundle: str, name: str, replacement: str) -> str:
+    pattern = rf"CREATE TRIGGER {re.escape(name)}\b.*?END;\n"
+    updated, count = re.subn(pattern, replacement.strip() + "\n", bundle, count=1, flags=re.S)
+    if count != 1:
+        raise RuntimeError(f"Could not build the current definition for trigger {name}.")
+    return updated
+
+
+_CLOSED_MONTH_NO_UPDATE_V6 = r"""
+CREATE TRIGGER closed_month_no_update
+BEFORE UPDATE ON months
+WHEN OLD.status = 'closed' AND NOT (
+    NEW.status = 'open'
+    AND NEW.dataset_id IS OLD.dataset_id
+    AND NEW.year IS OLD.year
+    AND NEW.month IS OLD.month
+    AND NEW.opening_balance_minutes IS OLD.opening_balance_minutes
+    AND NEW.closing_balance_minutes IS NULL
+    AND NEW.closed_at IS NULL
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.revision = OLD.revision + 1
+)
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:MONTH_IMMUTABLE'); END;
+"""
+
+
+_MONTH_CLOSE_GUARD_V6 = r"""
+CREATE TRIGGER month_close_guard
+BEFORE UPDATE OF status ON months
+WHEN OLD.status = 'open' AND NEW.status = 'closed' AND (
+    printf('%04d-%02d-01', OLD.year, OLD.month)
+        > date('now', 'localtime', 'start of month')
+    OR EXISTS (
+        SELECT 1 FROM months prior_open
+        WHERE prior_open.dataset_id = OLD.dataset_id
+          AND prior_open.status = 'open'
+          AND prior_open.year * 12 + prior_open.month < OLD.year * 12 + OLD.month
+          AND prior_open.year * 12 + prior_open.month > COALESCE(
+              (
+                  SELECT MAX(prior_closed.year * 12 + prior_closed.month)
+                  FROM months prior_closed
+                  WHERE prior_closed.dataset_id = OLD.dataset_id
+                    AND prior_closed.status = 'closed'
+                    AND prior_closed.year * 12 + prior_closed.month
+                        < OLD.year * 12 + OLD.month
+              ),
+              0
+          )
+    )
+    OR EXISTS (
+        SELECT 1 FROM break_periods pause
+        JOIN day_entries day ON day.id = pause.day_entry_id
+        WHERE day.month_id = OLD.id AND pause.end_minute IS NULL
+    )
+    OR EXISTS (
+        SELECT 1 FROM day_entries day
+        WHERE day.month_id = OLD.id AND (
+            (day.start_minute IS NULL) != (day.end_minute IS NULL)
+            OR (day.start_minute IS NOT NULL AND day.end_minute <= day.start_minute)
+            OR (day.start_minute IS NULL
+                AND COALESCE(day.break_duration_minutes, 0) != 0)
+            OR (day.break_duration_minutes IS NOT NULL
+                AND day.start_minute IS NOT NULL
+                AND day.break_duration_minutes > day.end_minute - day.start_minute)
+            OR (
+                lower(trim(day.special_day)) IN ('', 'normal day')
+                AND day.start_minute IS NULL
+                AND NOT (
+                    day.expected_work_minutes = 0
+                    AND strftime('%w', day.work_date) IN ('0', '6')
+                )
+            )
+        )
+    )
+    OR EXISTS (
+        SELECT 1 FROM break_periods pause
+        JOIN day_entries day ON day.id = pause.day_entry_id
+        WHERE day.month_id = OLD.id AND (
+            day.start_minute IS NULL OR day.end_minute IS NULL
+            OR pause.start_minute < day.start_minute
+            OR pause.end_minute > day.end_minute
+        )
+    )
+    OR (SELECT COUNT(*) FROM closed_day_results result
+        JOIN day_entries day ON day.id = result.day_entry_id
+        WHERE day.month_id = OLD.id)
+       != (SELECT COUNT(*) FROM day_entries day WHERE day.month_id = OLD.id)
+    OR EXISTS (
+        SELECT 1 FROM closed_day_results result
+        JOIN day_entries day ON day.id = result.day_entry_id
+        WHERE day.month_id = OLD.id
+          AND result.running_balance_minutes != OLD.opening_balance_minutes + (
+              SELECT COALESCE(SUM(prior_result.daily_overtime_minutes), 0)
+              FROM closed_day_results prior_result
+              JOIN day_entries prior_day ON prior_day.id = prior_result.day_entry_id
+              WHERE prior_day.month_id = OLD.id
+                AND prior_day.work_date <= day.work_date
+          )
+    )
+    OR NEW.closing_balance_minutes != COALESCE(
+        (
+            SELECT result.running_balance_minutes
+            FROM closed_day_results result
+            JOIN day_entries day ON day.id = result.day_entry_id
+            WHERE day.month_id = OLD.id
+            ORDER BY day.work_date DESC
+            LIMIT 1
+        ),
+        OLD.opening_balance_minutes
+    )
+)
+BEGIN SELECT RAISE(ABORT, 'ZT:CLOSED_PERIOD:MONTH_CLOSE_PRECONDITION'); END;
+"""
+
+
+SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
+    SCHEMA_V5_TRIGGERS_SQL,
+    "closed_month_no_update",
+    _CLOSED_MONTH_NO_UPDATE_V6,
+)
+SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
+    SCHEMA_V6_TRIGGERS_SQL,
+    "month_close_guard",
+    _MONTH_CLOSE_GUARD_V6,
+)
+SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
+    SCHEMA_V6_TRIGGERS_SQL,
+    "month_close_propagate_carry",
+    "",
+)
+SCHEMA_V6_TRIGGERS_SQL += r"""
+
+CREATE TRIGGER month_reopen_clear_results
+AFTER UPDATE OF status ON months
+WHEN OLD.status = 'closed' AND NEW.status = 'open'
+BEGIN
+    DELETE FROM closed_day_results
+    WHERE day_entry_id IN (
+        SELECT id FROM day_entries WHERE month_id = NEW.id
+    );
+END;
+"""
+SCHEMA_V6_TRIGGER_NAMES = tuple(
+    name for name in SCHEMA_V5_TRIGGER_NAMES if name != "month_close_propagate_carry"
+) + ("month_reopen_clear_results",)
+
+
+SCHEMA_SQL = SCHEMA_TABLES_SQL + SCHEMA_V6_TRIGGERS_SQL
 
 
 def _normalized_schema_sql(sql: str) -> str:

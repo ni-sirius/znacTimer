@@ -39,11 +39,13 @@ legacy_imports                   completed CSV-source snapshots
 
 Records which forward-only database schema versions were applied.
 
-The current schema version is **5**. Version 5 replaces human-language trigger
+The current schema version is **6**. Version 5 replaces human-language trigger
 `RAISE()` text with stable `ZT:*` machine codes. It also canonicalizes the stored
 definitions of `work_schedule_periods` and `day_entries` for databases that reached v4
 through historical migrations and removes the obsolete `month_no_insert_before_closed`
-trigger. Existing time-tracking row values and identities are copied unchanged.
+trigger. Version 6 adds the controlled month-reopen transition, guarded completeness and
+chronological-close rules, and lazy carry-over semantics. The v5-to-v6 migration changes
+triggers only; existing time-tracking rows, schedule values, and identities are unchanged.
 
 | Column | Description |
 |---|---|
@@ -138,6 +140,11 @@ per-day override receive the new applicable value. Only days whose derived value
 changes receive a new generic revision. Closed days never change, and schedule
 recalculation never changes `local_input_revision`.
 
+Fresh databases use the configured workday duration for Monday-Friday and zero for
+Saturday-Sunday. The desktop editor exposes all seven values independently. A change is a
+new or replaced effective-dated policy beginning on the change date; it does not rewrite
+earlier day expectations.
+
 ## `months`
 
 Stores month-level lifecycle and carry-over state.
@@ -156,9 +163,17 @@ Stores month-level lifecycle and carry-over state.
 | `updated_at` | UTC timestamp of the latest month-level change. |
 | `revision` | Month concurrency version, used by the atomic close operation. |
 
-Natural uniqueness is `(dataset_id, year, month)`. A closed month cannot be reopened,
-updated, or deleted. Closing propagates its final balance to an existing immediate open
-successor in the same transaction.
+Natural uniqueness is `(dataset_id, year, month)`. A closed month cannot be generally
+updated or deleted, but it has one controlled transition back to `open`: closing fields
+are cleared, the revision advances, and all `closed_day_results` for the month are deleted
+atomically. Its day inputs then become editable again.
+
+Closing does not write a successor. When an open month is selected, its opening balance is
+derived lazily from the nearest earlier closed checkpoint through intervening open months;
+only that selected month is updated. Derivation never crosses or changes a closed month.
+If reopening or correcting an earlier month makes a later closed month's frozen opening
+differ from its predecessor's current ending, the closed month remains unchanged and is
+reported as a carry-over discontinuity.
 
 ## `day_entries`
 
@@ -170,7 +185,7 @@ labels, colors, and calculated open-month balances do not belong here.
 | `id` | Local relationship key. |
 | `month_id` | Parent month. The date must belong to this month. |
 | `work_date` | ISO `YYYY-MM-DD` calendar date. This is the natural day identity within the dataset. |
-| `special_day` | Semantic label such as `Normal day`, `Weekend`, holiday, vacation, or user-defined text. Application writes, legacy imports, persisted-row loading, and CSV export enforce a maximum of 256 Unicode characters and reject control characters. |
+| `special_day` | Semantic label such as `Normal day`, `Weekend`, `No data`, holiday, vacation, or user-defined text. Application writes, legacy imports, persisted-row loading, and CSV export enforce a maximum of 256 Unicode characters and reject control characters. |
 | `start_minute` | Local wall-clock work start (`0..1439`), or `NULL` when unset. |
 | `end_minute` | Local wall-clock work end (`0..1439`), or `NULL` when unset. Overnight work is not currently supported. |
 | `break_duration_minutes` | Total break duration when only a duration is known. It is mutually exclusive with rows in `break_periods`. `0` means no break. |
@@ -197,6 +212,12 @@ Repository writes reject an end without a start and reject `end_minute <= start_
 This validation happens against the complete resulting row before any table or timer
 change is committed. Equal times are not used to represent zero work; leave both values
 unset or select the applicable special-day classification.
+
+An explicit special day has zero effective planned minutes for overtime calculation while
+retaining its stored `expected_work_minutes`. This lets changing it back to `Normal day`
+restore the applicable historical schedule. Work recorded on a special day is therefore
+entirely positive overtime. Calendar weekends follow their stored schedule: the default is
+zero, but an explicitly configured weekend expectation remains authoritative.
 
 ## `break_periods`
 
@@ -228,7 +249,8 @@ name refers to a day-level result row; days are not closed individually.
 | `daily_overtime_minutes` | Final overtime/undertime attributed to that day at month close. |
 | `running_balance_minutes` | Final accumulated balance after that day. |
 
-This table is deliberately empty for open months. Open results are calculated dynamically.
+This table is deliberately empty for open months. Reopening a month deletes its snapshots
+in the same transaction. Open results are calculated dynamically.
 It is retained because future calculation-rule changes must not silently rewrite an
 already closed report. Legacy inputs are normalized before closure and their results are
 calculated through the same path as ordinary application closure.
@@ -294,17 +316,18 @@ treated as locally changed because their historical change origin cannot be reco
 Non-conflicting days in the same month may still import. If a CSV marks a month closed but
 one of its days conflicts with SQLite, imported non-conflicting days are retained but the
 month stays open. This avoids presenting a mixed local/CSV month as a faithful historical
-closure. A source-closed month also remains open when an earlier month is open or its
-immediate successor is already closed, preserving a chronological chain that can still be
-closed normally. A CSV snapshot already listed in `legacy_imports` is a no-op.
+closure. A source-closed month also remains open when an earlier month after the latest
+closed checkpoint is open, preserving a chronological chain that can still be closed
+normally. A CSV snapshot already listed in `legacy_imports` is a no-op.
 
 Legacy rows are not permitted to bypass the ordinary close guard. Incomplete or
 non-positive work intervals are cleared together with their interruptions. Interruptions
 without a valid work interval, durations longer than the work interval, and active or
 out-of-range pause lists are cleared. Expected work is inferred when possible; daily
 overtime, running balances, and month closing balance are then recalculated by the normal
-month-close operation. The canonical trigger bundle remains installed for the entire
-import transaction.
+month-close operation. Blank normal scheduled days in a source-closed month are classified
+as `No data` and recorded in the import log. The canonical trigger bundle remains installed
+for the entire import transaction.
 
 Every committed import has a private UTF-8 report in the sibling `import-logs/` directory.
 It records source identity, summary counters, preflight issues, and field-level
@@ -316,12 +339,15 @@ data differences and should therefore be protected like the database itself.
 ## Important database invariants
 
 - SQLite foreign keys are enabled on every connection.
-- Closed months and their days, breaks, and result snapshots reject mutation and deletion.
+- Closed months and their children reject mutation and deletion except for the exact
+  controlled reopen transition, which atomically removes result snapshots.
 - Month/day calendar identities and UUID public identities are immutable.
 - Work-schedule periods cannot overlap.
 - Exact breaks cannot overlap and cannot coexist with a duration representation.
-- Closing a normal month requires complete valid inputs, one result per day, a valid
-  running-balance chain, and no open pause.
+- Closing requires a non-future month, chronological continuity after the latest closed
+  checkpoint, complete valid normal-day inputs, one result per day, a valid running-balance
+  chain, and no open pause. Confirmed unresolved scheduled days are first persisted as
+  `No data` in the same transaction.
 - Legacy imports normalize invalid clock/break inputs and use the same guarded calculation
   path as ordinary month closure; no trigger is disabled for compatibility.
 

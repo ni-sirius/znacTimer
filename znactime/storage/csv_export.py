@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from znactime.core.models import DayRecord, MonthRecord
+from znactime.core.constants import effective_expected_work_minutes
 from znactime.core.validation import special_day_text_problem
 from znactime.storage.atomic_file import (
     publish_staged_file,
@@ -65,7 +66,9 @@ def month_rows(month: MonthRecord):
         elif day.start_minute is not None and day.end_minute is not None and complete:
             overtime = (
                 day.end_minute - day.start_minute
-                - interruption_minutes - day.expected_work_minutes
+                - interruption_minutes - effective_expected_work_minutes(
+                    day.special_day, day.expected_work_minutes
+                )
             )
             running += overtime
         else:

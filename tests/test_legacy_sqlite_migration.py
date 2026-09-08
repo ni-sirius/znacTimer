@@ -190,13 +190,19 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
                 fields=frozenset(("special_day",)),
             )
             self.assertEqual(changed.special_day, "Corrected")
-            repository.close_month(2024, 1, expected_revision=january.revision)
-            refreshed_february = repository.load_month(2024, 2)
-            self.assertEqual(refreshed_february.opening_balance_minutes, 30)
+            repository.close_month(
+                2024,
+                1,
+                expected_revision=january.revision,
+                mark_unresolved_no_data=True,
+            )
+            refreshed_february = repository.get_or_create_month(2024, 2)
+            self.assertEqual(refreshed_february.opening_balance_minutes, 510)
             repository.close_month(
                 2024,
                 2,
                 expected_revision=refreshed_february.revision,
+                mark_unresolved_no_data=True,
             )
         finally:
             repository.close()
@@ -667,7 +673,12 @@ class LegacySQLiteMigrationTest(unittest.TestCase):
         repository = SQLiteRepository.create(target)
         try:
             month = repository.get_or_create_month(2024, 2)
-            closed = repository.close_month(2024, 2, expected_revision=month.revision)
+            closed = repository.close_month(
+                2024,
+                2,
+                expected_revision=month.revision,
+                mark_unresolved_no_data=True,
+            )
 
             result = repository.merge_legacy(preflight)
 

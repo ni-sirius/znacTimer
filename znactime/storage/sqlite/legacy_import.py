@@ -3,10 +3,11 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 from znactime.config import VERSION
-from znactime.core.constants import NORMAL_DAY
+from znactime.core.constants import NO_DATA_DAY, NORMAL_DAY
 from znactime.core.validation import special_day_text_problem
 from znactime.storage.errors import StorageValidationError
 from znactime.storage.legacy_csv_import import (
@@ -272,6 +273,16 @@ def _close_legacy_month(
     *,
     cancelled: CancellationCallback | None,
 ) -> tuple[LegacyNormalization, ...]:
+    unresolved = repository._unresolved_close_days(db, month_row["id"])
+    if unresolved:
+        db.executemany(
+            """
+            UPDATE day_entries SET special_day = ?, updated_at = ?,
+                revision = revision + 1
+            WHERE id = ?
+            """,
+            ((NO_DATA_DAY, now, row["id"]) for row in unresolved),
+        )
     calculated = repository._close_month_in_transaction(
         db,
         month_row,
@@ -279,7 +290,16 @@ def _close_legacy_month(
         now=now,
     )
     source_days = {item.work_date.isoformat(): item for item in legacy_month.days}
-    changes = []
+    changes = [
+        LegacyNormalization(
+            row["work_date"],
+            "special_day",
+            row["special_day"],
+            NO_DATA_DAY,
+            "A blank normal day was explicitly classified so the imported month is complete.",
+        )
+        for row in unresolved
+    ]
     for work_date, daily_overtime, running_balance in calculated:
         source_day = source_days.get(work_date)
         if source_day is None:
@@ -321,29 +341,35 @@ def _close_legacy_month(
 
 
 def _closure_block_reason(db, month_row) -> str | None:
+    today = date.today()
+    if (month_row["year"], month_row["month"]) > (today.year, today.month):
+        return "A future month cannot be closed, so this imported month remained open."
     if db.execute(
         """
-        SELECT 1 FROM months
-        WHERE dataset_id = ? AND status = 'open'
-          AND year * 12 + month < ? * 12 + ?
+        SELECT 1 FROM months prior_open
+        WHERE prior_open.dataset_id = ? AND prior_open.status = 'open'
+          AND prior_open.year * 12 + prior_open.month < ? * 12 + ?
+          AND prior_open.year * 12 + prior_open.month > COALESCE(
+              (
+                  SELECT MAX(prior_closed.year * 12 + prior_closed.month)
+                  FROM months prior_closed
+                  WHERE prior_closed.dataset_id = prior_open.dataset_id
+                    AND prior_closed.status = 'closed'
+                    AND prior_closed.year * 12 + prior_closed.month < ? * 12 + ?
+              ),
+              0
+          )
         LIMIT 1
         """,
-        (month_row["dataset_id"], month_row["year"], month_row["month"]),
+        (
+            month_row["dataset_id"],
+            month_row["year"],
+            month_row["month"],
+            month_row["year"],
+            month_row["month"],
+        ),
     ).fetchone():
         return "An earlier month is still open, so this imported month remained open."
-    successor_year, successor_month = (
-        (month_row["year"], month_row["month"] + 1)
-        if month_row["month"] < 12
-        else (month_row["year"] + 1, 1)
-    )
-    if db.execute(
-        """
-        SELECT 1 FROM months
-        WHERE dataset_id = ? AND year = ? AND month = ? AND status = 'closed'
-        """,
-        (month_row["dataset_id"], successor_year, successor_month),
-    ).fetchone():
-        return "The immediate successor is already closed, so this month remained open."
     return None
 
 

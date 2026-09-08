@@ -39,6 +39,7 @@ class HeaderWidget(QWidget):
         self.carry_over_label.setObjectName("summaryBadge")
         self._overtime_text = f"Overtime: {ZERO_DURATION}"
         self._month_closed = False
+        self._carry_discontinuity = False
         self.overtime_label = QLabel(self._overtime_text, self)
         self.overtime_label.setObjectName("summaryBadge")
         self.overtime_label.setTextFormat(Qt.TextFormat.RichText)
@@ -235,9 +236,10 @@ class HeaderWidget(QWidget):
     def set_carry_over_text(self, text):
         self.carry_over_label.setText(text)
 
-    def set_overtime_text(self, text, closed=False):
+    def set_overtime_text(self, text, closed=False, carry_discontinuity=False):
         self._overtime_text = str(text)
         self._month_closed = bool(closed)
+        self._carry_discontinuity = bool(carry_discontinuity)
         dark = is_dark_theme()
         self._render_overtime_text(dark)
 
@@ -245,9 +247,14 @@ class HeaderWidget(QWidget):
         text = escape(self._overtime_text)
         if self._month_closed:
             closed_color = overtime_text_color_hex("-00:01", dark=dark)
+            closed_text = (
+                "Closed &mdash; carry-over discontinuity"
+                if self._carry_discontinuity
+                else "Closed"
+            )
             text += (
-                " &nbsp;·&nbsp; "
-                f'<span style="color: {closed_color};">Closed</span>'
+                " &nbsp;&middot;&nbsp; "
+                f'<span style="color: {closed_color};">{closed_text}</span>'
             )
         self.overtime_label.setText(text)
 

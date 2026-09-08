@@ -162,8 +162,29 @@ class WindowSettingsTest(unittest.TestCase):
             self.assertIsInstance(work_schedule, SettingsDialog)
             self.assertIsNot(type(appearance), type(work_schedule))
 
+    def test_work_schedule_editor_exposes_independent_weekday_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.make_settings(directory)
+            values = (480, 450, 420, 390, 360, 240, 0)
+            dialog = WorkScheduleDialog(
+                None,
+                settings,
+                initial_weekday_minutes=values,
+                persist_workday=False,
+            )
+
+            self.assertEqual(dialog.schedule_widget.weekday_minutes(), values)
+            saturday_hours, saturday_minutes = dialog.schedule_widget.weekday_boxes[5]
+            saturday_hours.setValue(5)
+            saturday_minutes.setValue(15)
+            self.assertEqual(dialog.schedule_widget.weekday_minutes()[5], 315)
+
     def test_schedule_conflict_reloads_winning_schedule_and_warns(self):
-        stale = SimpleNamespace(public_id="stale-id", revision=3)
+        stale = SimpleNamespace(
+            public_id="stale-id",
+            revision=3,
+            weekday_minutes=(480, 480, 480, 480, 480, 0, 0),
+        )
         current = SimpleNamespace(
             public_id="current-id",
             revision=4,
@@ -184,7 +205,7 @@ class WindowSettingsTest(unittest.TestCase):
         with patch("znactime.ui.qt.app.QMessageBox.warning") as warning:
             TimeTrackerApp._apply_work_schedule_settings(
                 window,
-                day_hours=7.5,
+                weekday_minutes=(450, 450, 450, 450, 450, 0, 0),
                 show_expected_end=True,
                 expected_schedule=stale,
             )
@@ -195,6 +216,25 @@ class WindowSettingsTest(unittest.TestCase):
         self.assertEqual(window.day_hours, 7.0)
         window.load_month.assert_called_once_with()
         self.assertIn("not applied", warning.call_args.args[2])
+
+    def test_schedule_change_is_rejected_when_active_identity_is_unavailable(self):
+        repository = Mock()
+        window = SimpleNamespace(
+            repository=repository,
+            day_hours=8.0,
+            show_expected_end=True,
+        )
+
+        with patch("znactime.ui.qt.app.QMessageBox.warning") as warning:
+            TimeTrackerApp._apply_work_schedule_settings(
+                window,
+                weekday_minutes=(450, 450, 450, 450, 450, 0, 0),
+                show_expected_end=True,
+                expected_schedule=None,
+            )
+
+        repository.replace_work_schedule.assert_not_called()
+        self.assertIn("could not be loaded", warning.call_args.args[2])
 
 
 if __name__ == "__main__":

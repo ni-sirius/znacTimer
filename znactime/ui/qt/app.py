@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from PySide6 import __version__ as PYSIDE_VERSION
@@ -119,6 +119,7 @@ class TimeTrackerApp(QMainWindow):
         self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
         self.month_closed = False
+        self.month_carry_discontinuity = False
         self.carry_over = 0.0
         self.current_overtime = 0.0
         self._initial_size_fitted = False
@@ -156,6 +157,7 @@ class TimeTrackerApp(QMainWindow):
             export_pdf_command=self.export_current_pdf,
             backup_command=self.backup_database,
             import_csv_command=self.import_csv_data,
+            reopen_month_command=self.reopen_month,
         )
         self.setMenuBar(self.menu)
 
@@ -232,32 +234,24 @@ class TimeTrackerApp(QMainWindow):
         dialog.exec()
 
     def open_work_schedule_settings(self):
-        initial_minutes = None
+        initial_weekday_minutes = None
         active_schedule = None
         if self.repository is not None:
             today = datetime.today().date()
             active_schedule = _schedule_for_date(
                 self.repository.list_work_schedules(), today
             )
-            if self._month_record is not None:
-                current = next(
-                    (
-                        item
-                        for item in self._month_record.days
-                        if item.work_date == today
-                    ),
-                    self._month_record.days[0] if self._month_record.days else None,
-                )
-                initial_minutes = current.expected_work_minutes if current else None
+            if active_schedule is not None:
+                initial_weekday_minutes = active_schedule.weekday_minutes
         dialog = WorkScheduleDialog(
             self,
             self.theme_controller.settings,
-            initial_workday_minutes=initial_minutes,
+            initial_weekday_minutes=initial_weekday_minutes,
             persist_workday=self.repository is None,
         )
         dialog.exec()
         self._apply_work_schedule_settings(
-            day_hours=dialog.schedule_widget.day_minutes() / 60,
+            weekday_minutes=dialog.schedule_widget.weekday_minutes(),
             show_expected_end=dialog.schedule_widget.show_expected_end(),
             expected_schedule=active_schedule,
         )
@@ -270,19 +264,33 @@ class TimeTrackerApp(QMainWindow):
         day_hours=None,
         show_expected_end=None,
         *,
+        weekday_minutes=None,
         expected_schedule=None,
     ):
-        if day_hours is None or show_expected_end is None:
-            day_hours, show_expected_end = load_work_schedule_settings(
+        if (
+            (day_hours is None and weekday_minutes is None)
+            or show_expected_end is None
+        ):
+            loaded_day_hours, show_expected_end = load_work_schedule_settings(
                 self.theme_controller.settings
             )
+            if day_hours is None:
+                day_hours = loaded_day_hours
+        if weekday_minutes is None:
+            weekday_minutes = (round(day_hours * 60),) * 5 + (0, 0)
+        today = datetime.today().date()
+        selected_day_hours = weekday_minutes[today.weekday()] / 60
+        schedule_changed = (
+            expected_schedule is None
+            or weekday_minutes != expected_schedule.weekday_minutes
+        )
         if (
-            day_hours == self.day_hours
+            not schedule_changed
+            and selected_day_hours == self.day_hours
             and show_expected_end == self.show_expected_end
         ):
             return
-        day_hours_changed = day_hours != self.day_hours
-        if getattr(self, "repository", None) is not None and day_hours_changed:
+        if getattr(self, "repository", None) is not None and schedule_changed:
             if expected_schedule is None:
                 QMessageBox.warning(
                     self,
@@ -290,12 +298,11 @@ class TimeTrackerApp(QMainWindow):
                     "The active work schedule could not be loaded. Reopen the settings and try again.",
                 )
                 return
-            today = datetime.today().date()
             try:
                 self.repository.replace_work_schedule(
                     effective_from=today,
                     effective_to=None,
-                    weekday_minutes=(round(day_hours * 60),) * 7,
+                    weekday_minutes=weekday_minutes,
                     expected_public_id=expected_schedule.public_id,
                     expected_revision=expected_schedule.revision,
                 )
@@ -316,11 +323,11 @@ class TimeTrackerApp(QMainWindow):
             except StorageError as error:
                 QMessageBox.warning(self, "Schedule update failed", str(error))
                 return
-            self.day_hours = day_hours
+            self.day_hours = selected_day_hours
             self.show_expected_end = show_expected_end
             self.load_month()
             return
-        self.day_hours = day_hours
+        self.day_hours = selected_day_hours
         self.show_expected_end = show_expected_end
         self.table.set_context(
             year=self.header.year(),
@@ -352,6 +359,7 @@ class TimeTrackerApp(QMainWindow):
         self.header.set_overtime_text(
             f"Overtime: {hours_to_hhmm(overtime)}",
             closed=self.month_closed,
+            carry_discontinuity=getattr(self, "month_carry_discontinuity", False),
         )
 
     def _check_today_rollover(self, now=None):
@@ -382,11 +390,15 @@ class TimeTrackerApp(QMainWindow):
             return
         try:
             record = self.repository.get_or_create_month(year, month)
+            carry_discontinuity = self.repository.month_has_carry_discontinuity(
+                year, month
+            )
         except StorageError as error:
             QMessageBox.critical(self, "Database error", str(error))
             return
         self._month_record = record
         self.month_closed = record.status == "closed"
+        self.month_carry_discontinuity = carry_discontinuity
         self.carry_over = record.opening_balance_minutes / 60
         self.header.set_carry_over_text(
             f"Carry over: {hours_to_hhmm(self.carry_over)}"
@@ -413,6 +425,16 @@ class TimeTrackerApp(QMainWindow):
             return
         self._month_record = record
         self.month_closed = record.status == "closed"
+        try:
+            self.month_carry_discontinuity = (
+                self.repository.month_has_carry_discontinuity(
+                    record.year, record.month
+                )
+                if self.repository is not None
+                else False
+            )
+        except StorageError:
+            self.month_carry_discontinuity = False
         self.carry_over = record.opening_balance_minutes / 60
         self.header.set_carry_over_text(
             f"Carry over: {hours_to_hhmm(self.carry_over)}"
@@ -666,11 +688,39 @@ class TimeTrackerApp(QMainWindow):
             QMessageBox.information(self, "Month closed", "This month is already closed.")
             return
 
-        close_text = (
-            "Close this month? CSV and PDF export remain separate actions."
-            if getattr(self, "repository", None) is not None
-            else "Close this month and generate PDF report?"
-        )
+        if getattr(self, "repository", None) is None:
+            return
+        year = self.header.year()
+        month = self.header.month()
+        today = datetime.today().date()
+        if date(year, month, 1) > date(today.year, today.month, 1):
+            QMessageBox.warning(
+                self,
+                "Month close failed",
+                "A future month cannot be closed.",
+            )
+            return
+        try:
+            preview = self.repository.preview_month_close(year, month)
+        except StorageError as error:
+            QMessageBox.warning(self, "Month close failed", str(error))
+            return
+        unresolved_count = len(preview.unresolved_days)
+        closing = hours_to_hhmm(preview.closing_balance_minutes / 60)
+        opening = hours_to_hhmm(preview.opening_balance_minutes / 60)
+        if unresolved_count:
+            close_text = (
+                f"{unresolved_count} normal day(s) have no work times.\n\n"
+                "If you continue, each of those days will be explicitly marked "
+                f"as No data.\n\nOpening balance: {opening}\n"
+                f"Calculated closing balance: {closing}\n\n"
+                "Mark these days as No data and close the month?"
+            )
+        else:
+            close_text = (
+                f"All required days are complete.\n\nOpening balance: {opening}\n"
+                f"Calculated closing balance: {closing}\n\nClose this month?"
+            )
         answer = QMessageBox.question(
             self,
             "Close Month",
@@ -681,23 +731,54 @@ class TimeTrackerApp(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
 
-        if getattr(self, "repository", None) is not None:
-            try:
-                self.repository.close_month(
-                    self.header.year(),
-                    self.header.month(),
-                    expected_revision=self._month_record.revision,
-                )
-            except StorageError as error:
-                QMessageBox.warning(self, "Month close failed", str(error))
-                return
-            self.load_month()
-            QMessageBox.information(
-                self,
-                "Month closed",
-                "Month successfully closed. PDF and CSV exports are separate actions.",
+        try:
+            self.repository.close_month(
+                year,
+                month,
+                expected_revision=self._month_record.revision,
+                mark_unresolved_no_data=bool(unresolved_count),
             )
+        except StorageError as error:
+            QMessageBox.warning(self, "Month close failed", str(error))
             return
+        self.load_month()
+        QMessageBox.information(
+            self,
+            "Month closed",
+            "Month successfully closed. PDF and CSV exports are separate actions.",
+        )
+
+    def reopen_month(self):
+        if not self.month_closed or self.repository is None:
+            QMessageBox.information(self, "Month open", "This month is already open.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Reopen Month",
+            "Reopen this month for corrections?\n\n"
+            "Later closed months will remain unchanged. If the corrected balance no "
+            "longer matches the next closed month, that month will show a carry-over "
+            "discontinuity.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.repository.reopen_month(
+                self.header.year(),
+                self.header.month(),
+                expected_revision=self._month_record.revision,
+            )
+        except StorageError as error:
+            QMessageBox.warning(self, "Month reopen failed", str(error))
+            return
+        self.load_month()
+        QMessageBox.information(
+            self,
+            "Month reopened",
+            "The month is editable again. Later closed months were not changed.",
+        )
 
         return
 
