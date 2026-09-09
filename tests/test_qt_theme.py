@@ -87,7 +87,18 @@ class QtThemeTest(unittest.TestCase):
 
         controller = ThemeController(settings=self.make_settings(LIGHT_THEME))
         header = HeaderWidget()
-        menu = MenuBar(None, Mock(), Mock(), Mock(), Mock())
+        menu = MenuBar(
+            None,
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+        )
         player = WorkdayBar()
         delegate = CurrentTimeDelegate()
 

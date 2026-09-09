@@ -157,6 +157,7 @@ class TimeTrackerApp(QMainWindow):
             export_pdf_command=self.export_current_pdf,
             backup_command=self.backup_database,
             import_csv_command=self.import_csv_data,
+            exit_command=QApplication.quit,
             reopen_month_command=self.reopen_month,
         )
         self.setMenuBar(self.menu)

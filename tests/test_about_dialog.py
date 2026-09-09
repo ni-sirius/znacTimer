@@ -31,6 +31,11 @@ class AboutDialogTest(unittest.TestCase):
             appearance_command=Mock(),
             work_schedule_command=Mock(),
             about_command=about_command,
+            export_month_command=Mock(),
+            export_pdf_command=Mock(),
+            backup_command=Mock(),
+            import_csv_command=Mock(),
+            exit_command=Mock(),
         )
 
         menu.about_action.trigger()
