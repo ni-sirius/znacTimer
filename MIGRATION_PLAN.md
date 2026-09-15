@@ -1,515 +1,630 @@
-# znacTime — Modular Refactor & Qt Migration Plan
+# znacTime — Migration Status and Native Release Plan
 
-> Historical migration record. The PySide6 migration is complete, and the legacy
-> Tkinter/tksheet backend was retired on 2026-08-07. References to Tk below describe
-> the migration source and are not part of the current application architecture.
+> Current-state review: **2026-09-14**, application **0.5.3**, SQLite schema **6**.
+> The modular refactor, PySide6 migration, and SQLite production cutover are implemented.
+> The remaining major work is native packaging, GitHub Actions, and release verification.
+> “Implemented” describes the checked-in application, not a verified native package.
 
-## Target Structure
+## Completed migration work
 
+The former Phases 1–5 are closed implementation work. Their original step-by-step
+instructions remain in Git history rather than being presented as future tasks here.
+
+| Area | Current implementation | Evidence |
+|---|---|---|
+| Core extraction | Models, calendar/time helpers, calculation, and validation are independent of GUI code. | [core/](znactime/core/), calculator/time/calendar tests |
+| Storage separation | A repository protocol, storage errors, SQLite implementation, legacy import, and explicit export modules separate persistence from widgets. | [repository.py](znactime/storage/repository.py), [storage/sqlite/](znactime/storage/sqlite/) |
+| Qt migration and binding | PySide6 is the production UI; Tkinter/tksheet and PyQt6 are no longer application backends. | [Qt UI](znactime/ui/qt/), [requirements.in](requirements.in) |
+| Application launcher | The launcher sets the application identity, acquires the database ownership lock, and injects a SQLite repository into the window. `tracker.py` is a compatibility wrapper. | [__main__.py](znactime/__main__.py), [tracker.py](tracker.py) |
+| SQLite cutover | Time records, schedules, work limits, breaks/timer state, month status, and closed results are stored in SQLite; edits use transactions and revisions. | [SQLite repository](znactime/storage/sqlite/repository.py), [Qt model](znactime/ui/qt/model.py) |
+| Per-user database location | The live database already uses `QStandardPaths.AppLocalDataLocation`, independently of the working directory. | [database_path()](znactime/ui/qt/first_launch.py) |
+| Legacy import | Validated, staged first import and subsequent protected merges preserve source files; completed imports produce private reports and recognize repeated snapshots. | [legacy_csv_import.py](znactime/storage/legacy_csv_import.py), [SQLite importer](znactime/storage/sqlite/legacy_import.py) |
+| First launch and recovery | Create/import/exit, interrupted-setup recovery, corruption handling, verified pre-upgrade backups, and failed-schema-upgrade recovery are implemented. | [first_launch.py](znactime/ui/qt/first_launch.py), [bootstrap.py](znactime/storage/sqlite/bootstrap.py) |
+| Background operations | Legacy inspection/import and explicit backup use cancellable worker tasks with worker-owned repository connections where needed. | [background.py](znactime/ui/qt/background.py), [app.py](znactime/ui/qt/app.py) |
+| Month lifecycle | Closing stores results transactionally; controlled reopening permits corrections without rewriting later closed months and exposes carry-over discontinuities. | [database dictionary](docs/DATABASE_SCHEMA.md), [lifecycle tests](tests/test_month_lifecycle_ui.py) |
+| Exports and backup | Month CSV, PDF, and verified database backup are explicit user-selected operations with atomic publication and protected-destination checks. Current CSV exports use schema v3. | [csv_export.py](znactime/storage/csv_export.py), [csv_format.py](znactime/storage/csv_format.py), [atomic_file.py](znactime/storage/atomic_file.py) |
+| Regression coverage | Core, SQLite, migration/recovery, UI, timer, themes, exports, and release-source checks have existing automated tests. | [tests/](tests/), [check_release_tree.py](scripts/check_release_tree.py) |
+
+Verification during this review: `python -m unittest discover -s tests -q` completed
+successfully on the local Windows source environment: **311 tests run, 2 skipped**.
+The release-source allowlist check also passed. Native packages and GitHub-hosted runs
+remain unverified; these local results do not close the platform acceptance checklist.
+
+Do not recreate these components or reintroduce CSV autosave, automatic PDF-on-close,
+or `.flag` writes into the production flow. Closing a month and exporting it are separate
+operations. Closed results remain protected until the explicit reopen transition;
+“closed months can never be reopened” is an obsolete requirement.
+
+## Current architecture and storage contract
+
+```text
+znactime/
+├── __main__.py             # identity, ownership lock, startup, Qt event loop
+├── config.py               # app/version constants; legacy CSV DATA_DIR remains here
+├── core/                   # GUI-independent records, validation, calculation
+├── storage/
+│   ├── repository.py       # semantic storage protocol
+│   ├── sqlite/             # schema v6, migrations, repository, bootstrap, import
+│   ├── legacy_csv_import.py
+│   ├── legacy_import_log.py
+│   ├── csv_export.py       # explicit month export
+│   ├── pdf_export.py
+│   ├── atomic_file.py
+│   ├── csv_store.py        # retained legacy helpers, not live persistence
+│   └── paths.py            # retained legacy CSV layout helpers
+└── ui/qt/                  # PySide6 window, model, table, timer, themes, settings
+tests/                      # top-level unittest suite
+scripts/                    # release-source check, import verifier, screenshots
 ```
-znactime/                        # rename the package
-├── __main__.py                  # python -m znactime entry point
-├── config.py                    # DATA_DIR, DEFAULT_DAY_HOURS, VERSION
-│
-├── core/                        # pure Python — zero GUI imports, ever
-│   ├── __init__.py
-│   ├── models.py                # DayEntry, MonthStats dataclasses
-│   ├── time_utils.py            # hhmm_to_hours, hours_to_hhmm, TIME_RE
-│   ├── calculator.py            # recalculate() → returns List[DayEntry], no sheet refs
-│   └── calendar_utils.py        # build_calendar_week_text, is_weekend, cw tag
-│
-├── storage/                     # persistence — zero GUI imports
-│   ├── __init__.py
-│   ├── paths.py                 # year_dir(), tmp_month_file(), closed_flag_file(), year_summary_file()
-│   ├── csv_store.py             # load_month(), save_month(), get_carry_over()
-│   └── pdf_export.py            # export_pdf(stats, path)
-│
-├── ui/                          # all GUI code, isolated here
-│   ├── __init__.py
-│   ├── constants.py             # shared visual constants
-│   ├── table_schema.py          # table columns and field mapping
-│   └── qt/                      # production PySide6 interface
-│       ├── __init__.py          # PySide6 import boundary
-│       ├── app.py               # TimeTrackerApp(QMainWindow)
-│       ├── header.py            # header widget
-│       ├── model.py             # MonthTableModel(QAbstractTableModel) over list[DayEntry]
-│       ├── table.py             # QTableView wrapper + edit delegate
-│       └── menu.py              # menu bar
-│
-└── tests/
-    ├── test_time_utils.py
-    ├── test_calculator.py
-    └── test_csv_store.py
-```
 
----
+Keep `core/` and storage implementation independent of GUI libraries. The Qt composition
+root resolves the database path and passes it to storage. The Qt model uses repository
+records and methods; SQL and driver details remain in storage.
 
-## The Key Architectural Rule
+### Live database and settings
 
-`core/` and `storage/` must never import from a GUI library.
-The PySide6 UI layer calls into core/storage and maps results onto widgets.
-
----
-
-## Phase 1 — Extract Core (no UI changes yet)
-
-**Goal:** make business logic testable without a display.
-
-1. Create `znactime/config.py` — module-level constants currently at the top of `tracker.py`:
+Startup sets `ORGANIZATION_NAME = "znac"` and `APP_NAME = "znacTime"` before resolving:
 
 ```python
-VERSION = "0.4.1"
-DATA_DIR = "data"
-DEFAULT_DAY_HOURS = 8.0
+root = QStandardPaths.writableLocation(
+    QStandardPaths.StandardLocation.AppLocalDataLocation
+)
+database = Path(root) / "znactime.db"
 ```
 
-2. Create `znactime/core/models.py` — both dataclasses used downstream:
+The Windows resolver was checked during this review and produces
+`%LOCALAPPDATA%\znac\znacTime\znactime.db` with the current identity. On macOS and Linux,
+resolve the path through Qt on that target and report it in the release documentation;
+do not construct it from a guessed home-directory layout. Qt provides platform-specific
+per-user locations through [QStandardPaths](https://doc.qt.io/qt-6/qstandardpaths.html).
 
-```python
-from dataclasses import dataclass
+Database sidecars, startup/application locks, import reports, staging files, and recovery
+files derive from the database location. Exported CSV/PDF files and explicit backups go
+to destinations selected by the user. UI preferences use the existing explicit
+`QSettings("znacTime", "znacTime")` namespace. Startup and the main window now share that
+same settings object; the earlier default `znac/znacTime` startup read was inconsistent
+with the namespace used to save preferences. Time records and timer state are not stored
+in `QSettings`.
 
-@dataclass
-class DayEntry:
-    cw: str
-    date: str
-    special: str
-    start: str
-    end: str
-    interruption: str
-    daily_ot: str = ""
-    monthly_balance: str = ""
-    row_color: str = ""   # hex color, filled by calculator
+**Keep the existing database location.** Packaging does not require `platformdirs`,
+moving SQLite into another directory, or a new location-migration mechanism. Changing
+organization/application names risks making existing data or settings appear missing
+and is outside the release work.
 
-@dataclass
-class MonthStats:
-    year: int
-    month: str
-    overtime: float       # final monthly balance, in hours
-```
+### What the remaining `data/` references mean
 
-3. Move `hhmm_to_hours`, `hours_to_hhmm`, `TIME_RE` → `core/time_utils.py`
+- `config.DATA_DIR`, `storage/paths.py`, and `csv_store.py` retain the old CSV layout for
+  legacy helpers/tests. Their presence does not describe the live database location.
+- First-launch and subsequent CSV-import dialogs suggest `Path.cwd() / "data"` if it
+  exists, otherwise the home directory. This is an import-folder suggestion; the user
+  chooses and confirms the source. It is not a runtime storage destination.
+- Legacy `.flag` files help interpret imported month status. Existing CSV files, flags,
+  historical summaries, and PDFs remain untouched; they are not live write targets.
+  The current importer recognizes monthly CSV files and matching flags, not every file
+  in a historical folder.
+- Source-folder discovery beside a frozen executable could improve the import dialog,
+  but is optional convenience work. Manual folder selection already exists.
 
-4. Move `is_weekend`, `build_calendar_week_text`, `calendar_week_tag` → `core/calendar_utils.py`
+### Scope and reference documents
 
-5. Create `core/calculator.py` — pure function, no widget access:
+[README.md](README.md) describes current usage and
+[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) describes the implemented schema.
+[SQLITE_MIGRATION_PLAN.md](SQLITE_MIGRATION_PLAN.md) retains the detailed migration design
+and release checks. Its August checkpoint and original requirements include superseded
+items such as schema v1, synchronous legacy import, CSV v2 output, and no reopening.
+Use the current implementation and database dictionary for those behaviors; do not turn
+obsolete requirements back into new migration tasks. Retain the established backup,
+validation, source-preservation, and recovery guarantees.
 
-```python
-def recalculate(
-    entries: list[DayEntry],
-    carry_over: float,
-    day_hours: float,
-    today: date,
-    month_closed: bool,
-) -> list[DayEntry]:
-    # returns new list with daily_ot, monthly_balance, row_color filled in
-    ...
-```
+Year/all-data CSV export, database encryption, authenticated synchronization, automatic
+updates, and optional legacy-helper cleanup are separate follow-up work. They are not
+prerequisites for packaging the current month-export application. Startup schema upgrade
+and recovery calls still run directly from first launch; any responsiveness improvement
+there should be scoped separately from the already-implemented background import/backup.
 
-The current `recalculate()` in `tracker.py` reads from and writes to the sheet widget
-directly — this is the main blocker for Qt migration. After this step it becomes a
-pure data transform.
+## Phase 6 — Remaining Packaging & Distribution Work
 
-6. Add `tests/test_time_utils.py` and `tests/test_calculator.py` — cover HH:MM round-trips
-   (including negatives), and `recalculate()` over weekend / special-day / missing-times /
-   valid-day rows plus carry-over accumulation. These run headless (no `tkinter` import).
+**Goal:** package the current PySide6/SQLite application for Windows, Ubuntu/Linux, and
+macOS without changing its storage identity or implemented behavior. Build from pinned
+inputs on GitHub, verify the native packages, and publish the exact tested artifacts.
 
----
+Sections 6.1–6.7 below are implementation tasks. Section 6.8 is the remaining packaged
+release acceptance checklist, not a list of missing application features. Phase numbering
+is retained so existing references to Phase 6 remain useful.
 
-## Phase 2 — Extract Storage
+### 6.0 — Preserve and verify existing storage behavior in frozen builds
 
-**Goal:** persistence is independently testable, swappable (e.g. CSV → SQLite).
+The move away from `data/` is **complete for production persistence**. The remaining
+release gate is proving that the installed/frozen application preserves that behavior:
 
-1. Move path helpers → `storage/paths.py`
-   - `year_dir()`, `tmp_month_file()`, `closed_flag_file()`, `year_summary_file()`
-   - Accept explicit `year`/`month` args instead of reading from tk vars
+### Disposition of the original eight prerequisites
 
-2. Move file I/O → `storage/csv_store.py`
-   - `load_month(year, month) -> list[DayEntry]`
-   - `save_month(year, month, entries: list[DayEntry])`
-   - `get_carry_over(year, month) -> float`
+The earlier version of this plan contained eight location-migration prerequisites. They
+were written before the current SQLite implementation was compared with the plan. This
+audit records the disposition of each original point so a removed implementation proposal
+is not mistaken for completed work.
 
-3. Move PDF generation → `storage/pdf_export.py`
-   - `export_pdf(stats: MonthStats, output_path: str)`
+1. **Add `platformdirs`, regenerate `requirements.txt`, and add it to `pyproject.toml` —
+   not done; the `platformdirs` part is superseded.**
 
-4. Add `tests/test_csv_store.py` — round-trip `save_month()` → `load_month()` against a
-   `tmp_path` fixture, and `get_carry_over()` across a month/year boundary using `.flag` files.
+   `requirements.in` still contains only PySide6 and reportlab, the current hash lock does
+   not contain `platformdirs`, and `pyproject.toml` does not exist yet. `platformdirs` was
+   proposed to replace a working-directory `data/` root, but production persistence already
+   uses Qt's cross-platform `QStandardPaths.AppLocalDataLocation`. Adding a second path
+   resolver would duplicate Qt and could change the identity of existing installations.
+   Creating `pyproject.toml` remains required by Phase 6.2 for package metadata and the GUI
+   entry point; it does not require `platformdirs`.
 
----
+2. **Make `storage/paths.py` own platform data/document locations and remove
+   `config.DATA_DIR` — not done; superseded for production storage.**
 
-## Phase 3 — Thin the UI Layer
+   `storage/paths.py` and `config.DATA_DIR` now serve retained legacy CSV helpers and tests.
+   They do not select the live database. The live path is already platform-correct through
+   Qt. Removing these names is optional legacy cleanup and must be evaluated against CSV
+   compatibility helpers; it is not a packaging prerequisite. Export-dialog defaults may
+   use Qt's `DocumentsLocation` without introducing another dependency.
 
-**Goal:** `ui/tk/` widgets only handle display and user events; no logic inside.
+3. **Move `database_path()` into storage and route all persistent files through it —
+   behavior complete; the proposed module move was not done.**
 
-1. Split `tracker.py` into:
-   - `ui/tk/app.py` — main window, wires header + table + menu together
-   - `ui/tk/header.py` — year/month selectors, carry-over/overtime labels
-   - `ui/tk/table.py` — tksheet wrapper; calls `recalculate()`, maps `DayEntry.row_color` onto rows
-   - `ui/tk/menu.py` — menu bar, delegates to app callbacks
+   The Qt composition root resolves the path and injects the same target into the process
+   lock, bootstrap/recovery flow, and SQLite repository. Database sidecars, locks, staging,
+   recovery files, and import logs derive from that target. Startup and the main window now
+   also share the existing `QSettings("znacTime", "znacTime")` object. No live persistence
+   derives from `Path.cwd()` or the bundle directory. `Path.cwd() / "data"` remains only a
+   suggested source in a user-confirmed legacy import dialog. Keeping the Qt-specific
+   resolver at the UI/composition boundary avoids importing PySide6 into storage.
 
-2. Move `COLORS`, `COLUMNS` → `ui/constants.py` (shared with Qt later)
+4. **Add a one-time migration from old SQLite/data locations, including automatic frozen
+   executable discovery — not done; no supported old SQLite location needs relocation.**
 
-3. Create `znactime/__main__.py` — entry point that launches the Tk backend:
-   ```python
-   from znactime.ui.tk.app import TimeTrackerApp
+   The SQLite cutover already created the live database in `AppLocalDataLocation`. Legacy
+   CSV is handled through the existing explicit Create/Import/Exit flow and later manual
+   merge action. The app does not automatically probe or import `data/` beside an executable,
+   because finding a folder is not enough authority to modify the live ledger. Repeated CSV
+   snapshots are identified by fingerprint and do not import twice. Discovery beside the
+   executable remains an optional dialog convenience, not a data migration requirement.
 
-   if __name__ == "__main__":
-       TimeTrackerApp().mainloop()
+5. **Preserve legacy CSV and migrate databases only through validated, backup-first,
+   atomic operations — complete for supported inputs; arbitrary SQLite relocation is not
+   implemented.**
+
+   Legacy CSV sources are never modified. CSV import uses full preflight, a staging
+   database, integrity/relationship validation, atomic promotion, and a user-readable
+   import log. Forward SQLite schema migrations create and validate a recovery backup,
+   migrate transactionally, reopen and validate, and retain recovery evidence on failure.
+   The app refuses to overwrite a populated setup destination. Moving an arbitrary SQLite
+   database from an undocumented location is intentionally unsupported because there is no
+   recognized prior production SQLite location to migrate.
+
+6. **Mark migration complete only after reopen and integrity/schema validation; keep
+   interrupted work retryable — complete for setup/import and schema migrations.**
+
+   New-database creation and legacy import publish staged databases only through the
+   bootstrap flow. Interrupted `.creating` and `.migrating` states are inspected and can be
+   completed or archived without silent deletion. Schema upgrades use verified backups,
+   transaction rollback, post-commit reopen validation, and a retryable failure marker.
+   There is no separate “location migration complete” marker because point 4's location
+   migration is not applicable.
+
+7. **Keep CSV/PDF/backup destinations user-selected and default them to Documents —
+   partially done.**
+
+   All three operations are user-selected, reject protected SQLite destinations, and use
+   atomic publication or SQLite's verified backup API. The dialogs currently receive a
+   suggested filename rather than an explicit `QStandardPaths.DocumentsLocation` path.
+   The Documents default is still open. It is a usability improvement, not a condition for
+   keeping the database writable outside the installed bundle.
+
+8. **Add cross-platform path, frozen/source discovery, migration, recovery, and export
+   default tests — partially done.**
+
+   Existing tests cover isolated database targets, working-directory independence,
+   database/lock/backup placement outside an installed-application directory, stable
+   settings identity, first launch, repeated import, staging recovery, schema migration,
+   backup validation, corruption handling, and protected export destinations. The suite
+   uses temporary paths and does not access the developer's live database. Tests for the
+   superseded automatic executable discovery/location migration are not needed. Still open:
+   native `QStandardPaths` verification in Windows, Ubuntu, macOS arm64, and macOS x64
+   jobs; the explicit Documents default if point 7 is implemented; and frozen-package plus
+   clean-machine install/upgrade/uninstall acceptance.
+
+### Active Phase 6.0 release gate
+
+- [x] Preserve Qt's existing production database location and application identity.
+- [x] Allow an explicit Python test root without consulting the real user-data directory.
+- [x] Pass one resolved target through locking, bootstrap/recovery, and repository startup.
+- [x] Pass one stable settings object through startup and the main window.
+- [x] Cover the local storage/startup prerequisites with isolated automated tests.
+- [ ] Decide and implement the optional Documents-directory dialog default.
+- [ ] Run storage-path and recovery tests on every GitHub Actions native runner.
+- [ ] Complete frozen-package and clean-machine upgrade/uninstall acceptance after the
+      packages exist.
+
+### 6.1 — Verified feasibility and missing release inputs
+
+**GitHub Actions can build all target packages on GitHub-hosted machines.** Use
+PyInstaller to bundle Python, PySide6, and the application, then use a separate native
+packaging tool for each OS. PyInstaller is not a cross-compiler and does not itself create
+an Inno Setup installer, DMG, or Debian package. See the
+[PyInstaller project documentation](https://github.com/pyinstaller/pyinstaller/blob/develop/README.rst).
+
+Repository review and documentation verification: **2026-09-14**. This is an implementation
+plan, not evidence of successful builds on GitHub. The repository currently has:
+
+- A PySide6 application, CPython 3.12 baseline, and `znactime.__main__.main()` launcher.
+- `requirements.txt` with binary-only, SHA-256-verified **Windows x64 wheels only**.
+  Reusing it on Linux or macOS will fail hash verification for platform-specific wheels.
+- A standard-library `unittest` suite; `requirements-dev.txt` adds no test framework.
+- `scripts/check_release_tree.py`, whose allowlist currently rejects workflow YAML,
+  packaging metadata, installer scripts, and new icons.
+- No GitHub Actions workflow, PyInstaller spec, native installer definitions, or frozen
+  application smoke-test command. Phase 6.0 frozen-build storage verification remains open.
+
+Before enabling release automation:
+
+1. Add runtime locks at `requirements/locks/<target>.txt` for the four targets in 6.3.
+   Resolve and review every transitive wheel on its native runner, preserving exact
+   versions, `--only-binary=:all:`, and `--require-hashes`. Keep `requirements.in` as the
+   shared declaration; retain Pillow as a locked transitive runtime dependency. Keep the root Windows installation entry point documented and in sync.
+2. Add separate `requirements/build/<target>.txt` locks for PyInstaller, its hooks and
+   transitive dependencies. Constrain shared dependencies to the runtime resolution and
+   run `python -m pip check` after installation. Regenerate locks in a reviewed change,
+   never during a release job. Update `tests/test_dependency_lock.py` to validate each
+   target rather than its current hard-coded single Windows resolution.
+3. Record one exact CPython 3.12 patch in `packaging/python-version.txt`. Pin downloaded
+   installer/AppImage tools by version and checksum. Log runner image, Python, dependency,
+   and packaging-tool versions in a build manifest; OS-version runner labels still receive
+   image updates. Pinned inputs do not imply byte-identical signed/notarized output.
+4. Add `znactime.spec`, `packaging/launcher.py`, `packaging/windows/znactime.iss`,
+   `packaging/macos/entitlements.plist`, Linux desktop/control templates, native icons,
+   and the shared scripts described in 6.7. The launcher only imports and invokes
+   `znactime.__main__.main()`; PyInstaller needs a script path, not a console-entry-point
+   string such as `znactime.__main__:main`. Set the spec's `pathex` to the repository root
+   so the launcher under `packaging/` can resolve `znactime` without an editable install.
+5. Extend the release-tree allowlist and its tests for these exact reviewed inputs,
+   including `.github/workflows/`. Preserve rejection of databases, backups, credentials,
+   and unrelated files. Generated output belongs under `build/` and `dist/` only.
+
+### 6.2 — Project metadata, entry point, version, and icons
+
+1. Add `pyproject.toml` and define the GUI entry point:
+
+   ```toml
+   [project.gui-scripts]
+   znactime = "znactime.__main__:main"
    ```
 
-4. Typical flow after refactor:
-   ```
-   user edits cell
-     → table.py validates input
-     → calls csv_store.save_month()
-     → calls calculator.recalculate()
-     → maps returned DayEntry list onto sheet rows
-   ```
+   `znactime/__main__.py` already exposes `main()`; retain and test that function rather
+   than creating a second launcher. `tracker.py` may remain only as a compatibility entry
+   point and must not be used by packaged builds.
+2. Keep one editable source asset and provide release-ready `icon.icns` for macOS,
+   `icon.ico` for Windows, and `icon.png` for Linux. Include the current Qt PNG/theme
+   assets in the bundle, and fail the build if a required asset is absent.
+3. Keep `znactime.config.VERSION` as the application version source. The spec and installer
+   scripts must import or receive that value; the Git tag, About/title text, bundle
+   metadata, installer metadata, and all artifact names must match it.
+4. The artifact must include third-party license notices and must exclude real/test user
+   data, credentials, caches, local settings, and developer paths.
+
+### 6.3 — Native build matrix and supported-system policy
+
+Use four explicit jobs, all checking out the same commit. The labels and architectures
+below are available on standard
+[GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Avoid `*-latest` so an alias migration does not silently change the build baseline.
+
+| Target / lock name | `runs-on` | setup-python architecture | First release package |
+|---|---|---|---|
+| `windows-x64` | `windows-2022` | `x64` | `znacTime-<VERSION>-windows-x64-Setup.exe` |
+| `linux-x64` | `ubuntu-22.04` | `x64` | `znactime_<VERSION>_amd64.deb` and `znacTime-<VERSION>-linux-x86_64.AppImage` |
+| `macos-arm64` | `macos-15` | `arm64` | `znacTime-<VERSION>-macos-arm64.dmg` |
+| `macos-x64` | `macos-15-intel` | `x64` | `znacTime-<VERSION>-macos-x86_64.dmg` |
+
+Initial acceptance targets: Windows 11 x64, Ubuntu Desktop 22.04 and 24.04 x64, and
+macOS 15 on both architectures. Test the AppImage additionally on a named, supported
+Fedora release and record that version before claiming Fedora support. Windows/Linux
+ARM64 and older macOS releases are outside this first acceptance matrix.
+
+The pinned PySide6 6.11.1 release provides Windows x64, Linux x86_64 wheels tagged
+`manylinux_2_34`, and macOS `13_0_universal2` wheels. These tags establish dependency
+constraints, not proof that the final application supports every matching system. Verify
+the full resolution, including Essentials, Addons, Shiboken, and Pillow, on each runner.
+See [PySide6 wheel metadata](https://pypi.org/project/PySide6/6.11.1/#files) and
+[Essentials wheel metadata](https://pypi.org/project/PySide6-Essentials/6.11.1/#files).
+
+Build Linux on the oldest supported Ubuntu baseline: PyInstaller does not bundle glibc,
+and an AppImage cannot erase a newer build's glibc requirement. If the dependencies stop
+working on 22.04, review the dependency or supported-OS policy explicitly; do not silently
+switch to `ubuntu-latest`. See
+[PyInstaller's Linux compatibility guidance](https://pyinstaller.org/en/stable/usage.html#making-gnu-linux-apps-forward-compatible).
+
+Use the PyInstaller PySide6 hooks for Qt libraries/plugins, plus explicit collection of
+the app's PNG and theme JSON files and any reportlab/Pillow resources the smoke tests show
+are needed. Do not indiscriminately collect every Qt module. Verify the native platform
+plugin (`windows`, `cocoa`, `xcb` and any supported Wayland plugin), image loading, fonts,
+themes, SQLite, and PDF export in the frozen application. A passing headless test does
+not establish that the desktop platform plugin can load.
+
+### 6.4 — macOS package, signing, and notarization
+
+1. Produce `dist/znacTime.app` with a stable bundle identifier and explicit native target
+   architecture (`arm64` or `x86_64`). Publish separate DMGs initially. A later universal2
+   build requires a universal2 Python and every collected native dependency to contain
+   both slices; a universal2 PySide6 wheel alone is insufficient. See
+   [PyInstaller macOS architecture support](https://pyinstaller.org/en/stable/feature-notes.html#macos-multi-arch-support).
+2. In the trusted release job, import a Developer ID Application certificate into a
+   temporary keychain. Sign collected code from the inside out using PyInstaller's signing
+   support and reviewed entitlements, with Hardened Runtime and timestamping. Verify the
+   complete app; do not use `codesign --deep` as a substitute for correct signing order.
+3. Archive the signed app with `ditto`, submit that ZIP using `xcrun notarytool submit
+   ... --wait`, require an Accepted result, and staple/validate the `.app` ticket.
+4. Use the runner's `hdiutil` to create a DMG containing the stapled app and an Applications
+   shortcut. Sign the DMG, submit it for notarization, then staple/validate the DMG ticket.
+   This gives both the copied app and the download container offline tickets. No bundle
+   content changes are permitted after signing. Hash the final stapled DMG.
+5. Check `codesign --verify --deep --strict`, `xcrun stapler validate`, and Gatekeeper
+   assessment. Rehearse Finder launch of a quarantined download, app-local data access,
+   exports, and same-identity upgrade on both architectures. See
+   [Apple's automated notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+
+### 6.5 — Windows package and installer
+
+1. Produce the one-directory `dist/znacTime/znacTime.exe` bundle; the installer must include
+   the whole directory, including PyInstaller's runtime subdirectory. This avoids one-file
+   extraction at each launch.
+2. Compile the checked-in `.iss` with a pinned Inno Setup `ISCC.exe`. Use a stable `AppId`,
+   `PrivilegesRequired=lowest`, a per-user application directory, Start-menu shortcut,
+   version metadata, and uninstall entry. Do not install or delete user data. See
+   [Inno Setup's privilege setting](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm).
+3. Choose and validate unattended signing before enabling signed releases: use a
+   cloud/HSM-backed Authenticode provider supported from an ephemeral Windows runner.
+   A certificate requiring a locally attached USB token cannot simply be uploaded as a
+   GitHub secret. Prefer provider-supported OIDC; otherwise scope provider credentials
+   to the release signing job.
+4. Sign and timestamp the application before compiling the installer; configure signing
+   for the generated uninstaller, then sign/timestamp the final Setup EXE. Verify signatures
+   with SignTool. Signing identifies the publisher but does not guarantee a warning-free
+   first download; EV certificates no longer automatically bypass SmartScreen. See
+   [Microsoft's SmartScreen guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
+5. Test silent install/uninstall in CI and Start-menu launch, upgrade, data preservation,
+   PDF export, and recovery on a clean Windows 11 system. A Windows Server build runner
+   is not a substitute for the supported desktop acceptance test.
+
+### 6.6 — Linux package
+
+1. Produce one PyInstaller one-directory bundle on `ubuntu-22.04`; use it as input for both
+   the Ubuntu installer and portable Linux download.
+2. **Ubuntu native package:** stage the bundle under `/opt/znactime/`, an executable launcher
+   under `/usr/bin/znactime`, and desktop/icon files under `/usr/share/`. Add reviewed
+   `DEBIAN/control` metadata (`Package: znactime`, `Architecture: amd64`, mapped version,
+   description, maintainer, and runtime dependencies). Build with
+   `dpkg-deb --build --root-owner-group`. Install with `sudo apt install ./<package>.deb`
+   so declared system dependencies resolve. Package install/removal must not create or
+   erase per-user databases. See the
+   [Ubuntu dpkg-deb manual](https://manpages.ubuntu.com/manpages/jammy/man1/dpkg-deb.1.html).
+3. **AppImage:** stage an AppDir containing the same bundle, executable `AppRun`, desktop
+   file, and icon; package it with a version/checksum-pinned `appimagetool`. Account for
+   executable modes and Qt plugin paths. If additional native-library deployment is
+   necessary, review it explicitly rather than running two independent Qt bundlers.
+4. Inspect unresolved shared libraries and derive `.deb` runtime dependencies from the
+   shipped binaries and Qt plugins, then validate on clean 22.04 and 24.04 installations.
+   CI must provision Xvfb and required X11/xcb, xkbcommon, font, and GL libraries. See
+   [Qt's Linux platform-plugin requirements](https://doc.qt.io/qt-6/linux-requirements.html).
+5. Exercise the actual `xcb` plugin with `xvfb-run -a` in CI. Test desktop launch under
+   X11 and Ubuntu's Wayland session (document whether this uses native Wayland or XWayland).
+   Test AppImage mounting with FUSE on a desktop; use `--appimage-extract-and-run` when
+   runner FUSE support is unavailable. The latter does not verify FUSE mounting. Document
+   `chmod +x` and the fallback in release instructions. See
+   [AppImage FUSE guidance](https://docs.appimage.org/user-guide/troubleshooting/fuse.html).
+6. Both formats must write only to the Phase 6.0 locations. Publish SHA-256 checksums and
+   a detached signature of the Linux checksum manifest using a protected release key;
+   document how to verify it. GitHub Release assets are direct downloads, not an APT
+   repository. APT repository signing, RPM, Flatpak, and automatic updates are later work.
+
+### 6.7 — CI/CD with GitHub Actions
+
+Implement in two stages: first prove all four unsigned package builds, then enable trusted
+tag signing and draft release creation. Phase 6.0 verifies existing storage behavior
+in those packages; no new database-location migration is required.
+
+#### Workflow events and job boundaries
+
+| Workflow/event | Work | Publication and credentials |
+|---|---|---|
+| `ci.yml`: `pull_request`, default-branch pushes | Four native test jobs; package smoke builds after packaging inputs exist | Read-only token; no signing secrets |
+| `ci.yml`: `workflow_dispatch` | Manually exercise the same four candidate builds | Unsigned CI downloads only; macOS may use ad-hoc signing for execution |
+| `release.yml`: push of `v*` tag | Validate tag, build/test all targets, platform signing/notarization, test final packages, aggregate | Trusted tag jobs only; create a draft GitHub Release after every target passes |
+
+Protect release tags against unauthorized creation/movement, require their commit to be
+on the reviewed release branch, and restrict signing environments to those tags. Use
+`pull_request`, never a privileged `pull_request_target` checkout to run contributor code.
+Keep default `permissions: contents: read`; grant `contents: write` only to the final
+release job and `id-token: write` only where a chosen signing provider needs OIDC.
+Pin actions to reviewed full commit SHAs in production. See
+[GitHub's workflow security guidance](https://docs.github.com/en/actions/reference/security/secure-use).
+
+Use the following **design skeleton for the unsigned build stage**. Referenced scripts,
+lockfiles, and Python-version file are planned deliverables, not existing commands. Action
+major tags are shown for readability; resolve them to reviewed SHAs before activation.
+The same build logic should be shared by both workflows without granting CI signing access.
+
+```yaml
+name: Native package candidates
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: windows-x64, os: windows-2022, arch: x64}
+          - {target: linux-x64, os: ubuntu-22.04, arch: x64}
+          - {target: macos-arm64, os: macos-15, arch: arm64}
+          - {target: macos-x64, os: macos-15-intel, arch: x64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: packaging/python-version.txt
+          architecture: ${{ matrix.arch }}
+      - run: python scripts/prepare_native_tools.py --target ${{ matrix.target }}
+      - run: python -m pip install --require-hashes --only-binary=:all: -r requirements/locks/${{ matrix.target }}.txt -r requirements/build/${{ matrix.target }}.txt
+      - run: python -m pip check
+      - run: python scripts/check_release_tree.py
+      - run: python -m unittest discover -s tests -v
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: python scripts/build_native.py --target ${{ matrix.target }} --mode unsigned
+      - run: python scripts/smoke_native.py --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: candidate-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+```
+
+`setup-python` supports selecting the interpreter/architecture; `upload-artifact` requires
+distinct matrix artifact names and does not preserve Unix file modes in its default
+archive. Upload completed DMG/EXE/DEB/AppImage files, not a loose `.app` or AppDir; use a
+tar archive if transferring an unpackaged bundle. Restore the executable bit before
+testing a downloaded AppImage. See [setup-python](https://github.com/actions/setup-python)
+and [upload-artifact](https://github.com/actions/upload-artifact).
+
+#### Shared script contracts and frozen-app verification
+
+- `prepare_native_tools.py`: install/locate the pinned native packaging tools; verify
+  downloaded checksums; provision Ubuntu runtime/Xvfb prerequisites and log tool versions.
+  Use explicit platform subprocesses with checked exit codes. Do not rely on incidental
+  preinstalled runner software or a shell syntax shared across PowerShell and Bash.
+- `build_native.py`: validate host architecture and version, call
+  `python -m PyInstaller --clean --noconfirm znactime.spec`, then the platform packager.
+  Accept explicit `unsigned` or `release` mode. Release mode must fail if required signing
+  credentials or notarization are missing; never silently fall back to unsigned output.
+  Write only final packages, checksums, notices, and per-target build manifests to
+  `dist/release/`; manifests include commit, version, target, tools, and dependency locks.
+- `smoke_native.py`: install/extract/mount the produced package, start its **bundled
+  executable**, and require a bounded successful exit plus a machine-readable report.
+  Add a diagnostic `--smoke-test --data-dir <temporary-path> --report <path>` mode to the
+  existing launcher, handled before normal first-launch dialogs. Restrict the data override
+  to this diagnostic mode. It must instantiate the Qt window, render assets/themes,
+  create/edit/reopen a synthetic SQLite record, and export a PDF without user interaction.
+  Run outside the checkout from an unrelated working directory with no `PYTHONPATH`,
+  external Qt plugin path, or development-environment library fallback. On Linux use Xvfb
+  with `QT_QPA_PLATFORM=xcb`; on Windows/macOS use their native platform backend.
+- Keep automated package checks separate from clean desktop acceptance. Hosted runners
+  include Python and developer tools; they cannot prove independence from those tools or
+  successful Finder/Start-menu integration. Record clean-VM/manual results for every
+  supported platform and architecture, including upgrade and migration tests from 6.8.
+
+#### Trusted release sequence and artifact promotion
+
+1. Trigger from `push.tags: ['v*']`; a validation job rejects malformed tags and mismatches
+   with `znactime.config.VERSION`, resolves the tag to a commit, and checks release-branch
+   ancestry. All downstream jobs check out that resolved commit. For initial releases use
+   `vX.Y.Z`; if prerelease suffixes are added later, define explicit Windows numeric and
+   Debian/macOS metadata mappings rather than claiming all formats accept the same string.
+2. Run the four native jobs with `fail-fast: false`. Each tests, builds, signs/packages,
+   verifies signatures, and smoke-tests the final package. Give only relevant platform
+   jobs their signing environments. Do not inject Apple/Windows credentials into Linux
+   or contributor builds. Set longer bounded timeouts for notarization and serialize
+   release attempts for the same tag with `cancel-in-progress: false`.
+3. Apple prerequisites: Developer ID membership/certificate, certificate password, signing
+   identity, and a notarization App Store Connect API key/issuer/key ID (or documented
+   Apple-ID credentials). Import into an ephemeral keychain; clean the keychain and key
+   files in an `always()` cleanup step. Windows prerequisites: the chosen hosted signing
+   account/identity and its GitHub authentication configuration. Linux prerequisites:
+   checksum-signing identity and published verification key. Keep material in scoped
+   GitHub environment secrets or the provider, never in artifacts or logs.
+4. Generate package SHA-256 checksums **after** all signing, notarization, and stapling.
+   Upload uniquely named artifacts and record their IDs. The aggregate job must
+   `needs` all platform jobs, download artifacts from this run, require all five expected
+   packages, verify checksums and consistent commit/version, and reject missing/duplicate
+   assets. Do not publish a partial release when one platform fails.
+5. Create a **draft** GitHub Release for the already-existing tag using `gh release create`
+   with `--verify-tag --draft`, attaching the exact packages, checksums/signatures, manifests,
+   notices, and release notes. Use the job's `GITHUB_TOKEN` as `GH_TOKEN`; no personal token
+   is needed for same-repository release uploads. Fail on an unexpected existing release
+   instead of overwriting reviewed assets. See
+   [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create).
+6. Perform clean-machine acceptance on these final downloads and compare their checksums
+   with the build record. Publish the existing draft after sign-off; do not rebuild or
+   retag a `-rc` binary as a different final version. If a change is needed, create a new
+   version/tag and candidate. Preserve the previous release for executable rollback.
+
+Standard hosted runners are available for public and private repositories; public standard
+runner usage is free, while private usage consumes the account's allowance and may incur
+charges. Confirm the repository's Actions permissions, available minutes/artifact storage,
+and signing-account access before activation. GitHub hosting does not supply signing
+identities. See the [hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+
+### 6.8 — Distribution checklist and definition of done
+
+- [ ] Frozen/source launches and same-identity upgrades find the existing Qt-resolved
+      database and preferences. All database-related writes stay outside the bundle;
+      exports/backups remain user-selected.
+- [ ] Runtime and build dependencies are pinned, and `znactime.spec` builds from a clean
+      environment on every target operating system.
+- [ ] All four GitHub-hosted jobs pass with reviewed platform locks and native tooling;
+      the expanded release-tree and dependency-lock checks pass.
+- [ ] Each artifact launches on a clean OS installation with no Python or developer tools.
+- [ ] The existing automated suite passes on all targets. Packaged acceptance verifies
+      edits persist to SQLite, timer start/pause/resume/stop and restart recovery,
+      carry-over, controlled close/reopen, CSV v3/PDF export, backup, themes, and validation.
+- [ ] First launch handles create-new, legacy CSV import, an existing SQLite database,
+      interrupted migration, and corrupt-database recovery without silent data loss.
+- [ ] Migration rehearsal preserves open/closed months, per-day values, carry-over,
+      schedule history, year-boundary data, import logs, and recovery evidence.
+- [ ] macOS `.dmg` artifacts are signed, notarized, stapled, and open without a Gatekeeper
+      override on every supported architecture.
+- [ ] The signed Windows installer creates a Start-menu shortcut, upgrades cleanly, and
+      uninstalls without deleting user data.
+- [ ] The Ubuntu `.deb` installs/upgrades/removes successfully on 22.04 and 24.04 without
+      deleting user data; its desktop entry launches the bundled executable.
+- [ ] The Linux AppImage passes Ubuntu 22.04/24.04 and the recorded Fedora acceptance
+      target, including FUSE and extract-and-run checks, with no writes inside its image.
+- [ ] PDF export and month close/reopen work in every frozen artifact, with all required
+      reportlab, Pillow, Qt plugin, icon, and theme resources bundled.
+- [ ] The About/title version, package metadata, release tag, installer metadata, artifact
+      filenames, and checksums agree on all three platforms.
+- [ ] Artifacts contain required third-party notices and no user data, credentials, test
+      fixtures, local settings, caches, or developer paths.
+- [ ] Release notes state the user-data/export locations, backup and recovery procedure,
+      known limitations, and standard SQLite (non-app-encrypted) storage model.
+- [ ] The exact release candidate tested is the artifact published, and the previous
+      supported artifact remains available for executable rollback without deleting or
+      downgrading user data.
+- [ ] Signing/notarization failures, a failed platform job, missing assets, and mismatched
+      versions/checksums block release creation; contributor workflows have no signing access.
 
 ---
 
-## Phase 4 — Qt Migration (future)
-
-> **For the implementing agent:** Do NOT modify anything under `core/`, `storage/`, or
-> `ui/constants.py`. If you find yourself needing to change them, stop — that means logic
-> leaked into the UI during Phase 3 and must be pulled back first. The Tk backend stays in
-> place and working until Phase 4 is fully verified; this is an additive migration.
-
-### 4.0 — Prerequisites & ground rules
-
-- Target **PyQt6** (`pip install PyQt6`). Add it to `requirements.txt` / `pyproject.toml`.
-  If the team prefers LGPL/`PySide6`, the only differences are the import names and
-  `pyqtSignal` → `Signal`; keep all imports funnelled through `ui/qt/__init__.py` so the
-  binding can be swapped in one place.
-- Reuse `ui/constants.py` (`COLORS`, `COLUMNS`) verbatim — do not redefine colors/headers.
-- All widgets receive data as `list[DayEntry]` and call `core.calculator.recalculate()` and
-  `storage.csv_store` exactly like the Tk widgets do. Compare against `ui/tk/` for the
-  expected call sequence (see Phase 3 step 4 flow).
-
-### 4.1 — `ui/qt/model.py` (new file — the heart of the migration)
-
-Create `MonthTableModel(QAbstractTableModel)` backed by `self._entries: list[DayEntry]`.
-This replaces tksheet's data store. Implement:
-
-| Method | Behavior |
-|---|---|
-| `rowCount` | `len(self._entries)` |
-| `columnCount` | `len(COLUMNS)` |
-| `headerData(section, Horizontal, DisplayRole)` | `COLUMNS[section]` |
-| `data(index, DisplayRole)` | the field of `DayEntry` for that column (map column index → dataclass field, same order as `COLUMNS`) |
-| `data(index, BackgroundRole)` | `QColor(entry.row_color)` if set, else `None` |
-| `data(index, TextAlignmentRole)` | `Qt.AlignCenter` for columns `{0, 3, 4, 5, 6, 7}` (matches `align_columns` in Tk) |
-| `flags(index)` | base flags; add `Qt.ItemIsEditable` only when column ∈ `{2, 3, 4, 5}` **and** month is not closed (mirrors `readonly_columns({0,1,6,7})` + closed-month lock) |
-| `setData(index, value, EditRole)` | run validation (see 4.2), write to the `DayEntry`, then trigger recalc + save + `dataChanged` for the whole table |
-
-Add a helper `set_entries(self, entries)` that does `beginResetModel()/endResetModel()` —
-called on month load.
-
-### 4.2 — Port cell validation into the model
-
-Move the body of `on_cell_edit` (numeric → HH:MM coercion, `TIME_RE` check, "Normal day"
-default for the Special-day column) into a small pure helper, ideally
-`core/time_utils.coerce_time_input(value) -> str | None` (returns `None` on invalid) so it
-is shared with Tk and unit-tested. In `setData`:
-- columns 3/4/5: coerce; on invalid, reject the edit (`return False`) and surface a
-  `QMessageBox.warning` — equivalent to the Tk `messagebox.showerror`.
-- column 2: empty → `"Normal day"`.
-
-### 4.3 — `ui/qt/table.py`
-
-`QTableView` wrapper holding a `MonthTableModel`:
-- `setModel(model)`, stretch the last column or set per-column resize to match the 150px
-  auto-resize behavior (`horizontalHeader().setSectionResizeMode(...)`).
-- Hide the vertical header (`verticalHeader().setVisible(False)` — matches
-  `show_row_index=False`).
-- Enable copy/paste & undo: Qt has no built-in cell undo stack like tksheet. Either accept
-  loss of undo/redo for v1 (note it), or wire a `QUndoStack` with a command per `setData`.
-  **Decide explicitly and record the choice in the PR.**
-- Start/End prefill: tksheet prefilled the current time when opening a `00:00` Start/End
-  cell. Reproduce with a `QStyledItemDelegate.createEditor` that, for columns 3/4 when the
-  cell reads `00:00`, seeds the editor with `datetime.now().strftime("%H:%M")` and selects
-  all text (mirrors `on_begin_edit_cell` + `on_text_editor_focus_in`).
-
-### 4.4 — `ui/qt/header.py`
-
-`QWidget` with a horizontal layout reproducing the Tk header:
-- Year: `QSpinBox` range 2000–2100.
-- Month: `QComboBox` populated from `calendar.month_name[1:]`.
-- Three `QLabel`s for carry-over, overtime, calendar-week text.
-- Emit a `selectionChanged` signal (or call back into the app) on year/month change →
-  app reloads the month.
-
-### 4.5 — `ui/qt/menu.py` & `ui/qt/app.py`
-
-- `app.py`: `TimeTrackerApp(QMainWindow)` — sets title `znacTime v{VERSION}`, resize
-  ~1250×900, composes header (top) + table (central widget). Owns `load_month()`,
-  `close_month()` orchestration — same responsibilities as the Tk `app.py`, just Qt calls.
-- `menu.py`: `menuBar()` with a **Month** menu → *Close Month* (`QAction`, triggers
-  `app.close_month`) and *Exit* (`QApplication.quit`). Disable *Close Month* when the month
-  is already closed.
-- `close_month()` uses `QMessageBox.question` for the confirm dialog, then calls the same
-  `storage` + `pdf_export` functions as Tk.
-
-### 4.6 — Switch the entry point
-
-```python
-# znactime/__main__.py — swap this one import to flip the entire UI backend
-import sys
-from PyQt6.QtWidgets import QApplication
-from znactime.ui.qt.app import TimeTrackerApp
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = TimeTrackerApp()
-    window.show()
-    sys.exit(app.exec())
-```
-
-### 4.7 — Historical feature-parity checklist
-
-- [ ] Year/month switch reloads data and recomputes carry-over.
-- [ ] Weekend rows auto-mark "Weekend" and color correctly; special days, missing-times,
-      and valid days all match the Tk colors (incl. the `*_today` variants on today's row).
-- [ ] Numeric entry (`830` → `08:30`) and invalid-time rejection both work.
-- [ ] Daily OT and Monthly balance columns are read-only and recompute live.
-- [ ] Start/End cells prefill current time when opening a `00:00` cell.
-- [ ] Closing a month writes the `.flag`, appends the year summary, exports the PDF, and
-      locks all editing.
-- [ ] Closed months load fully grayed-out and non-editable.
-- [ ] Autosave writes the tmp CSV on every edit; byte-compare a saved file against one
-      produced by the Tk version for the same input to confirm format parity.
-
-The legacy backend has now been removed following the explicit retirement decision.
-
----
-
-## Phase 5 — Switch to LGPL binding (PyQt6 → PySide6)
-
-> **Prerequisite:** Phase 4 complete and verified. All imports already funnelled through
-> `ui/qt/__init__.py` as required by Phase 4.0.
-
-**Why:** PyQt6 is GPL, which requires the application to be GPL-licensed as well. PySide6
-is the official Qt binding released under LGPL, allowing proprietary or permissively-licensed
-distribution without that constraint.
-
-### 5.1 — Swap the dependency
-
-```bash
-pip uninstall PyQt6 PyQt6-Qt6 PyQt6-sip
-pip install PySide6
-```
-
-Update `requirements.txt` / `pyproject.toml` accordingly.
-
-### 5.2 — Update the binding shim in `ui/qt/__init__.py`
-
-This is the single file that all other `ui/qt/` modules must import Qt from. Replace:
-
-```python
-# before
-from PyQt6.QtWidgets import *
-from PyQt6.QtCore import Qt, pyqtSignal as Signal, QAbstractTableModel, ...
-from PyQt6.QtGui import QColor, ...
-```
-
-with:
-
-```python
-# after
-from PySide6.QtWidgets import *
-from PySide6.QtCore import Qt, Signal, QAbstractTableModel, ...
-from PySide6.QtGui import QColor, ...
-```
-
-Key name differences to handle here:
-- `pyqtSignal` → `Signal` (already aliased above, so no other files change)
-- `pyqtSlot` → `Slot`
-- `exec_()` was removed in PyQt6 and PySide6 both use `exec()` — no change needed if Phase 4 used `exec()`.
-- `QAction` moved: in PyQt6 it is in `QtGui`; in PySide6 it is in `QtWidgets` — adjust the import.
-
-### 5.3 — Update `ui/qt/app.py` entry-point snippet
-
-```python
-# znactime/__main__.py
-import sys
-from PySide6.QtWidgets import QApplication
-from znactime.ui.qt.app import TimeTrackerApp
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = TimeTrackerApp()
-    window.show()
-    sys.exit(app.exec())
-```
-
-### 5.4 — Verify
-
-Run the full Phase 4.7 feature-parity checklist again. No behavioral changes are expected;
-this step is purely a binding swap.
-
----
-
-## Phase 6 — Delivery
-
-> **Prerequisite:** Phases 1–5 are complete and the Phase 4.7 parity checklist has been
-> signed off. Delivery must package the migrated PySide6 application without moving
-> business logic back into the UI. The SQLite cutover and legacy compatibility behavior
-> are governed by `SQLITE_MIGRATION_PLAN.md`.
->
-> **Superseded data contract:** the later requirement to make SQLite the sole source of
-> truth is specified in `SQLITE_MIGRATION_PLAN.md`. Complete that plan before the packaged
-> release. Its storage-location, CSV/export, migration, security, and rollback rules
-> supersede conflicting rules in Phase 6.2, Phase 6.5, and the historical “What Not to
-> Touch” list below.
-
-**Goal:** produce repeatable Windows and macOS releases that can be tested in clean
-environments, upgraded without risking existing time data, and rolled back independently
-of user data.
-
-### 6.0 — Delivery contract
-
-- The production UI is the PySide6 backend launched by `python -m znactime`; `tracker.py`
-  remains a compatibility entry point.
-- Delivery targets are a Windows x64 bundle named
-  `znacTime-<VERSION>-windows-x64.zip` and a signed/notarized macOS application. Prefer
-  `znacTime-<VERSION>-macos-universal2.dmg`; if native dependencies prevent a universal
-  build, publish separately named `arm64` and `x86_64` artifacts.
-- The bundle contains the application executable, required Qt runtime/plugins, the SVG
-  assets under `ui/qt/assets/`, third-party license notices, and a short launch/upgrade
-  guide. It must never contain development or real user data.
-- `znactime.config.VERSION`, the Git tag, artifact name, and displayed application version
-  must match.
-- The retired Tk source and `tksheet` dependency are not included. The delivered entry
-  point exposes PySide6 only.
-
-### 6.1 — Reproducible release inputs
-
-1. Separate and pin runtime dependencies (`PySide6` and `reportlab`) from
-   development/build dependencies (`pytest`, `PyInstaller`).
-   Commit the resolved versions used for the release.
-2. Add a checked-in PyInstaller spec and a build script. The build must:
-   - start from a clean virtual environment;
-   - use `znactime.__main__:main` as the application entry point;
-   - include Qt platform/image plugins, `ui/qt/assets/app_icon.png`, and
-     `ui/qt/themes/*.json`;
-   - fail when a required asset or dependency is missing; and
-   - write generated files only below `build/` and `dist/`.
-3. Add a macOS build job that sets a stable bundle identifier, signs nested binaries in
-   the correct order with Developer ID, enables Hardened Runtime, notarizes with
-   `notarytool`, and staples the result. Do not use ad-hoc signing for a release.
-4. Build each platform on its native OS in CI and from a documented local command. Do not
-   hand-edit generated bundles after signing/building.
-5. Publish a SHA-256 checksum beside every release artifact.
-
-### 6.2 — Data location, compatibility, and upgrade safety
-
-- SQLite is the sole source of truth and lives under the per-user app-local data path
-  resolved by `QStandardPaths` on Windows and macOS. It must never live in the installed
-  application directory.
-- The initial release uses standard unencrypted SQLite with restricted per-user file
-  permissions. SQLCipher/DPAPI/Keychain work is the non-blocking future task defined in
-  `SQLITE_MIGRATION_PLAN.md`; release notes must not claim app-level encryption.
-- Treat the current `data/<year>/` CSV, `.flag`, summary, and PDF structure as read-only
-  legacy migration input. Preserve it unchanged and keep a timestamped backup during
-  upgrade rehearsal.
-- Test migration against copies of production-like data containing:
-  - an open month;
-  - a closed month and its `.flag`;
-  - a year summary;
-  - a generated PDF; and
-  - a December-to-January carry-over.
-- Preserve the current CSV v2 marker and column order for explicit compatibility exports.
-  Byte-compare representative exports with the pre-delivery version.
-- Any later SQLite schema change requires a separate forward migration, validation,
-  verified backup, and recovery rehearsal on both platforms.
-
-### 6.3 — Release verification
-
-Run verification in a clean environment, not only in the development checkout:
-
-1. Install the pinned development dependencies and run the full test suite headlessly
-   (`QT_QPA_PLATFORM=offscreen` where required).
-2. Run the complete Phase 4.7 feature-parity checklist on the packaged executable,
-   including autosave, month closing, carry-over, PDF creation, locking, and time-input
-   validation.
-3. Verify the PySide6-specific Phase 5.4 pass; the packaged application must not import or
-   require PyQt6.
-4. Smoke-test the packages on clean supported Windows x64 and macOS machines with no
-   Python installation:
-   - launch from Explorer on Windows and Finder on macOS, and from a working directory
-     different from the app directory;
-   - with no database, verify first launch offers import from a detected or manually
-     selected legacy `data/` folder, create-new, and exit without changes;
-   - verify corrupt-database and interrupted-migration states enter recovery
-     instead of silently creating a replacement database;
-   - switch month and year;
-   - edit and autosave an entry;
-   - start, pause/resume, and stop a workday;
-   - restart and verify settings/session recovery;
-   - close a test month and open the generated PDF; and
-   - verify light, dark, and system themes at common display-scaling settings.
-5. On macOS, verify Gatekeeper acceptance, the stapled notarization ticket, native launch
-   on every supported architecture, app-local storage access, and continuity across a
-   same-identity upgrade.
-6. Confirm that no test data, local settings, caches, credentials, or developer paths are
-   present in the artifact.
-
-### 6.4 — Rollout
-
-1. Create a release-candidate tag from a clean commit and build the candidate only from
-   that tag.
-2. Pilot each candidate with a copy of existing user data. Record the app version, OS
-   version and architecture, test result, and any deviation from the parity checklist.
-3. After sign-off, promote the exact tested artifact; do not rebuild it for the final
-   release.
-4. Publish the artifact, checksum, dependency/license notices, release notes, known
-   limitations, backup instructions, and platform-specific app-local data/export paths.
-5. Keep the previous supported artifact available for rollback. Automatic update behavior
-   is out of scope until its trust, signing, and rollback model are designed.
-
-### 6.5 — Rollback
-
-- Roll back the executable or app bundle without deleting or downgrading the SQLite
-  database.
-- A pre-SQLite release cannot read post-cutover changes. Export legacy-compatible CSV
-  before reverting to it, and preserve both the database and original legacy data.
-- Restore a verified database backup only through the documented recovery flow; preserve
-  the failed data set for diagnosis. Initial-release backups are not app-encrypted.
-- Document the exact last-known-good version and checksum in the release record.
-
-### 6.6 — Definition of done
-
-- [ ] Runtime and build dependencies are pinned and install successfully in a clean
-      environment.
-- [ ] The automated tests pass headlessly.
-- [ ] Every Phase 4.7 parity item passes against the packaged executable.
-- [ ] The PySide6-only binding check passes.
-- [ ] The Windows bundle and signed/notarized macOS app run on clean supported machines
-      without Python installed.
-- [ ] Every supported macOS architecture passes launch, storage, export, and
-      same-identity upgrade tests.
-- [ ] First launch and recovery behavior pass on Windows and macOS for both create-new and
-      legacy-folder import paths.
-- [ ] Existing open/closed month data, carry-over, yearly summary evidence, and PDF export
-      survive validated migration on Windows and macOS.
-- [ ] Artifact contents, version, checksum, licenses, release notes, backup steps, and
-      rollback steps are verified.
-- [ ] The exact release candidate tested is the artifact published.
-
----
-
-## Responsibility Split for Multiple Devs
+## Maintenance responsibilities
 
 | Layer | Owns | Can change without breaking |
 |---|---|---|
 | `core/` | domain logic | storage, UI |
-| `storage/` | SQLite, key protection, legacy import, CSV/PDF export | core, UI |
+| `storage/` | SQLite, migrations/recovery, legacy import, CSV/PDF export | core, UI |
 | `ui/qt/` | Qt widgets | core, storage |
 | `tests/` | all of core + storage | UI (headless) |
 
 ---
 
-## What Not to Touch During Refactor
+## Invariants during release work
 
-- `data/` directory layout — file naming convention stays the same
-- CSV column order — downstream tooling may depend on it
-- `.flag` file mechanic for month closing
+- Preserve current Qt storage/settings identities and SQLite data across upgrades.
+- Keep time records authoritative in SQLite; legacy CSV/flags are import inputs only.
+- Preserve current CSV v3 export and legacy-version import behavior.
+- Keep month close/reopen transactional and export failure independent of month status.
+- Preserve validated backups, recovery evidence, and original legacy sources.
+- Package only reviewed application resources and third-party notices, never user data.

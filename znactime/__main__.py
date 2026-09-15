@@ -42,24 +42,31 @@ def _show_already_running_dialog():
     dialog.exec()
 
 
-def main():
+def application_settings():
+    """Return the stable settings namespace used by existing installations."""
+    return QSettings(APP_NAME, APP_NAME)
+
+
+def main(*, database=None, settings=None):
     _set_windows_app_user_model_id()
     app = QApplication(sys.argv)
     app.setOrganizationName(ORGANIZATION_NAME)
     app.setApplicationName(APP_NAME)
     app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
-    target = database_path()
+    target = database_path() if database is None else database
+    runtime_settings = application_settings() if settings is None else settings
     try:
         with application_lock(target):
             legacy_day_hours, _show_expected_end = load_work_schedule_settings(
-                QSettings()
+                runtime_settings
             )
             repository = open_or_initialize_repository(
-                default_workday_minutes=round(legacy_day_hours * 60)
+                default_workday_minutes=round(legacy_day_hours * 60),
+                target=target,
             )
             if repository is None:
                 return 0
-            window = TimeTrackerApp(repository=repository)
+            window = TimeTrackerApp(repository=repository, settings=runtime_settings)
             window.show()
             try:
                 return app.exec()

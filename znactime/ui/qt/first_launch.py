@@ -46,11 +46,21 @@ class FailedMigrationChoice(Enum):
     EXIT = "exit"
 
 
-def database_path() -> Path:
-    root = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    if not root:
-        raise RuntimeError("Qt could not resolve the application data directory.")
-    return Path(root) / "znactime.db"
+def database_path(*, data_root: str | Path | None = None) -> Path:
+    """Return the live database path, with an explicit root for isolated tests.
+
+    Production callers leave ``data_root`` unset and retain Qt's application-local
+    location. The explicit root is deliberately a Python API rather than an
+    environment variable or ordinary command-line option so an installed app cannot
+    accidentally start against a test database.
+    """
+    if data_root is None:
+        data_root = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
+        if not data_root:
+            raise RuntimeError("Qt could not resolve the application data directory.")
+    return Path(data_root) / "znactime.db"
 
 
 def format_preflight_summary(preflight) -> str:
@@ -228,8 +238,13 @@ def _resolve_interrupted_setup(parent, target):
         return InterruptedSetupResult.RETRY, None
 
 
-def open_or_initialize_repository(parent=None, *, default_workday_minutes=480):
-    target = database_path()
+def open_or_initialize_repository(
+    parent=None,
+    *,
+    default_workday_minutes=480,
+    target: str | Path | None = None,
+):
+    target = database_path() if target is None else Path(target)
     while True:
         inspection = inspect_bootstrap(target)
         if inspection.state is BootstrapState.READY:

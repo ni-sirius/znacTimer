@@ -111,7 +111,7 @@ def create_about_dialog(parent=None):
 
 
 class TimeTrackerApp(QMainWindow):
-    def __init__(self, repository=None):
+    def __init__(self, repository=None, settings=None):
         super().__init__()
         self.repository = repository
         self._month_record = None
@@ -123,7 +123,7 @@ class TimeTrackerApp(QMainWindow):
         self.carry_over = 0.0
         self.current_overtime = 0.0
         self._initial_size_fitted = False
-        self.theme_controller = ThemeController()
+        self.theme_controller = ThemeController(settings=settings)
         self.theme_controller.themeChanged.connect(self.on_theme_changed)
         (
             self.fit_startup_height,
