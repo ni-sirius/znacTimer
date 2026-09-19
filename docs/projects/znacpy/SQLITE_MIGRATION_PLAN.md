@@ -1,5 +1,8 @@
 # znacTime — SQLite Data Migration and Protection Plan
 
+> Project paths and commands in this document are relative to
+> repository-root `projects/znacpy/`.
+
 ## Status and relationship to the existing plan
 
 This plan is the required data-format migration referenced by Phase 6.2 of

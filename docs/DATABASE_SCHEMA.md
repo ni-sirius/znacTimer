@@ -1,5 +1,8 @@
 # znacTime SQLite database dictionary
 
+> Implementation and test paths in this document are relative to
+> repository-root `projects/znacpy/`.
+
 This document describes the production SQLite schema defined in
 `znactime/storage/sqlite/schema.py`. SQLite is the authoritative source for time-tracking
 data. CSV is an import/export format and never overrides established SQLite data.

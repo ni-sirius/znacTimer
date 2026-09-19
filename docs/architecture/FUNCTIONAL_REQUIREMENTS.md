@@ -1,5 +1,8 @@
 # Functional Requirements: Day Planning and Month Materialization
 
+> Implementation and test paths in this document are relative to
+> repository-root `projects/znacpy/`.
+
 **Status:** Implemented and verified  
 **Format:** One atomic requirement per row, one continuous identifier sequence, implementation-module ownership, and automated-test traceability  
 **Scope:** Planned work, schedules, month materialization, day classification, calculation, import/export, month lifecycle, carry-over, concurrency, and timer behavior

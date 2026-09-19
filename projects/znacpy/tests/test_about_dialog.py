@@ -57,7 +57,7 @@ class AboutDialogTest(unittest.TestCase):
         self.assertFalse(dialog.iconPixmap().isNull())
 
     def test_repository_contains_mit_license(self):
-        license_text = (Path(__file__).parents[1] / "LICENSE").read_text(
+        license_text = (Path(__file__).resolve().parents[3] / "LICENSE").read_text(
             encoding="utf-8"
         )
 

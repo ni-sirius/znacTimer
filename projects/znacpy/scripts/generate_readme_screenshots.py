@@ -29,7 +29,7 @@ from znactime.ui.qt.table_contract import InterruptionAction
 from znactime.ui.qt.theme import LIGHT_THEME
 
 
-OUTPUT_DIR = ROOT / "docs" / "images"
+OUTPUT_DIR = ROOT.parents[1] / "docs" / "images"
 DEMO_YEAR = 2026
 DEMO_MONTH = 8
 DEMO_TODAY = date(2026, 8, 5)

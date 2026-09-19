@@ -1,5 +1,12 @@
 # znacTime — Migration Status and Native Release Plan
 
+> Repository layout: the Python project now lives in `projects/znacpy/`.
+> Unless explicitly repository-wide, source paths and commands in this plan
+> are relative to that project directory. The release-tree checker remains
+> at repository-root `scripts/check_release_tree.py` (use
+> `../../scripts/check_release_tree.py` from the project). Packaging and CI
+> examples below are design sketches and need those working-directory paths.
+
 > Current-state review: **2026-09-14**, application **0.5.3**, SQLite schema **6**.
 > The modular refactor, PySide6 migration, and SQLite production cutover are implemented.
 > The remaining major work is native packaging, GitHub Actions, and release verification.
@@ -12,18 +19,18 @@ instructions remain in Git history rather than being presented as future tasks h
 
 | Area | Current implementation | Evidence |
 |---|---|---|
-| Core extraction | Models, calendar/time helpers, calculation, and validation are independent of GUI code. | [core/](znactime/core/), calculator/time/calendar tests |
-| Storage separation | A repository protocol, storage errors, SQLite implementation, legacy import, and explicit export modules separate persistence from widgets. | [repository.py](znactime/storage/repository.py), [storage/sqlite/](znactime/storage/sqlite/) |
-| Qt migration and binding | PySide6 is the production UI; Tkinter/tksheet and PyQt6 are no longer application backends. | [Qt UI](znactime/ui/qt/), [requirements.in](requirements.in) |
-| Application launcher | The launcher sets the application identity, acquires the database ownership lock, and injects a SQLite repository into the window. `tracker.py` is a compatibility wrapper. | [__main__.py](znactime/__main__.py), [tracker.py](tracker.py) |
-| SQLite cutover | Time records, schedules, work limits, breaks/timer state, month status, and closed results are stored in SQLite; edits use transactions and revisions. | [SQLite repository](znactime/storage/sqlite/repository.py), [Qt model](znactime/ui/qt/model.py) |
-| Per-user database location | The live database already uses `QStandardPaths.AppLocalDataLocation`, independently of the working directory. | [database_path()](znactime/ui/qt/first_launch.py) |
-| Legacy import | Validated, staged first import and subsequent protected merges preserve source files; completed imports produce private reports and recognize repeated snapshots. | [legacy_csv_import.py](znactime/storage/legacy_csv_import.py), [SQLite importer](znactime/storage/sqlite/legacy_import.py) |
-| First launch and recovery | Create/import/exit, interrupted-setup recovery, corruption handling, verified pre-upgrade backups, and failed-schema-upgrade recovery are implemented. | [first_launch.py](znactime/ui/qt/first_launch.py), [bootstrap.py](znactime/storage/sqlite/bootstrap.py) |
-| Background operations | Legacy inspection/import and explicit backup use cancellable worker tasks with worker-owned repository connections where needed. | [background.py](znactime/ui/qt/background.py), [app.py](znactime/ui/qt/app.py) |
-| Month lifecycle | Closing stores results transactionally; controlled reopening permits corrections without rewriting later closed months and exposes carry-over discontinuities. | [database dictionary](docs/DATABASE_SCHEMA.md), [lifecycle tests](tests/test_month_lifecycle_ui.py) |
-| Exports and backup | Month CSV, PDF, and verified database backup are explicit user-selected operations with atomic publication and protected-destination checks. Current CSV exports use schema v3. | [csv_export.py](znactime/storage/csv_export.py), [csv_format.py](znactime/storage/csv_format.py), [atomic_file.py](znactime/storage/atomic_file.py) |
-| Regression coverage | Core, SQLite, migration/recovery, UI, timer, themes, exports, and release-source checks have existing automated tests. | [tests/](tests/), [check_release_tree.py](scripts/check_release_tree.py) |
+| Core extraction | Models, calendar/time helpers, calculation, and validation are independent of GUI code. | [core/](../../../projects/znacpy/znactime/core/), calculator/time/calendar tests |
+| Storage separation | A repository protocol, storage errors, SQLite implementation, legacy import, and explicit export modules separate persistence from widgets. | [repository.py](../../../projects/znacpy/znactime/storage/repository.py), [storage/sqlite/](../../../projects/znacpy/znactime/storage/sqlite/) |
+| Qt migration and binding | PySide6 is the production UI; Tkinter/tksheet and PyQt6 are no longer application backends. | [Qt UI](../../../projects/znacpy/znactime/ui/qt/), [requirements.in](../../../projects/znacpy/requirements.in) |
+| Application launcher | The launcher sets the application identity, acquires the database ownership lock, and injects a SQLite repository into the window. `tracker.py` is a compatibility wrapper. | [__main__.py](../../../projects/znacpy/znactime/__main__.py), [tracker.py](../../../projects/znacpy/tracker.py) |
+| SQLite cutover | Time records, schedules, work limits, breaks/timer state, month status, and closed results are stored in SQLite; edits use transactions and revisions. | [SQLite repository](../../../projects/znacpy/znactime/storage/sqlite/repository.py), [Qt model](../../../projects/znacpy/znactime/ui/qt/model.py) |
+| Per-user database location | The live database already uses `QStandardPaths.AppLocalDataLocation`, independently of the working directory. | [database_path()](../../../projects/znacpy/znactime/ui/qt/first_launch.py) |
+| Legacy import | Validated, staged first import and subsequent protected merges preserve source files; completed imports produce private reports and recognize repeated snapshots. | [legacy_csv_import.py](../../../projects/znacpy/znactime/storage/legacy_csv_import.py), [SQLite importer](../../../projects/znacpy/znactime/storage/sqlite/legacy_import.py) |
+| First launch and recovery | Create/import/exit, interrupted-setup recovery, corruption handling, verified pre-upgrade backups, and failed-schema-upgrade recovery are implemented. | [first_launch.py](../../../projects/znacpy/znactime/ui/qt/first_launch.py), [bootstrap.py](../../../projects/znacpy/znactime/storage/sqlite/bootstrap.py) |
+| Background operations | Legacy inspection/import and explicit backup use cancellable worker tasks with worker-owned repository connections where needed. | [background.py](../../../projects/znacpy/znactime/ui/qt/background.py), [app.py](../../../projects/znacpy/znactime/ui/qt/app.py) |
+| Month lifecycle | Closing stores results transactionally; controlled reopening permits corrections without rewriting later closed months and exposes carry-over discontinuities. | [database dictionary](../../../docs/DATABASE_SCHEMA.md), [lifecycle tests](../../../projects/znacpy/tests/test_month_lifecycle_ui.py) |
+| Exports and backup | Month CSV, PDF, and verified database backup are explicit user-selected operations with atomic publication and protected-destination checks. Current CSV exports use schema v3. | [csv_export.py](../../../projects/znacpy/znactime/storage/csv_export.py), [csv_format.py](../../../projects/znacpy/znactime/storage/csv_format.py), [atomic_file.py](../../../projects/znacpy/znactime/storage/atomic_file.py) |
+| Regression coverage | Core, SQLite, migration/recovery, UI, timer, themes, exports, and release-source checks have existing automated tests. | [tests/](../../../projects/znacpy/tests/), [check_release_tree.py](../../../scripts/check_release_tree.py) |
 
 Verification during this review: `python -m unittest discover -s tests -q` completed
 successfully on the local Windows source environment: **311 tests run, 2 skipped**.
@@ -107,8 +114,8 @@ and is outside the release work.
 
 ### Scope and reference documents
 
-[README.md](README.md) describes current usage and
-[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) describes the implemented schema.
+[README.md](../../../projects/znacpy/README.md) describes current usage and
+[docs/DATABASE_SCHEMA.md](../../../docs/DATABASE_SCHEMA.md) describes the implemented schema.
 [SQLITE_MIGRATION_PLAN.md](SQLITE_MIGRATION_PLAN.md) retains the detailed migration design
 and release checks. Its August checkpoint and original requirements include superseded
 items such as schema v1, synchronous legacy import, CSV v2 output, and no reopening.

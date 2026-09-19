@@ -1,10 +1,11 @@
 # Python environments and caches
-/.venv/
+.venv/
 __pycache__/
 *.py[cod]
 
 # Personal time-tracking data and SQLite operational files
 /data/
+/projects/znacpy/data/
 *.db
 *.db-journal
 *.db-wal
@@ -26,6 +27,13 @@ closed_[0-1][0-9].flag
 /recovery/
 /*.csv
 /*.pdf
+/projects/znacpy/backup/
+/projects/znacpy/backups/
+/projects/znacpy/exports/
+/projects/znacpy/output/
+/projects/znacpy/recovery/
+/projects/znacpy/*.csv
+/projects/znacpy/*.pdf
 
 # Local engineering review notes
 /docs/CODE_REVIEW_*.md
@@ -33,6 +41,9 @@ closed_[0-1][0-9].flag
 # Build and test output
 /build/
 /dist/
+/projects/znacpy/build/
+/projects/znacpy/dist/
+/projects/znacpy/.native-tools/
 *.egg-info/
 .coverage
 htmlcov/
