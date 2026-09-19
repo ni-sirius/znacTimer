@@ -7,7 +7,7 @@
 > `../../scripts/check_release_tree.py` from the project). Packaging and CI
 > examples below are design sketches and need those working-directory paths.
 
-> Current-state review: **2026-09-14**, application **0.5.3**, SQLite schema **6**.
+> Current-state review: **2026-09-14**, application **0.6.0**, SQLite schema **6**.
 > The modular refactor, PySide6 migration, and SQLite production cutover are implemented.
 > The remaining major work is native packaging, GitHub Actions, and release verification.
 > “Implemented” describes the checked-in application, not a verified native package.
