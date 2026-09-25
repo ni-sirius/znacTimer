@@ -122,6 +122,10 @@ export type ZnacRepository = {
     now: string,
   ): Promise<DayRecord>;
 
+  getAppSettings(): Promise<AppSettings>;
+
+  updateAppSettings(changes: Partial<AppSettings>): Promise<AppSettings>;
+
   backupTo(target: BackupTarget): Promise<void>;
 };
 
@@ -168,4 +172,11 @@ export type WorkScheduleRow = {
   sunday_minutes: number;
   special_day_minutes: number;
   revision: number;
+};
+
+export type ThemeMode = "system" | "light" | "dark";
+
+export type AppSettings = {
+  themeMode: ThemeMode;
+  showExpectedEnd: boolean;
 };

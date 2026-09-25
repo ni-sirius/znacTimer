@@ -25,6 +25,7 @@ import type {
   WorkScheduleRow,
   WorkdayState,
   ZnacRepository,
+  AppSettings,
 } from "./repository.types";
 
 import {
@@ -39,6 +40,81 @@ import {
 import { writeTransaction } from "./transactions";
 
 const DATASET_ID = 1;
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  themeMode: "system",
+  showExpectedEnd: true,
+};
+
+async function getAppSettings(db: SQLite.SQLiteDatabase): Promise<AppSettings> {
+  const rows = await db.getAllAsync<{
+    key: string;
+    value: string;
+  }>(
+    `
+      SELECT key, value
+      FROM app_settings
+      WHERE key IN ('theme_mode', 'show_expected_end')
+    `,
+  );
+
+  const settings = { ...DEFAULT_APP_SETTINGS };
+
+  for (const row of rows) {
+    if (row.key === "theme_mode") {
+      if (
+        row.value === "system" ||
+        row.value === "light" ||
+        row.value === "dark"
+      ) {
+        settings.themeMode = row.value;
+      }
+    }
+
+    if (row.key === "show_expected_end") {
+      settings.showExpectedEnd = row.value === "true";
+    }
+  }
+
+  return settings;
+}
+
+async function updateAppSettings(
+  db: SQLite.SQLiteDatabase,
+  changes: Partial<AppSettings>,
+): Promise<AppSettings> {
+  await writeTransaction(db, async () => {
+    if (changes.themeMode !== undefined) {
+      await db.runAsync(
+        `
+          INSERT INTO app_settings (key, value, updated_at)
+          VALUES ('theme_mode', ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        `,
+        changes.themeMode,
+        new Date().toISOString(),
+      );
+    }
+
+    if (changes.showExpectedEnd !== undefined) {
+      await db.runAsync(
+        `
+          INSERT INTO app_settings (key, value, updated_at)
+          VALUES ('show_expected_end', ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        `,
+        String(changes.showExpectedEnd),
+        new Date().toISOString(),
+      );
+    }
+  });
+
+  return getAppSettings(db);
+}
 
 export function createRepository(db: SQLite.SQLiteDatabase): ZnacRepository {
   return {
@@ -79,7 +155,13 @@ export function createRepository(db: SQLite.SQLiteDatabase): ZnacRepository {
       expectedRevision: number,
       markUnresolvedNoData: boolean,
     ): Promise<MonthRecord> {
-      return closeMonth(db, year, month, expectedRevision, markUnresolvedNoData);
+      return closeMonth(
+        db,
+        year,
+        month,
+        expectedRevision,
+        markUnresolvedNoData,
+      );
     },
 
     async reopenMonth(
@@ -140,6 +222,16 @@ export function createRepository(db: SQLite.SQLiteDatabase): ZnacRepository {
       now: string,
     ): Promise<DayRecord> {
       return stopWorkday(db, workDate, minute, now);
+    },
+
+    async getAppSettings(): Promise<AppSettings> {
+      return getAppSettings(db);
+    },
+
+    async updateAppSettings(
+      changes: Partial<AppSettings>,
+    ): Promise<AppSettings> {
+      return updateAppSettings(db, changes);
     },
 
     async backupTo(_target: BackupTarget): Promise<void> {
@@ -493,7 +585,7 @@ async function updateDay(
       changes.breaks !== undefined
         ? changes.breaks.length > 0
           ? null
-          : changes.breakDurationMinutes ?? null
+          : (changes.breakDurationMinutes ?? null)
         : changes.breakDurationMinutes !== undefined
           ? changes.breakDurationMinutes
           : row.break_duration_minutes;
@@ -523,7 +615,7 @@ async function updateDay(
       changes.expectedWorkMinutes ?? row.expected_work_minutes,
       booleanToSql(
         changes.expectedMinutesOverridden ??
-          (row.expected_minutes_overridden === 1),
+          row.expected_minutes_overridden === 1,
       ),
       null,
       null,
@@ -596,7 +688,8 @@ async function closeMonth(
 
   const calculated = calculateMonthSnapshot(monthRecord);
   const closingBalanceMinutes =
-    calculated.at(-1)?.runningBalanceMinutes ?? monthRecord.openingBalanceMinutes;
+    calculated.at(-1)?.runningBalanceMinutes ??
+    monthRecord.openingBalanceMinutes;
 
   await writeTransaction(db, async () => {
     const now = new Date().toISOString();
@@ -928,7 +1021,9 @@ async function startPause(
   const state = deriveWorkdayState(day, "open", workDate);
 
   if (state.status !== "working") {
-    throw new InvalidWorkdayTransitionError("Pause can only start while working.");
+    throw new InvalidWorkdayTransitionError(
+      "Pause can only start while working.",
+    );
   }
 
   if (minute <= day.startMinute!) {
@@ -975,7 +1070,9 @@ async function resumeWorkday(
   const openBreak = day.breaks.find((item) => item.endMinute === null);
 
   if (!openBreak) {
-    throw new InvalidWorkdayTransitionError("There is no open pause to resume.");
+    throw new InvalidWorkdayTransitionError(
+      "There is no open pause to resume.",
+    );
   }
 
   const nextBreaks =
@@ -1015,7 +1112,9 @@ async function stopWorkday(
   }
 
   if (day.startMinute === null || minute <= day.startMinute) {
-    throw new InvalidWorkdayTransitionError("End time must be after start time.");
+    throw new InvalidWorkdayTransitionError(
+      "End time must be after start time.",
+    );
   }
 
   return updateDay(
