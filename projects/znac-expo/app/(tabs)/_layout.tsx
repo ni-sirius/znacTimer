@@ -5,8 +5,10 @@ import type { ComponentProps } from "react";
 import { Platform } from "react-native";
 
 import { MAIN_TABS } from "../../src/navigation/tabs";
+import { getMobileTheme } from "../../src/theme";
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
+const darkTheme = getMobileTheme("dark");
 
 export default function TabLayout() {
   if (Platform.OS === "ios") {
@@ -39,11 +41,11 @@ function AndroidTabs() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#a855f7",
-        tabBarInactiveTintColor: "#9ca3af",
+        tabBarActiveTintColor: darkTheme.colors.primary,
+        tabBarInactiveTintColor: darkTheme.colors.textMuted,
         tabBarStyle: {
-          backgroundColor: "#111827",
-          borderTopColor: "#2f3347",
+          backgroundColor: darkTheme.colors.tabBar,
+          borderTopColor: darkTheme.colors.tabBarBorder,
         },
       }}
     >

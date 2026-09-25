@@ -1,6 +1,6 @@
 import { Pressable, Text } from "react-native";
 
-import type { DayRecord } from "@/src/domain/models";
+import type { DayRecord } from "../../domain/models";
 
 type DayRowProps = {
   day: DayRecord;

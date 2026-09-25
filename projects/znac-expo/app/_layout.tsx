@@ -8,10 +8,10 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import "react-native-reanimated";
 
-import { useColorScheme } from "@/hooks/use-color-scheme";
-import { initializeDatabase } from "@/src/db";
-import { useMonthStore } from "@/src/stores/monthStore";
-import { useSettingsStore } from "@/src/stores/settingsStore";
+import { useColorScheme } from "../hooks/use-color-scheme";
+import { initializeDatabase } from "../src/db";
+import { useMonthStore } from "../src/stores/monthStore";
+import { useSettingsStore } from "../src/stores/settingsStore";
 
 export const unstable_settings = {
   anchor: "(tabs)",

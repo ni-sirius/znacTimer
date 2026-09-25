@@ -1,0 +1,113 @@
+import type { ReactNode } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type GestureResponderEvent,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
+
+import { getMobileTheme } from "../theme";
+
+const theme = getMobileTheme("dark");
+
+type AppButtonVariant = "primary" | "success" | "danger" | "secondary";
+
+type AppButtonProps = {
+  title: string;
+  onPress?: (event: GestureResponderEvent) => void;
+  variant?: AppButtonVariant;
+  icon?: ReactNode;
+  disabled?: boolean;
+  loading?: boolean;
+  style?: StyleProp<ViewStyle>;
+};
+
+export function AppButton({
+  title,
+  onPress,
+  variant = "primary",
+  icon,
+  disabled = false,
+  loading = false,
+  style,
+}: AppButtonProps) {
+  const isDisabled = disabled || loading;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={isDisabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.button,
+        buttonVariantStyles[variant],
+        isDisabled && styles.disabled,
+        pressed && !isDisabled && styles.pressed,
+        style,
+      ]}
+    >
+      {loading ? (
+        <ActivityIndicator color={buttonTextColors[variant]} />
+      ) : (
+        <View style={styles.content}>
+          {icon}
+          <Text style={[styles.label, { color: buttonTextColors[variant] }]}>
+            {title}
+          </Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  button: {
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.radius.lg,
+    paddingHorizontal: theme.spacing.lg,
+  },
+  content: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.sm,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  disabled: {
+    opacity: 0.48,
+  },
+  pressed: {
+    opacity: 0.86,
+  },
+});
+
+const buttonVariantStyles = StyleSheet.create({
+  primary: {
+    backgroundColor: theme.colors.primary,
+  },
+  success: {
+    backgroundColor: theme.colors.success,
+  },
+  danger: {
+    backgroundColor: theme.colors.danger,
+  },
+  secondary: {
+    backgroundColor: theme.colors.surfaceMuted,
+  },
+});
+
+const buttonTextColors: Record<AppButtonVariant, string> = {
+  primary: theme.colors.onPrimary,
+  success: theme.colors.shell,
+  danger: theme.colors.shell,
+  secondary: theme.colors.text,
+};
