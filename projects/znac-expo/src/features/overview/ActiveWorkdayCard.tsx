@@ -21,8 +21,11 @@ export function ActiveWorkdayCard({
   onStopPress,
 }: ActiveWorkdayCardProps) {
   const content = workdayContent(state);
-  const canUsePrimary = state.status === "idle" || state.status === "working" || state.status === "paused";
-  const canStop = state.status === "working";
+  const canUsePrimary =
+    state.status === "idle" ||
+    state.status === "working" ||
+    state.status === "paused";
+  const canStop = state.status === "working" || state.status === "paused";
 
   return (
     <Panel style={styles.panel}>
@@ -79,7 +82,7 @@ function workdayContent(state: WorkdayState): {
 
   if (state.status === "paused") {
     return {
-      caption: `Paused since ${minuteToClockText(state.pauseStartMinute)}`,
+      caption: `Working since ${minuteToClockText(state.startMinute)}`,
       title: "Current day is paused",
       primaryLabel: "Resume",
     };

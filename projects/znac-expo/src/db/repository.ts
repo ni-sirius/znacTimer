@@ -1105,9 +1105,9 @@ async function stopWorkday(
   const day = await ensureEditableDayForAction(db, workDate);
   const state = deriveWorkdayState(day, "open", workDate);
 
-  if (state.status !== "working") {
+  if (state.status !== "working" && state.status !== "paused") {
     throw new InvalidWorkdayTransitionError(
-      "Workday can only stop while working.",
+      "Workday can only stop while working or paused.",
     );
   }
 
@@ -1122,8 +1122,36 @@ async function stopWorkday(
     workDate,
     {
       endMinute: minute,
+      ...(day.breaks.length > 0
+        ? { breaks: closeOpenBreaksForStop(day.breaks, minute) }
+        : {}),
     },
     day.revision,
+  );
+}
+
+function closeOpenBreaksForStop(
+  breaks: BreakRecord[],
+  minute: number,
+): BreakRecord[] {
+  return renumberBreaks(
+    breaks.flatMap((item) => {
+      if (item.endMinute !== null) {
+        return [item];
+      }
+
+      if (minute <= item.startMinute) {
+        return [];
+      }
+
+      return [
+        {
+          ...item,
+          endMinute: minute,
+          revision: item.revision + 1,
+        },
+      ];
+    }),
   );
 }
 

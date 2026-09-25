@@ -168,7 +168,7 @@ function elapsedForState(
   if (state.status === "working") {
     startMinute = state.startMinute;
   } else if (state.status === "paused") {
-    startMinute = state.pauseStartMinute;
+    startMinute = state.startMinute;
   }
 
   if (startMinute === null) {
