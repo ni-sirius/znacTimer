@@ -131,9 +131,11 @@ there should be scoped separately from the already-implemented background import
 
 ## Phase 6 — Remaining Packaging & Distribution Work
 
-**Goal:** package the current PySide6/SQLite application for Windows, Ubuntu/Linux, and
-macOS without changing its storage identity or implemented behavior. Build from pinned
-inputs on GitHub, verify the native packages, and publish the exact tested artifacts.
+**Goal:** package the current PySide6/SQLite application first for Windows x64 and
+macOS on Apple silicon without changing its storage identity or implemented behavior.
+Build from one cross-platform dependency lock through the same local and GitHub Actions
+entry point, verify both native packages, and publish the exact tested artifacts. Linux
+and macOS x64 are explicitly deferred until this two-target delivery flow is stable.
 
 Sections 6.1–6.7 below are implementation tasks. Section 6.8 is the remaining packaged
 release acceptance checklist, not a list of missing application features. Phase numbering
@@ -232,9 +234,9 @@ is not mistaken for completed work.
    backup validation, corruption handling, and protected export destinations. The suite
    uses temporary paths and does not access the developer's live database. Tests for the
    superseded automatic executable discovery/location migration are not needed. Still open:
-   native `QStandardPaths` verification in Windows, Ubuntu, macOS arm64, and macOS x64
-   jobs; the explicit Documents default if point 7 is implemented; and frozen-package plus
-   clean-machine install/upgrade/uninstall acceptance.
+   native `QStandardPaths` verification in Windows x64 and macOS arm64 jobs; the explicit
+   Documents default if point 7 is implemented; and frozen-package plus clean-machine
+   install/upgrade/uninstall acceptance.
 
 ### Active Phase 6.0 release gate
 
@@ -248,371 +250,309 @@ is not mistaken for completed work.
 - [ ] Complete frozen-package and clean-machine upgrade/uninstall acceptance after the
       packages exist.
 
-### 6.1 — Verified feasibility and missing release inputs
+### 6.1 — Delivery architecture
 
-**GitHub Actions can build all target packages on GitHub-hosted machines.** Use
-PyInstaller to bundle Python, PySide6, and the application, then use a separate native
-packaging tool for each OS. PyInstaller is not a cross-compiler and does not itself create
-an Inno Setup installer, DMG, or Debian package. See the
-[PyInstaller project documentation](https://github.com/pyinstaller/pyinstaller/blob/develop/README.rst).
+The initial delivery scope has exactly two native targets:
 
-Repository review and documentation verification: **2026-09-14**. This is an implementation
-plan, not evidence of successful builds on GitHub. The repository currently has:
-
-- A PySide6 application, CPython 3.12 baseline, and `znactime.__main__.main()` launcher.
-- `requirements.txt` with binary-only, SHA-256-verified **Windows x64 wheels only**.
-  Reusing it on Linux or macOS will fail hash verification for platform-specific wheels.
-- A standard-library `unittest` suite; `requirements-dev.txt` adds no test framework.
-- `scripts/check_release_tree.py`, whose allowlist currently rejects workflow YAML,
-  packaging metadata, installer scripts, and new icons.
-- No GitHub Actions workflow, PyInstaller spec, native installer definitions, or frozen
-  application smoke-test command. Phase 6.0 frozen-build storage verification remains open.
-
-Before enabling release automation:
-
-1. Add runtime locks at `requirements/locks/<target>.txt` for the four targets in 6.3.
-   Resolve and review every transitive wheel on its native runner, preserving exact
-   versions, `--only-binary=:all:`, and `--require-hashes`. Keep `requirements.in` as the
-   shared declaration; retain Pillow as a locked transitive runtime dependency. Keep the root Windows installation entry point documented and in sync.
-2. Add separate `requirements/build/<target>.txt` locks for PyInstaller, its hooks and
-   transitive dependencies. Constrain shared dependencies to the runtime resolution and
-   run `python -m pip check` after installation. Regenerate locks in a reviewed change,
-   never during a release job. Update `tests/test_dependency_lock.py` to validate each
-   target rather than its current hard-coded single Windows resolution.
-3. Record one exact CPython 3.12 patch in `packaging/python-version.txt`. Pin downloaded
-   installer/AppImage tools by version and checksum. Log runner image, Python, dependency,
-   and packaging-tool versions in a build manifest; OS-version runner labels still receive
-   image updates. Pinned inputs do not imply byte-identical signed/notarized output.
-4. Add `znactime.spec`, `packaging/launcher.py`, `packaging/windows/znactime.iss`,
-   `packaging/macos/entitlements.plist`, Linux desktop/control templates, native icons,
-   and the shared scripts described in 6.7. The launcher only imports and invokes
-   `znactime.__main__.main()`; PyInstaller needs a script path, not a console-entry-point
-   string such as `znactime.__main__:main`. Set the spec's `pathex` to the repository root
-   so the launcher under `packaging/` can resolve `znactime` without an editable install.
-5. Extend the release-tree allowlist and its tests for these exact reviewed inputs,
-   including `.github/workflows/`. Preserve rejection of databases, backups, credentials,
-   and unrelated files. Generated output belongs under `build/` and `dist/` only.
-
-### 6.2 — Project metadata, entry point, version, and icons
-
-1. Add `pyproject.toml` and define the GUI entry point:
-
-   ```toml
-   [project.gui-scripts]
-   znactime = "znactime.__main__:main"
-   ```
-
-   `znactime/__main__.py` already exposes `main()`; retain and test that function rather
-   than creating a second launcher. `tracker.py` may remain only as a compatibility entry
-   point and must not be used by packaged builds.
-2. Keep one editable source asset and provide release-ready `icon.icns` for macOS,
-   `icon.ico` for Windows, and `icon.png` for Linux. Include the current Qt PNG/theme
-   assets in the bundle, and fail the build if a required asset is absent.
-3. Keep `znactime.config.VERSION` as the application version source. The spec and installer
-   scripts must import or receive that value; the Git tag, About/title text, bundle
-   metadata, installer metadata, and all artifact names must match it.
-4. The artifact must include third-party license notices and must exclude real/test user
-   data, credentials, caches, local settings, and developer paths.
-
-### 6.3 — Native build matrix and supported-system policy
-
-Use four explicit jobs, all checking out the same commit. The labels and architectures
-below are available on standard
-[GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-Avoid `*-latest` so an alias migration does not silently change the build baseline.
-
-| Target / lock name | `runs-on` | setup-python architecture | First release package |
+| Target | GitHub-hosted runner | Architecture | Candidate artifact |
 |---|---|---|---|
-| `windows-x64` | `windows-2022` | `x64` | `znacTime-<VERSION>-windows-x64-Setup.exe` |
-| `linux-x64` | `ubuntu-22.04` | `x64` | `znactime_<VERSION>_amd64.deb` and `znacTime-<VERSION>-linux-x86_64.AppImage` |
-| `macos-arm64` | `macos-15` | `arm64` | `znacTime-<VERSION>-macos-arm64.dmg` |
-| `macos-x64` | `macos-15-intel` | `x64` | `znacTime-<VERSION>-macos-x86_64.dmg` |
+| `windows-x64` | `windows-2022` | x64 | `znacTime-<VERSION>-windows-x64-Setup.exe` |
+| `macos-arm64` | `macos-15` | Apple silicon arm64 | `znacTime-<VERSION>-macos-arm64.dmg` |
 
-Initial acceptance targets: Windows 11 x64, Ubuntu Desktop 22.04 and 24.04 x64, and
-macOS 15 on both architectures. Test the AppImage additionally on a named, supported
-Fedora release and record that version before claiming Fedora support. Windows/Linux
-ARM64 and older macOS releases are outside this first acceptance matrix.
+PyInstaller is not a cross-compiler. Windows must be built on Windows and the
+Apple-silicon package on an arm64 macOS runner. A local build produces only the package
+for its current host. GitHub Actions supplies the native hosts but does not own a second
+implementation of the build. See the
+[PyInstaller project documentation](https://pyinstaller.org/en/stable/) and
+[GitHub-hosted runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
-The pinned PySide6 6.11.1 release provides Windows x64, Linux x86_64 wheels tagged
-`manylinux_2_34`, and macOS `13_0_universal2` wheels. These tags establish dependency
-constraints, not proof that the final application supports every matching system. Verify
-the full resolution, including Essentials, Addons, Shiboken, and Pillow, on each runner.
-See [PySide6 wheel metadata](https://pypi.org/project/PySide6/6.11.1/#files) and
-[Essentials wheel metadata](https://pypi.org/project/PySide6-Essentials/6.11.1/#files).
+Use one flow locally and in CI:
 
-Build Linux on the oldest supported Ubuntu baseline: PyInstaller does not bundle glibc,
-and an AppImage cannot erase a newer build's glibc requirement. If the dependencies stop
-working on 22.04, review the dependency or supported-OS policy explicitly; do not silently
-switch to `ubuntu-latest`. See
-[PyInstaller's Linux compatibility guidance](https://pyinstaller.org/en/stable/usage.html#making-gnu-linux-apps-forward-compatible).
-
-Use the PyInstaller PySide6 hooks for Qt libraries/plugins, plus explicit collection of
-the app's PNG and theme JSON files and any reportlab/Pillow resources the smoke tests show
-are needed. Do not indiscriminately collect every Qt module. Verify the native platform
-plugin (`windows`, `cocoa`, `xcb` and any supported Wayland plugin), image loading, fonts,
-themes, SQLite, and PDF export in the frozen application. A passing headless test does
-not establish that the desktop platform plugin can load.
-
-### 6.4 — macOS package, signing, and notarization
-
-1. Produce `dist/znacTime.app` with a stable bundle identifier and explicit native target
-   architecture (`arm64` or `x86_64`). Publish separate DMGs initially. A later universal2
-   build requires a universal2 Python and every collected native dependency to contain
-   both slices; a universal2 PySide6 wheel alone is insufficient. See
-   [PyInstaller macOS architecture support](https://pyinstaller.org/en/stable/feature-notes.html#macos-multi-arch-support).
-2. In the trusted release job, import a Developer ID Application certificate into a
-   temporary keychain. Sign collected code from the inside out using PyInstaller's signing
-   support and reviewed entitlements, with Hardened Runtime and timestamping. Verify the
-   complete app; do not use `codesign --deep` as a substitute for correct signing order.
-3. Archive the signed app with `ditto`, submit that ZIP using `xcrun notarytool submit
-   ... --wait`, require an Accepted result, and staple/validate the `.app` ticket.
-4. Use the runner's `hdiutil` to create a DMG containing the stapled app and an Applications
-   shortcut. Sign the DMG, submit it for notarization, then staple/validate the DMG ticket.
-   This gives both the copied app and the download container offline tickets. No bundle
-   content changes are permitted after signing. Hash the final stapled DMG.
-5. Check `codesign --verify --deep --strict`, `xcrun stapler validate`, and Gatekeeper
-   assessment. Rehearse Finder launch of a quarantined download, app-local data access,
-   exports, and same-identity upgrade on both architectures. See
-   [Apple's automated notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
-
-### 6.5 — Windows package and installer
-
-1. Produce the one-directory `dist/znacTime/znacTime.exe` bundle; the installer must include
-   the whole directory, including PyInstaller's runtime subdirectory. This avoids one-file
-   extraction at each launch.
-2. Compile the checked-in `.iss` with a pinned Inno Setup `ISCC.exe`. Use a stable `AppId`,
-   `PrivilegesRequired=lowest`, a per-user application directory, Start-menu shortcut,
-   version metadata, and uninstall entry. Do not install or delete user data. See
-   [Inno Setup's privilege setting](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm).
-3. Choose and validate unattended signing before enabling signed releases: use a
-   cloud/HSM-backed Authenticode provider supported from an ephemeral Windows runner.
-   A certificate requiring a locally attached USB token cannot simply be uploaded as a
-   GitHub secret. Prefer provider-supported OIDC; otherwise scope provider credentials
-   to the release signing job.
-4. Sign and timestamp the application before compiling the installer; configure signing
-   for the generated uninstaller, then sign/timestamp the final Setup EXE. Verify signatures
-   with SignTool. Signing identifies the publisher but does not guarantee a warning-free
-   first download; EV certificates no longer automatically bypass SmartScreen. See
-   [Microsoft's SmartScreen guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
-5. Test silent install/uninstall in CI and Start-menu launch, upgrade, data preservation,
-   PDF export, and recovery on a clean Windows 11 system. A Windows Server build runner
-   is not a substitute for the supported desktop acceptance test.
-
-### 6.6 — Linux package
-
-1. Produce one PyInstaller one-directory bundle on `ubuntu-22.04`; use it as input for both
-   the Ubuntu installer and portable Linux download.
-2. **Ubuntu native package:** stage the bundle under `/opt/znactime/`, an executable launcher
-   under `/usr/bin/znactime`, and desktop/icon files under `/usr/share/`. Add reviewed
-   `DEBIAN/control` metadata (`Package: znactime`, `Architecture: amd64`, mapped version,
-   description, maintainer, and runtime dependencies). Build with
-   `dpkg-deb --build --root-owner-group`. Install with `sudo apt install ./<package>.deb`
-   so declared system dependencies resolve. Package install/removal must not create or
-   erase per-user databases. See the
-   [Ubuntu dpkg-deb manual](https://manpages.ubuntu.com/manpages/jammy/man1/dpkg-deb.1.html).
-3. **AppImage:** stage an AppDir containing the same bundle, executable `AppRun`, desktop
-   file, and icon; package it with a version/checksum-pinned `appimagetool`. Account for
-   executable modes and Qt plugin paths. If additional native-library deployment is
-   necessary, review it explicitly rather than running two independent Qt bundlers.
-4. Inspect unresolved shared libraries and derive `.deb` runtime dependencies from the
-   shipped binaries and Qt plugins, then validate on clean 22.04 and 24.04 installations.
-   CI must provision Xvfb and required X11/xcb, xkbcommon, font, and GL libraries. See
-   [Qt's Linux platform-plugin requirements](https://doc.qt.io/qt-6/linux-requirements.html).
-5. Exercise the actual `xcb` plugin with `xvfb-run -a` in CI. Test desktop launch under
-   X11 and Ubuntu's Wayland session (document whether this uses native Wayland or XWayland).
-   Test AppImage mounting with FUSE on a desktop; use `--appimage-extract-and-run` when
-   runner FUSE support is unavailable. The latter does not verify FUSE mounting. Document
-   `chmod +x` and the fallback in release instructions. See
-   [AppImage FUSE guidance](https://docs.appimage.org/user-guide/troubleshooting/fuse.html).
-6. Both formats must write only to the Phase 6.0 locations. Publish SHA-256 checksums and
-   a detached signature of the Linux checksum manifest using a protected release key;
-   document how to verify it. GitHub Release assets are direct downloads, not an APT
-   repository. APT repository signing, RPM, Flatpak, and automatic updates are later work.
-
-### 6.7 — CI/CD with GitHub Actions
-
-Implement in two stages: first prove all four unsigned package builds, then enable trusted
-tag signing and draft release creation. Phase 6.0 verifies existing storage behavior
-in those packages; no new database-location migration is required.
-
-#### Workflow events and job boundaries
-
-| Workflow/event | Work | Publication and credentials |
-|---|---|---|
-| `ci.yml`: `pull_request`, default-branch pushes | Four native test jobs; package smoke builds after packaging inputs exist | Read-only token; no signing secrets |
-| `ci.yml`: `workflow_dispatch` | Manually exercise the same four candidate builds | Unsigned CI downloads only; macOS may use ad-hoc signing for execution |
-| `release.yml`: push of `v*` tag | Validate tag, build/test all targets, platform signing/notarization, test final packages, aggregate | Trusted tag jobs only; create a draft GitHub Release after every target passes |
-
-Protect release tags against unauthorized creation/movement, require their commit to be
-on the reviewed release branch, and restrict signing environments to those tags. Use
-`pull_request`, never a privileged `pull_request_target` checkout to run contributor code.
-Keep default `permissions: contents: read`; grant `contents: write` only to the final
-release job and `id-token: write` only where a chosen signing provider needs OIDC.
-Pin actions to reviewed full commit SHAs in production. See
-[GitHub's workflow security guidance](https://docs.github.com/en/actions/reference/security/secure-use).
-
-Use the following **design skeleton for the unsigned build stage**. Referenced scripts,
-lockfiles, and Python-version file are planned deliverables, not existing commands. Action
-major tags are shown for readability; resolve them to reviewed SHAs before activation.
-The same build logic should be shared by both workflows without granting CI signing access.
-
-```yaml
-name: Native package candidates
-on:
-  pull_request:
-  workflow_dispatch:
-permissions:
-  contents: read
-jobs:
-  package:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {target: windows-x64, os: windows-2022, arch: x64}
-          - {target: linux-x64, os: ubuntu-22.04, arch: x64}
-          - {target: macos-arm64, os: macos-15, arch: arm64}
-          - {target: macos-x64, os: macos-15-intel, arch: x64}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version-file: packaging/python-version.txt
-          architecture: ${{ matrix.arch }}
-      - run: python scripts/prepare_native_tools.py --target ${{ matrix.target }}
-      - run: python -m pip install --require-hashes --only-binary=:all: -r requirements/locks/${{ matrix.target }}.txt -r requirements/build/${{ matrix.target }}.txt
-      - run: python -m pip check
-      - run: python scripts/check_release_tree.py
-      - run: python -m unittest discover -s tests -v
-        env:
-          QT_QPA_PLATFORM: offscreen
-      - run: python scripts/build_native.py --target ${{ matrix.target }} --mode unsigned
-      - run: python scripts/smoke_native.py --target ${{ matrix.target }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: candidate-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: dist/release/*
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0
+```text
+pyproject.toml
+      ↓
+   uv.lock
+      ↓
+uv run python packaging/build.py
+      ↓
+ znactime.spec
+      ↓
+PyInstaller bundle
+      ↓
+native installer or DMG
+      ↓
+ dist/release/
 ```
 
-`setup-python` supports selecting the interpreter/architecture; `upload-artifact` requires
-distinct matrix artifact names and does not preserve Unix file modes in its default
-archive. Upload completed DMG/EXE/DEB/AppImage files, not a loose `.app` or AppDir; use a
-tar archive if transferring an unpackaged bundle. Restore the executable bit before
-testing a downloaded AppImage. See [setup-python](https://github.com/actions/setup-python)
-and [upload-artifact](https://github.com/actions/upload-artifact).
+Linux and macOS x64 are deferred until this two-target flow is stable.
 
-#### Shared script contracts and frozen-app verification
+### 6.2 — One cross-platform dependency model with uv
 
-- `prepare_native_tools.py`: install/locate the pinned native packaging tools; verify
-  downloaded checksums; provision Ubuntu runtime/Xvfb prerequisites and log tool versions.
-  Use explicit platform subprocesses with checked exit codes. Do not rely on incidental
-  preinstalled runner software or a shell syntax shared across PowerShell and Bash.
-- `build_native.py`: validate host architecture and version, call
-  `python -m PyInstaller --clean --noconfirm znactime.spec`, then the platform packager.
-  Accept explicit `unsigned` or `release` mode. Release mode must fail if required signing
-  credentials or notarization are missing; never silently fall back to unsigned output.
-  Write only final packages, checksums, notices, and per-target build manifests to
-  `dist/release/`; manifests include commit, version, target, tools, and dependency locks.
-- `smoke_native.py`: install/extract/mount the produced package, start its **bundled
-  executable**, and require a bounded successful exit plus a machine-readable report.
-  Add a diagnostic `--smoke-test --data-dir <temporary-path> --report <path>` mode to the
-  existing launcher, handled before normal first-launch dialogs. Restrict the data override
-  to this diagnostic mode. It must instantiate the Qt window, render assets/themes,
-  create/edit/reopen a synthetic SQLite record, and export a PDF without user interaction.
-  Run outside the checkout from an unrelated working directory with no `PYTHONPATH`,
-  external Qt plugin path, or development-environment library fallback. On Linux use Xvfb
-  with `QT_QPA_PLATFORM=xcb`; on Windows/macOS use their native platform backend.
-- Keep automated package checks separate from clean desktop acceptance. Hosted runners
-  include Python and developer tools; they cannot prove independence from those tools or
-  successful Finder/Start-menu integration. Record clean-VM/manual results for every
-  supported platform and architecture, including upgrade and migration tests from 6.8.
+Adopt `uv` for project environments and dependency locking.
 
-#### Trusted release sequence and artifact promotion
+The uv project lock is universal and can represent platform-specific distributions in one
+file; see the [uv project structure and lockfile documentation](https://docs.astral.sh/uv/concepts/projects/layout/).
 
-1. Trigger from `push.tags: ['v*']`; a validation job rejects malformed tags and mismatches
-   with `znactime.config.VERSION`, resolves the tag to a commit, and checks release-branch
-   ancestry. All downstream jobs check out that resolved commit. For initial releases use
-   `vX.Y.Z`; if prerelease suffixes are added later, define explicit Windows numeric and
-   Debian/macOS metadata mappings rather than claiming all formats accept the same string.
-2. Run the four native jobs with `fail-fast: false`. Each tests, builds, signs/packages,
-   verifies signatures, and smoke-tests the final package. Give only relevant platform
-   jobs their signing environments. Do not inject Apple/Windows credentials into Linux
-   or contributor builds. Set longer bounded timeouts for notarization and serialize
-   release attempts for the same tag with `cancel-in-progress: false`.
-3. Apple prerequisites: Developer ID membership/certificate, certificate password, signing
-   identity, and a notarization App Store Connect API key/issuer/key ID (or documented
-   Apple-ID credentials). Import into an ephemeral keychain; clean the keychain and key
-   files in an `always()` cleanup step. Windows prerequisites: the chosen hosted signing
-   account/identity and its GitHub authentication configuration. Linux prerequisites:
-   checksum-signing identity and published verification key. Keep material in scoped
-   GitHub environment secrets or the provider, never in artifacts or logs.
-4. Generate package SHA-256 checksums **after** all signing, notarization, and stapling.
-   Upload uniquely named artifacts and record their IDs. The aggregate job must
-   `needs` all platform jobs, download artifacts from this run, require all five expected
-   packages, verify checksums and consistent commit/version, and reject missing/duplicate
-   assets. Do not publish a partial release when one platform fails.
-5. Create a **draft** GitHub Release for the already-existing tag using `gh release create`
-   with `--verify-tag --draft`, attaching the exact packages, checksums/signatures, manifests,
-   notices, and release notes. Use the job's `GITHUB_TOKEN` as `GH_TOKEN`; no personal token
-   is needed for same-repository release uploads. Fail on an unexpected existing release
-   instead of overwriting reviewed assets. See
-   [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create).
-6. Perform clean-machine acceptance on these final downloads and compare their checksums
-   with the build record. Publish the existing draft after sign-off; do not rebuild or
-   retag a `-rc` binary as a different final version. If a change is needed, create a new
-   version/tag and candidate. Preserve the previous release for executable rollback.
+1. Add `projects/znacpy/pyproject.toml` as the only hand-edited source of Python
+   requirements:
+   - `[project].dependencies` owns direct runtime dependencies;
+   - `[dependency-groups].build` owns PyInstaller and Python packaging tools;
+   - `[build-system]` selects and pins the backend that installs the package and GUI script;
+   - `[project].requires-python` records the supported Python range.
+2. Commit one generated `projects/znacpy/uv.lock`. It contains the exact transitive
+   resolution, platform distributions, and hashes for Windows x64 and macOS arm64.
+   It is generated by uv and never edited manually.
+3. Limit the universal resolution to CPython on those two supported environments and
+   require both environments to resolve binary distributions.
+4. Keep the exact interpreter selection in `.python-version`. The broader
+   `requires-python` range expresses compatibility and is not a second exact patch pin.
+5. Pin the uv release used by GitHub Actions. Updating uv and regenerating the lock is a
+   reviewed dependency change.
+6. After migration, remove `requirements.in`, `requirements.txt`, and
+   `requirements-dev.txt`; do not retain them as parallel authorities.
+7. Replace `tests/test_dependency_lock.py` with checks for the declared dependency
+   groups and two target environments. CI enforces lock freshness with
+   `uv sync --locked`; tests must not duplicate package versions or wheel hashes.
 
-Standard hosted runners are available for public and private repositories; public standard
-runner usage is free, while private usage consumes the account's allowance and may incur
-charges. Confirm the repository's Actions permissions, available minutes/artifact storage,
-and signing-account access before activation. GitHub hosting does not supply signing
-identities. See the [hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+This replaces the previous proposal for per-platform runtime and build lock files.
+Dependency versions must not be copied into workflows, packaging scripts, or tests.
 
-### 6.8 — Distribution checklist and definition of done
+### 6.3 — Project metadata, entry points, and version
 
-- [ ] Frozen/source launches and same-identity upgrades find the existing Qt-resolved
-      database and preferences. All database-related writes stay outside the bundle;
-      exports/backups remain user-selected.
-- [ ] Runtime and build dependencies are pinned, and `znactime.spec` builds from a clean
-      environment on every target operating system.
-- [ ] All four GitHub-hosted jobs pass with reviewed platform locks and native tooling;
-      the expanded release-tree and dependency-lock checks pass.
-- [ ] Each artifact launches on a clean OS installation with no Python or developer tools.
-- [ ] The existing automated suite passes on all targets. Packaged acceptance verifies
-      edits persist to SQLite, timer start/pause/resume/stop and restart recovery,
-      carry-over, controlled close/reopen, CSV v3/PDF export, backup, themes, and validation.
-- [ ] First launch handles create-new, legacy CSV import, an existing SQLite database,
-      interrupted migration, and corrupt-database recovery without silent data loss.
-- [ ] Migration rehearsal preserves open/closed months, per-day values, carry-over,
-      schedule history, year-boundary data, import logs, and recovery evidence.
-- [ ] macOS `.dmg` artifacts are signed, notarized, stapled, and open without a Gatekeeper
-      override on every supported architecture.
-- [ ] The signed Windows installer creates a Start-menu shortcut, upgrades cleanly, and
-      uninstalls without deleting user data.
-- [ ] The Ubuntu `.deb` installs/upgrades/removes successfully on 22.04 and 24.04 without
-      deleting user data; its desktop entry launches the bundled executable.
-- [ ] The Linux AppImage passes Ubuntu 22.04/24.04 and the recorded Fedora acceptance
-      target, including FUSE and extract-and-run checks, with no writes inside its image.
-- [ ] PDF export and month close/reopen work in every frozen artifact, with all required
-      reportlab, Pillow, Qt plugin, icon, and theme resources bundled.
-- [ ] The About/title version, package metadata, release tag, installer metadata, artifact
-      filenames, and checksums agree on all three platforms.
-- [ ] Artifacts contain required third-party notices and no user data, credentials, test
-      fixtures, local settings, caches, or developer paths.
-- [ ] Release notes state the user-data/export locations, backup and recovery procedure,
-      known limitations, and standard SQLite (non-app-encrypted) storage model.
-- [ ] The exact release candidate tested is the artifact published, and the previous
-      supported artifact remains available for executable rollback without deleting or
-      downgrading user data.
-- [ ] Signing/notarization failures, a failed platform job, missing assets, and mismatched
-      versions/checksums block release creation; contributor workflows have no signing access.
+Define standard metadata in `pyproject.toml`:
+
+```toml
+[build-system]
+requires = ["hatchling==<reviewed version>"]
+build-backend = "hatchling.build"
+
+[project]
+name = "znactime"
+version = "<current application version>"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "PySide6==<reviewed version>",
+    "reportlab==<reviewed version>",
+]
+
+[project.gui-scripts]
+znactime = "znactime.__main__:main"
+
+[dependency-groups]
+build = [
+    "pyinstaller==<reviewed version>",
+]
+```
+
+Concrete versions are selected during implementation; this plan intentionally does not
+create another version list.
+
+Use `pyproject.toml` as the single application-version source. Replace the hard-coded
+`znactime.config.VERSION` value with
+`importlib.metadata.version("znactime")`. Existing modules may continue importing
+`VERSION` from `config.py`, but no second fallback version literal is allowed. The
+About dialog, title, build script, package metadata, artifact names, and tag validation
+must all read the installed project metadata. Remove hard-coded versions from README
+badges; a release badge may derive from GitHub tags.
+
+The entry points are:
+
+- development: `uv run znactime`;
+- module compatibility: `uv run python -m znactime`;
+- frozen application: `packaging/launcher.py` calling `znactime.__main__.main()`;
+- package build: `uv run python packaging/build.py`.
+
+`tracker.py` may remain temporarily for compatibility but is not used by packaging or CI.
+
+### 6.4 — Shared packaging implementation and local flow
+
+Add this structure:
+
+```text
+projects/znacpy/
+├── .python-version
+├── pyproject.toml
+├── uv.lock
+├── packaging/
+│   ├── build.py
+│   ├── launcher.py
+│   ├── znactime.spec
+│   ├── smoke_native.py
+│   ├── windows/
+│   │   ├── icon.ico
+│   │   └── znactime.iss
+│   └── macos/
+│       ├── icon.icns
+│       └── entitlements.plist
+└── dist/release/
+```
+
+The local flow from `projects/znacpy` is:
+
+```text
+uv sync --locked --group build
+uv run znactime
+uv run python packaging/build.py --mode unsigned
+```
+
+`packaging/build.py` is the only build entry point. It must:
+
+1. Detect the host when `--target auto` is used.
+2. Accept explicit `windows-x64` and `macos-arm64` targets in CI.
+3. Reject host/target mismatches.
+4. Read the version from installed project metadata.
+5. Validate assets and locate/version-check native tools.
+6. Invoke `python -m PyInstaller --clean --noconfirm packaging/znactime.spec`.
+7. Run the platform's native packaging stage.
+8. Support `--mode unsigned` and `--mode release`; release mode must fail if signing
+   inputs are unavailable and must never silently fall back to unsigned output.
+9. Write final packages, checksums, notices, smoke reports, and a build manifest only to
+   `dist/release/`.
+10. Record commit, version, target, host, Python, uv, lock digest, PyInstaller, and
+    native-tool versions in the manifest.
+
+Use checked Python subprocess calls. Do not duplicate this logic in PowerShell, Bash, or
+workflow YAML.
+
+The shared PyInstaller spec sets the project root in `pathex`, uses
+`packaging/launcher.py`, collects only required Qt modules/plugins, and includes theme
+JSON, PNG assets, and third-party notices. Platform-specific icon and bundle settings may
+branch in the spec; dependency versions may not.
+
+### 6.5 — Native package requirements
+
+#### Windows x64
+
+1. Produce a PyInstaller one-directory bundle and include its complete runtime directory.
+2. Build a per-user installer from a checked-in Inno Setup definition with stable
+   `AppId`, upgrade metadata, Start-menu shortcut, and uninstall entry.
+3. Never install, move, or delete the user's database.
+4. Pin and verify Inno Setup rather than relying on an incidental runner installation.
+5. Allow unsigned pull-request candidates. Release mode signs and timestamps the
+   application, generated uninstaller, and final Setup executable, then verifies them.
+6. Perform clean Windows 11 acceptance for install, launch, upgrade, uninstall, data
+   preservation, recovery, and PDF export.
+
+#### macOS arm64
+
+1. Produce a native arm64 `znacTime.app` with a stable bundle identifier, version,
+   `icon.icns`, required Qt resources, and no writes inside the bundle.
+2. Unsigned CI candidates may use ad-hoc signing only for smoke execution; they are not
+   public release artifacts.
+3. Release mode imports a Developer ID Application identity into a temporary keychain and
+   signs nested code in the correct order with Hardened Runtime and reviewed entitlements.
+4. Notarize and staple the application, then create, sign, notarize, staple, and validate
+   the DMG.
+5. Change no bundle content after signing; generate checksums after notarization/stapling.
+6. Perform clean macOS acceptance for quarantined Finder launch, first launch, upgrade,
+   stable settings/data identity, recovery, and PDF export.
+
+Signing and notarization are required for public release, not for proving the first
+unsigned GitHub Actions build flow.
+
+### 6.6 — GitHub Actions flow
+
+Implement two workflows:
+
+| Workflow/event | Purpose | Credentials |
+|---|---|---|
+| `ci.yml`: pull requests and default-branch pushes | Sync, test, build, and smoke-test two unsigned candidates | Read-only token; no signing secrets |
+| `release.yml`: version tags | Repeat in release mode, sign, notarize, aggregate, and create a draft release | Scoped platform signing environments |
+
+Both workflows use the same matrix:
+
+```text
+windows-x64  → windows-2022 → x64
+macos-arm64  → macos-15     → arm64
+```
+
+Use explicit runner labels, pin production actions to reviewed full commit SHAs, and keep
+default `permissions: contents: read`. Grant write or OIDC only to jobs that require it.
+Never use `pull_request_target` to build contributor code.
+
+Each unsigned job performs:
+
+```text
+checkout
+install the pinned uv release
+uv python install
+uv sync --locked --group build
+uv run python ../../scripts/check_release_tree.py
+uv run python -m unittest discover -s tests -v
+uv run python packaging/build.py --target <target> --mode unsigned
+uv run python packaging/smoke_native.py --target <target>
+upload dist/release/*
+```
+
+Project commands run from `projects/znacpy`. Workflow YAML supplies only event policy,
+runner, target, permissions, timeout, and artifact retention. It must not repeat
+dependency/application versions, PyInstaller flags, package commands, or artifact-name
+logic.
+
+Use distinct artifact names containing target, run ID, and attempt. Upload completed
+Setup EXE and DMG files, not loose PyInstaller directories or an unpackaged `.app`.
+
+### 6.7 — Verification and trusted release
+
+Add a bounded diagnostic mode:
+
+```text
+--smoke-test --data-dir <temporary-path> --report <path>
+```
+
+It runs before normal first-launch dialogs and never accesses real user data. The packaged
+smoke test starts the bundled executable outside the checkout, without `PYTHONPATH` or
+development Qt paths, and verifies:
+
+- the native Windows or Cocoa Qt plugin starts;
+- icons and themes load;
+- a temporary SQLite database can be created, edited, closed, and reopened;
+- PDF export succeeds;
+- data remains outside the bundle;
+- the process exits within a timeout and writes a machine-readable report.
+
+Hosted runners do not prove clean-machine independence or Finder/Start-menu integration;
+record separate clean-system acceptance for each release candidate.
+
+Trusted release flow:
+
+1. Validate a `vX.Y.Z` tag against the single project version and release branch.
+2. Run both native jobs from the resolved tag commit with `--mode release`.
+3. Expose Apple credentials only to macOS and Windows credentials only to Windows.
+4. Verify signatures/notarization and smoke-test the final packages.
+5. Generate checksums and manifests after signing/stapling.
+6. Aggregate exactly one Setup EXE and one arm64 DMG from the same commit/version; any
+   failed or missing target blocks publication.
+7. Create a draft GitHub Release without overwriting an unexpected existing release.
+8. Accept the exact downloads on clean machines, compare checksums, and publish the
+   existing draft without rebuilding.
+
+### 6.8 — Delivery checklist and definition of done
+
+- [ ] `pyproject.toml` is the only hand-edited source of Python dependency versions.
+- [ ] One reviewed `uv.lock` resolves and installs on Windows x64 and macOS arm64.
+- [ ] Obsolete requirements files and hard-coded dependency expectations are removed.
+- [ ] Python, uv, PyInstaller, and native packaging tools have designated single pins.
+- [ ] `uv run znactime` launches on both targets.
+- [ ] The same `packaging/build.py` builds locally and in GitHub Actions.
+- [ ] The build rejects host/target mismatches and writes a complete manifest.
+- [ ] The release-tree allowlist accepts only reviewed TOML, lock, workflow, SPEC,
+      Python-version, installer, PLIST, ICO, and ICNS inputs and still rejects user data,
+      credentials, caches, and build output.
+- [ ] Both GitHub-hosted jobs pass the automated suite and packaged smoke test.
+- [ ] Windows install, launch, upgrade, and uninstall preserve user data.
+- [ ] The macOS arm64 DMG is signed, notarized, stapled, and passes Gatekeeper.
+- [ ] Frozen/source upgrades retain the Qt-resolved database and settings identity.
+- [ ] First launch, import, interrupted setup, migration, recovery, backup, themes,
+      CSV/PDF export, and month close/reopen work in both artifacts.
+- [ ] Version displays, package metadata, tag, artifact names, checksums, and manifests
+      derive from the same project version.
+- [ ] Artifacts include notices and exclude user data, credentials, fixtures, settings,
+      caches, and developer paths.
+- [ ] A failed job, stale lock, missing asset, signing/notarization failure, or inconsistent
+      version/checksum blocks draft release creation.
+- [ ] The exact tested candidate is published and the previous supported release remains
+      available for executable rollback.
 
 ---
 
