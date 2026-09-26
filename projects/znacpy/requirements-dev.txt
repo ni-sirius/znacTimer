@@ -1,4 +1,0 @@
-# Development and test dependencies intentionally add no third-party packages.
-# Keeping this entry point separate prevents future tooling from entering the
-# production dependency set implicitly.
--r requirements.txt

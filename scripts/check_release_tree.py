@@ -10,14 +10,15 @@ from pathlib import Path, PurePosixPath
 EXACT_FILES = frozenset(
     {
         ".gitignore",
+        ".vscode/settings.json",
         "LICENSE",
         "README.md",
         "projects/znacpy/.vscode/settings.json",
+        "projects/znacpy/.python-version",
         "projects/znacpy/README.md",
         "projects/znacpy/THIRD_PARTY_NOTICES.md",
-        "projects/znacpy/requirements.in",
-        "projects/znacpy/requirements.txt",
-        "projects/znacpy/requirements-dev.txt",
+        "projects/znacpy/pyproject.toml",
+        "projects/znacpy/uv.lock",
         "projects/znacpy/tracker.py",
         "projects/otherplatform/README.md",
         "contracts/README.md",

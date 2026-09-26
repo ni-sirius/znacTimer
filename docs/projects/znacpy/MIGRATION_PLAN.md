@@ -7,7 +7,8 @@
 > `../../scripts/check_release_tree.py` from the project). Packaging and CI
 > examples below are design sketches and need those working-directory paths.
 
-> Current-state review: **2026-09-14**, application **0.6.0**, SQLite schema **6**.
+> Current-state review: **2026-09-14**, application version declared in
+> [`pyproject.toml`](../../../projects/znacpy/pyproject.toml), SQLite schema **6**.
 > The modular refactor, PySide6 migration, and SQLite production cutover are implemented.
 > The remaining major work is native packaging, GitHub Actions, and release verification.
 > “Implemented” describes the checked-in application, not a verified native package.
@@ -21,7 +22,7 @@ instructions remain in Git history rather than being presented as future tasks h
 |---|---|---|
 | Core extraction | Models, calendar/time helpers, calculation, and validation are independent of GUI code. | [core/](../../../projects/znacpy/znactime/core/), calculator/time/calendar tests |
 | Storage separation | A repository protocol, storage errors, SQLite implementation, legacy import, and explicit export modules separate persistence from widgets. | [repository.py](../../../projects/znacpy/znactime/storage/repository.py), [storage/sqlite/](../../../projects/znacpy/znactime/storage/sqlite/) |
-| Qt migration and binding | PySide6 is the production UI; Tkinter/tksheet and PyQt6 are no longer application backends. | [Qt UI](../../../projects/znacpy/znactime/ui/qt/), [requirements.in](../../../projects/znacpy/requirements.in) |
+| Qt migration and binding | PySide6 is the production UI; Tkinter/tksheet and PyQt6 are no longer application backends. | [Qt UI](../../../projects/znacpy/znactime/ui/qt/), [project metadata](../../../projects/znacpy/pyproject.toml), [universal lock](../../../projects/znacpy/uv.lock) |
 | Application launcher | The launcher sets the application identity, acquires the database ownership lock, and injects a SQLite repository into the window. `tracker.py` is a compatibility wrapper. | [__main__.py](../../../projects/znacpy/znactime/__main__.py), [tracker.py](../../../projects/znacpy/tracker.py) |
 | SQLite cutover | Time records, schedules, work limits, breaks/timer state, month status, and closed results are stored in SQLite; edits use transactions and revisions. | [SQLite repository](../../../projects/znacpy/znactime/storage/sqlite/repository.py), [Qt model](../../../projects/znacpy/znactime/ui/qt/model.py) |
 | Per-user database location | The live database already uses `QStandardPaths.AppLocalDataLocation`, independently of the working directory. | [database_path()](../../../projects/znacpy/znactime/ui/qt/first_launch.py) |
@@ -153,16 +154,14 @@ were written before the current SQLite implementation was compared with the plan
 audit records the disposition of each original point so a removed implementation proposal
 is not mistaken for completed work.
 
-1. **Add `platformdirs`, regenerate `requirements.txt`, and add it to `pyproject.toml` —
-   not done; the `platformdirs` part is superseded.**
+1. **Add `platformdirs`, regenerate the dependency lock, and add it to project metadata —
+   dependency metadata migrated; the `platformdirs` part is superseded.**
 
-   `requirements.in` still contains only PySide6 and reportlab, the current hash lock does
-   not contain `platformdirs`, and `pyproject.toml` does not exist yet. `platformdirs` was
-   proposed to replace a working-directory `data/` root, but production persistence already
-   uses Qt's cross-platform `QStandardPaths.AppLocalDataLocation`. Adding a second path
-   resolver would duplicate Qt and could change the identity of existing installations.
-   Creating `pyproject.toml` remains required by Phase 6.2 for package metadata and the GUI
-   entry point; it does not require `platformdirs`.
+   `pyproject.toml` and the cross-platform `uv.lock` now own the dependencies and do not
+   contain `platformdirs`. It was proposed to replace a working-directory `data/` root,
+   but production persistence already uses Qt's cross-platform
+   `QStandardPaths.AppLocalDataLocation`. Adding a second path resolver would duplicate Qt
+   and could change the identity of existing installations.
 
 2. **Make `storage/paths.py` own platform data/document locations and remove
    `config.DATA_DIR` — not done; superseded for production storage.**
@@ -308,8 +307,8 @@ file; see the [uv project structure and lockfile documentation](https://docs.ast
    `requires-python` range expresses compatibility and is not a second exact patch pin.
 5. Pin the uv release used by GitHub Actions. Updating uv and regenerating the lock is a
    reviewed dependency change.
-6. After migration, remove `requirements.in`, `requirements.txt`, and
-   `requirements-dev.txt`; do not retain them as parallel authorities.
+6. The former `requirements.in`, `requirements.txt`, and `requirements-dev.txt` entry
+   points have been removed. Do not reintroduce them as parallel authorities.
 7. Replace `tests/test_dependency_lock.py` with checks for the declared dependency
    groups and two target environments. CI enforces lock freshness with
    `uv sync --locked`; tests must not duplicate package versions or wheel hashes.
@@ -529,9 +528,9 @@ Trusted release flow:
 
 ### 6.8 — Delivery checklist and definition of done
 
-- [ ] `pyproject.toml` is the only hand-edited source of Python dependency versions.
+- [x] `pyproject.toml` is the only hand-edited source of Python dependency versions.
 - [ ] One reviewed `uv.lock` resolves and installs on Windows x64 and macOS arm64.
-- [ ] Obsolete requirements files and hard-coded dependency expectations are removed.
+- [x] Obsolete requirements files and hard-coded dependency expectations are removed.
 - [ ] Python, uv, PyInstaller, and native packaging tools have designated single pins.
 - [ ] `uv run znactime` launches on both targets.
 - [ ] The same `packaging/build.py` builds locally and in GitHub Actions.

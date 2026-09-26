@@ -17,10 +17,11 @@ tracked_files = _release_tree.tracked_files
 class ReleaseTreeTest(unittest.TestCase):
     def test_allowlist_accepts_reviewed_source_types(self):
         allowed = (
+            ".vscode/settings.json",
             "README.md",
-            "projects/znacpy/requirements.in",
-            "projects/znacpy/requirements.txt",
-            "projects/znacpy/requirements-dev.txt",
+            "projects/znacpy/.python-version",
+            "projects/znacpy/pyproject.toml",
+            "projects/znacpy/uv.lock",
             "projects/znacpy/.vscode/settings.json",
             "projects/znacpy/tests/test_release_tree.py",
             "projects/znacpy/scripts/verify_legacy_import.py",
