@@ -1,16 +1,30 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ThemeMode } from "../../src/db/repository.types";
 import type { WorkSchedulePeriod } from "../../src/domain/models";
-import { coerceTimeInput, parseClockToMinute } from "../../src/domain/time";
 import { useMonthStore } from "../../src/stores/monthStore";
 import { useSettingsStore } from "../../src/stores/settingsStore";
 import { getMobileTheme } from "../../src/theme";
-import { AppButton, MetricRow, Panel, Screen, SegmentedControl, StatusBadge } from "../../src/ui";
+import {
+  AppButton,
+  MetricRow,
+  Panel,
+  Screen,
+  SegmentedControl,
+  StatusBadge,
+} from "../../src/ui";
 
 const theme = getMobileTheme("dark");
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAYS = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
 
 export default function SettingsScreen() {
   const selectedYear = useMonthStore((state) => state.selectedYear);
@@ -24,8 +38,12 @@ export default function SettingsScreen() {
   const settingsError = useSettingsStore((state) => state.error);
   const loadSettings = useSettingsStore((state) => state.load);
   const setThemeMode = useSettingsStore((state) => state.setThemeMode);
-  const setShowExpectedEnd = useSettingsStore((state) => state.setShowExpectedEnd);
-  const replaceWorkSchedule = useSettingsStore((state) => state.replaceWorkSchedule);
+  const setShowExpectedEnd = useSettingsStore(
+    (state) => state.setShowExpectedEnd,
+  );
+  const replaceWorkSchedule = useSettingsStore(
+    (state) => state.replaceWorkSchedule,
+  );
 
   const activeSchedule = useMemo(
     () => schedule ?? defaultSchedule(selectedYear, selectedMonth),
@@ -144,29 +162,11 @@ function ScheduleSection({
   selectedMonth: number;
   selectedYear: number;
 }) {
-  const [targetText, setTargetText] = useState(() => {
-    const firstPositive =
-      activeSchedule.weekdayMinutes.find((value) => value > 0) ?? 480;
-
-    return durationText(firstPositive);
-  });
-  const [specialTargetText, setSpecialTargetText] = useState(() =>
-    durationText(activeSchedule.specialDayMinutes),
-  );
-  const [activeWeekdays, setActiveWeekdays] = useState<boolean[]>(() =>
-    activeSchedule.weekdayMinutes.map((value) => value > 0),
+  const [weekdayTargets, setWeekdayTargets] = useState<WeekdayTarget[]>(() =>
+    activeSchedule.weekdayMinutes.map(minutesToTargetFields),
   );
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const normalizedTarget = coerceTimeInput(targetText);
-  const normalizedSpecialTarget = coerceTimeInput(specialTargetText);
-  const dailyTargetMinutes =
-    normalizedTarget === null ? null : parseClockToMinute(normalizedTarget);
-  const specialTargetMinutes =
-    normalizedSpecialTarget === null
-      ? null
-      : parseClockToMinute(normalizedSpecialTarget);
 
   async function saveSchedule() {
     setFormError(null);
@@ -176,8 +176,10 @@ function ScheduleSection({
       return;
     }
 
-    if (dailyTargetMinutes === null || specialTargetMinutes === null) {
-      setFormError("Targets must use HH:MM.");
+    const nextWeekdayMinutes = parseWeekdayTargets(weekdayTargets);
+
+    if (!nextWeekdayMinutes) {
+      setFormError("Daily targets must use hours 0-24 and minutes 0-59.");
       return;
     }
 
@@ -187,51 +189,50 @@ function ScheduleSection({
       publicId: activeSchedule.publicId,
       effectiveFrom: firstDayOfMonth(selectedYear, selectedMonth),
       effectiveTo: null,
-      weekdayMinutes: activeWeekdays.map((enabled) =>
-        enabled ? dailyTargetMinutes : 0,
-      ) as WorkSchedulePeriod["weekdayMinutes"],
-      specialDayMinutes: specialTargetMinutes,
+      weekdayMinutes: nextWeekdayMinutes,
+      specialDayMinutes: 0,
       revision: activeSchedule.revision,
     };
 
-    await replaceWorkSchedule(nextSchedule);
-    await reloadMonth();
-    await loadSettings();
-
-    setSavingSchedule(false);
+    try {
+      await replaceWorkSchedule(nextSchedule);
+      await reloadMonth();
+      await loadSettings();
+    } finally {
+      setSavingSchedule(false);
+    }
   }
 
   return (
     <SettingsSection title="Work schedule">
       <MetricRow label="Standard start" value="09:00" />
       <MetricRow label="Standard end" value="18:00" />
-      <EditableMetric
-        label="Daily target"
-        onChangeText={setTargetText}
-        value={targetText}
-      />
-      <View style={styles.weekdayRow}>
-        {WEEKDAYS.map((weekday, index) => (
-          <WeekdayChip
-            key={weekday}
-            active={activeWeekdays[index] ?? false}
-            disabled={scheduleClosed}
-            label={weekday}
-            onPress={() =>
-              setActiveWeekdays((current) =>
-                current.map((value, itemIndex) =>
-                  itemIndex === index ? !value : value,
-                ),
-              )
-            }
-          />
-        ))}
+      <Text style={styles.label}>Daily target by weekday</Text>
+      <View style={styles.targetList}>
+        {WEEKDAYS.map((weekday, index) => {
+          const target = weekdayTargets[index] ?? { hours: "0", minutes: "0" };
+
+          return (
+            <DailyTargetRow
+              key={weekday}
+              disabled={scheduleClosed}
+              label={weekday}
+              hours={target.hours}
+              minutes={target.minutes}
+              onChangeHours={(hours) =>
+                setWeekdayTargets((current) =>
+                  updateWeekdayTarget(current, index, { hours }),
+                )
+              }
+              onChangeMinutes={(minutes) =>
+                setWeekdayTargets((current) =>
+                  updateWeekdayTarget(current, index, { minutes }),
+                )
+              }
+            />
+          );
+        })}
       </View>
-      <EditableMetric
-        label="Special day target"
-        onChangeText={setSpecialTargetText}
-        value={specialTargetText}
-      />
       <MetricRow
         label="Effective from"
         value={firstDayOfMonth(selectedYear, selectedMonth)}
@@ -248,56 +249,56 @@ function ScheduleSection({
   );
 }
 
-function EditableMetric({
-  label,
-  onChangeText,
-  value,
-}: {
-  label: string;
-  onChangeText: (value: string) => void;
-  value: string;
-}) {
-  return (
-    <View style={styles.editableRow}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <TextInput
-        autoCapitalize="none"
-        onChangeText={onChangeText}
-        placeholder="08:00"
-        placeholderTextColor={theme.colors.textSubtle}
-        style={styles.input}
-        value={value}
-      />
-    </View>
-  );
-}
+type WeekdayTarget = {
+  hours: string;
+  minutes: string;
+};
 
-function WeekdayChip({
-  active,
+function DailyTargetRow({
   disabled,
+  hours,
   label,
-  onPress,
+  minutes,
+  onChangeHours,
+  onChangeMinutes,
 }: {
-  active: boolean;
   disabled: boolean;
+  hours: string;
   label: string;
-  onPress: () => void;
+  minutes: string;
+  onChangeHours: (value: string) => void;
+  onChangeMinutes: (value: string) => void;
 }) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={[
-        styles.weekdayChip,
-        active && styles.weekdayChipActive,
-        disabled && styles.disabled,
-      ]}
-    >
-      <Text style={[styles.weekdayText, active && styles.weekdayTextActive]}>
-        {label}
-      </Text>
-    </Pressable>
+    <View style={styles.dailyTargetRow}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <View style={styles.targetInputs}>
+        <TextInput
+          editable={!disabled}
+          keyboardType="number-pad"
+          maxLength={2}
+          onBlur={() => onChangeHours(normalizeNumberText(hours))}
+          onChangeText={(value) => onChangeHours(onlyDigits(value, 2))}
+          placeholder="0"
+          placeholderTextColor={theme.colors.textSubtle}
+          style={[styles.targetInput, disabled && styles.inputDisabled]}
+          value={hours}
+        />
+        <Text style={styles.unitText}>h</Text>
+        <TextInput
+          editable={!disabled}
+          keyboardType="number-pad"
+          maxLength={2}
+          onBlur={() => onChangeMinutes(normalizeNumberText(minutes))}
+          onChangeText={(value) => onChangeMinutes(onlyDigits(value, 2))}
+          placeholder="0"
+          placeholderTextColor={theme.colors.textSubtle}
+          style={[styles.targetInput, disabled && styles.inputDisabled]}
+          value={minutes}
+        />
+        <Text style={styles.unitText}>min</Text>
+      </View>
+    </View>
   );
 }
 
@@ -321,6 +322,66 @@ function durationText(minutes: number): string {
   const rest = minutes % 60;
 
   return `${String(hours).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
+
+function minutesToTargetFields(minutes: number): WeekdayTarget {
+  return {
+    hours: String(Math.floor(minutes / 60)),
+    minutes: String(minutes % 60),
+  };
+}
+
+function onlyDigits(value: string, maxLength: number): string {
+  return value.replace(/\D/g, "").slice(0, maxLength);
+}
+
+function normalizeNumberText(value: string): string {
+  const digits = onlyDigits(value, 2);
+
+  return digits === "" ? "0" : String(Number(digits));
+}
+
+function updateWeekdayTarget(
+  current: WeekdayTarget[],
+  index: number,
+  changes: Partial<WeekdayTarget>,
+): WeekdayTarget[] {
+  return current.map((target, itemIndex) =>
+    itemIndex === index ? { ...target, ...changes } : target,
+  );
+}
+
+function parseWeekdayTargets(
+  values: WeekdayTarget[],
+): WorkSchedulePeriod["weekdayMinutes"] | null {
+  if (values.length !== 7) {
+    return null;
+  }
+
+  const parsed = values.map((value) => {
+    const hours = Number(value.hours || "0");
+    const minutes = Number(value.minutes || "0");
+
+    if (
+      !Number.isInteger(hours) ||
+      !Number.isInteger(minutes) ||
+      hours < 0 ||
+      hours > 24 ||
+      minutes < 0 ||
+      minutes > 59 ||
+      (hours === 24 && minutes !== 0)
+    ) {
+      return null;
+    }
+
+    return hours * 60 + minutes;
+  });
+
+  if (parsed.some((value) => value === null)) {
+    return null;
+  }
+
+  return parsed as WorkSchedulePeriod["weekdayMinutes"];
 }
 
 function minuteToSignedText(minutes: number): string {
@@ -350,7 +411,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
-  editableRow: {
+  targetList: {
+    gap: theme.spacing.xs,
+  },
+  dailyTargetRow: {
     minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
@@ -365,8 +429,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
-  input: {
-    width: 96,
+  targetInputs: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.xs,
+  },
+  targetInput: {
+    width: 44,
     minHeight: 34,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.md,
@@ -378,33 +447,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.sm,
     textAlign: "right",
   },
-  weekdayRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing.sm,
+  inputDisabled: {
+    color: theme.colors.textMuted,
+    opacity: 0.7,
   },
-  weekdayChip: {
-    minHeight: 32,
-    minWidth: 46,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.surfaceMuted,
-    paddingHorizontal: theme.spacing.sm,
-  },
-  weekdayChipActive: {
-    backgroundColor: theme.colors.primary,
-  },
-  weekdayText: {
+  unitText: {
     color: theme.colors.textMuted,
     fontSize: 12,
-    fontWeight: "900",
-  },
-  weekdayTextActive: {
-    color: theme.colors.onPrimary,
-  },
-  disabled: {
-    opacity: 0.48,
+    fontWeight: "800",
   },
   badges: {
     flexDirection: "row",
