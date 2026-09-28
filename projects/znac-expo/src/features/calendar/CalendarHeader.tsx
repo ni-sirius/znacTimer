@@ -1,5 +1,10 @@
-import { ChevronLeft, ChevronRight } from "lucide-react-native";
-import { StyleSheet, Text, View } from "react-native";
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { monthTitle } from "../overview/overviewFormat";
 import { getMobileTheme } from "../../theme";
@@ -12,6 +17,7 @@ type CalendarHeaderProps = {
   month: number;
   onPrevious: () => void;
   onNext: () => void;
+  onPressPeriod: () => void;
 };
 
 export function CalendarHeader({
@@ -19,10 +25,11 @@ export function CalendarHeader({
   month,
   onPrevious,
   onNext,
+  onPressPeriod,
 }: CalendarHeaderProps) {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Calendar</Text>
+      <View style={styles.titleSpacer} />
 
       <Panel style={styles.switcher}>
         <IconButton
@@ -32,9 +39,17 @@ export function CalendarHeader({
           style={styles.iconButton}
         />
 
-        <Text style={styles.period} numberOfLines={1}>
-          {monthTitle(year, month)}
-        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onPressPeriod}
+          style={styles.periodButton}
+        >
+          <CalendarDays color={theme.colors.textMuted} size={18} />
+          <Text style={styles.period} numberOfLines={1}>
+            {monthTitle(year, month)}
+          </Text>
+          <ChevronDown color={theme.colors.textMuted} size={16} />
+        </Pressable>
 
         <IconButton
           accessibilityLabel="Next month"
@@ -51,11 +66,8 @@ const styles = StyleSheet.create({
   container: {
     gap: theme.spacing.md,
   },
-  title: {
-    color: theme.colors.text,
-    fontSize: 14,
-    fontWeight: "900",
-    textAlign: "center",
+  titleSpacer: {
+    minHeight: 17,
   },
   switcher: {
     minHeight: 52,
@@ -75,5 +87,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "900",
     textAlign: "center",
+  },
+  periodButton: {
+    flex: 1,
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.xs,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: theme.colors.surfaceMuted,
+    paddingHorizontal: theme.spacing.sm,
   },
 });

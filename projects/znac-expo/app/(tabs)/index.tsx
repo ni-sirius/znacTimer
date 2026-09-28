@@ -1,28 +1,34 @@
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FlatList, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { recalculateDayRecords } from "../../src/domain/calculator";
+import type { DayRecord } from "../../src/domain/models";
 import { signedMinuteText } from "../../src/domain/time";
+import { DayRow } from "../../src/features/day/DayRow";
 import { ActiveWorkdayCard } from "../../src/features/overview/ActiveWorkdayCard";
-import { CalendarWeekSummary } from "../../src/features/overview/CalendarWeekSummary";
-import { MonthDayList } from "../../src/features/overview/MonthDayList";
-import { OverviewHeader } from "../../src/features/overview/OverviewHeader";
-import { SummaryCard } from "../../src/features/overview/SummaryCard";
-import { YearMonthSelector } from "../../src/features/overview/YearMonthSelector";
-import {
-  calendarWeekSummary,
-  monthOvertimeText,
-} from "../../src/features/overview/overviewFormat";
+import { OverviewMonthPickerModal } from "../../src/features/overview/OverviewMonthPickerModal";
+import { OverviewSummaryBar } from "../../src/features/overview/OverviewSummaryBar";
+import { monthOvertimeText } from "../../src/features/overview/overviewFormat";
 import { selectTodayWorkdayState } from "../../src/stores/selectors";
 import { useMonthStore } from "../../src/stores/monthStore";
 import { useWorkdayStore } from "../../src/stores/workdayStore";
 import { getMobileTheme } from "../../src/theme";
-import { Screen } from "../../src/ui";
 
 const theme = getMobileTheme("dark");
+const DAY_ROW_HEIGHT = 150;
+const TOP_BAR_HEIGHT = 90;
+const WORKDAY_CARD_HEIGHT = 142;
+const TAB_BAR_RESERVED_HEIGHT = 80;
+const FLOATING_HORIZONTAL_INSET = 24;
+const DAY_CARD_HORIZONTAL_INSET = 32;
 
 export default function OverviewScreen() {
+  const listRef = useRef<FlatList<DayRecord>>(null);
+  const hasAutoScrolled = useRef(false);
+  const insets = useSafeAreaInsets();
+
   const month = useMonthStore((state) => state.month);
   const selectedYear = useMonthStore((state) => state.selectedYear);
   const selectedMonth = useMonthStore((state) => state.selectedMonth);
@@ -37,7 +43,10 @@ export default function OverviewScreen() {
   const resume = useWorkdayStore((state) => state.resume);
   const stop = useWorkdayStore((state) => state.stop);
   const workdayError = useWorkdayStore((state) => state.error);
+
   const [now, setNow] = useState(() => new Date());
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [pickerYear, setPickerYear] = useState(selectedYear);
 
   useEffect(() => {
     syncToday();
@@ -62,6 +71,23 @@ export default function OverviewScreen() {
     });
   }, [month, today]);
 
+  const todayIndex = calculatedDays.findIndex((day) => day.workDate === today);
+
+  useEffect(() => {
+    if (hasAutoScrolled.current || todayIndex < 0) {
+      return;
+    }
+
+    hasAutoScrolled.current = true;
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToIndex({
+        index: todayIndex,
+        animated: true,
+        viewPosition: 0.5,
+      });
+    });
+  }, [todayIndex]);
+
   const workdayState = selectTodayWorkdayState(
     month
       ? {
@@ -72,59 +98,62 @@ export default function OverviewScreen() {
     today,
   );
   const elapsedText = elapsedForState(workdayState, now);
+  const bottomOffset = TAB_BAR_RESERVED_HEIGHT + theme.spacing.sm * 2;
 
   return (
-    <Screen scroll>
-      <OverviewHeader />
-
-      <YearMonthSelector
-        year={selectedYear}
-        month={selectedMonth}
-        onChange={loadMonth}
-      />
+    <View style={styles.screen}>
+      <View style={[styles.topBar, { top: insets.top + theme.spacing.sm }]}>
+        <OverviewSummaryBar
+          year={selectedYear}
+          month={selectedMonth}
+          today={today}
+          carryOverText={signedMinuteText(month?.openingBalanceMinutes ?? 0)}
+          overtimeText={monthOvertimeText(calculatedDays)}
+          onPressPeriod={() => {
+            setPickerYear(selectedYear);
+            setPickerVisible(true);
+          }}
+        />
+      </View>
 
       {month && (
-        <>
-          <View style={styles.summaryGrid}>
-            <SummaryCard
-              label="Carry over"
-              value={signedMinuteText(month.openingBalanceMinutes)}
-              tone={month.openingBalanceMinutes >= 0 ? "positive" : "negative"}
+        <FlatList
+          ref={listRef}
+          data={calculatedDays}
+          style={[styles.list, { marginTop: insets.top }]}
+          keyExtractor={(day) => day.workDate}
+          renderItem={({ item }) => (
+            <DayRow
+              day={item}
+              isToday={item.workDate === today}
+              onPress={(date) =>
+                router.push({
+                  pathname: "/day/[date]",
+                  params: { date },
+                })
+              }
             />
-            <SummaryCard
-              label="Overtime"
-              value={monthOvertimeText(calculatedDays)}
-              tone={monthOvertimeText(calculatedDays).startsWith("-") ? "negative" : "positive"}
-            />
-          </View>
-
-          <CalendarWeekSummary text={calendarWeekSummary(month, today)} />
-
-          <ActiveWorkdayCard
-            state={workdayState}
-            elapsedText={elapsedText}
-            onPrimaryPress={() => handlePrimaryWorkdayAction(workdayState, start, pause, resume)}
-            onStopPress={() => stop(currentMinuteOfDay())}
-          />
-
-          {month.status === "closed" && (
-            <Text style={styles.closedText}>Closed month · read-only</Text>
           )}
-
-          {(monthError || workdayError) && (
-            <Text style={styles.errorText}>{monthError ?? workdayError}</Text>
-          )}
-
-          <MonthDayList
-            days={calculatedDays}
-            onDayPress={(date) =>
-              router.push({
-                pathname: "/day/[date]",
-                params: { date },
-              })
-            }
-          />
-        </>
+          contentContainerStyle={[
+            styles.listContent,
+            {
+              paddingTop: TOP_BAR_HEIGHT + theme.spacing.lg,
+              paddingBottom: bottomOffset + WORKDAY_CARD_HEIGHT + theme.spacing.md,
+            },
+          ]}
+          getItemLayout={(_, index) => ({
+            length: DAY_ROW_HEIGHT,
+            offset: DAY_ROW_HEIGHT * index,
+            index,
+          })}
+          onScrollToIndexFailed={(info) => {
+            listRef.current?.scrollToOffset({
+              animated: true,
+              offset: Math.max(0, info.averageItemLength * info.index),
+            });
+          }}
+          showsVerticalScrollIndicator={false}
+        />
       )}
 
       {!month && (
@@ -132,7 +161,35 @@ export default function OverviewScreen() {
           {loading ? "Loading..." : "No month loaded"}
         </Text>
       )}
-    </Screen>
+
+      {(monthError || workdayError) && (
+        <Text style={styles.errorText}>{monthError ?? workdayError}</Text>
+      )}
+
+      <View style={[styles.floatingWorkday, { bottom: bottomOffset }]}>
+        <ActiveWorkdayCard
+          state={workdayState}
+          elapsedText={elapsedText}
+          onPrimaryPress={() =>
+            handlePrimaryWorkdayAction(workdayState, start, pause, resume)
+          }
+          onStopPress={() => stop(currentMinuteOfDay())}
+        />
+      </View>
+
+      <OverviewMonthPickerModal
+        visible={pickerVisible}
+        year={pickerYear}
+        month={selectedMonth}
+        onClose={() => setPickerVisible(false)}
+        onChangeYear={setPickerYear}
+        onSelect={(year, nextMonth) => {
+          setPickerVisible(false);
+          loadMonth(year, nextMonth);
+          hasAutoScrolled.current = false;
+        }}
+      />
+    </View>
   );
 }
 
@@ -165,9 +222,7 @@ function elapsedForState(
 ): string {
   let startMinute: number | null = null;
 
-  if (state.status === "working") {
-    startMinute = state.startMinute;
-  } else if (state.status === "paused") {
+  if (state.status === "working" || state.status === "paused") {
     startMinute = state.startMinute;
   }
 
@@ -183,25 +238,40 @@ function elapsedForState(
 }
 
 const styles = StyleSheet.create({
-  summaryGrid: {
-    flexDirection: "row",
-    gap: theme.spacing.sm,
+  screen: {
+    flex: 1,
+    backgroundColor: theme.colors.shell,
   },
-  closedText: {
-    color: theme.colors.textMuted,
-    fontSize: 12,
-    fontWeight: "800",
-    textAlign: "center",
+  topBar: {
+    position: "absolute",
+    left: FLOATING_HORIZONTAL_INSET,
+    right: FLOATING_HORIZONTAL_INSET,
+    zIndex: 6,
+  },
+  listContent: {
+    gap: theme.spacing.sm,
+    paddingHorizontal: DAY_CARD_HORIZONTAL_INSET,
+  },
+  list: {
+    flex: 1,
+  },
+  floatingWorkday: {
+    position: "absolute",
+    left: FLOATING_HORIZONTAL_INSET,
+    right: FLOATING_HORIZONTAL_INSET,
+    zIndex: 5,
   },
   errorText: {
     color: theme.colors.danger,
     fontSize: 12,
     fontWeight: "800",
+    paddingHorizontal: theme.spacing.lg,
   },
   emptyText: {
     color: theme.colors.textMuted,
     fontSize: 14,
     fontWeight: "700",
+    paddingTop: theme.spacing.xl,
     textAlign: "center",
   },
 });

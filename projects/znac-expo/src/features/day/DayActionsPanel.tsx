@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Pause, Play, Plus, RotateCcw, Square, Trash2 } from "lucide-react-native";
+import { Play, RotateCcw, Square, Trash2 } from "lucide-react-native";
 import { StyleSheet, View } from "react-native";
 
 import type { WorkdayState } from "../../db/repository.types";
@@ -7,108 +7,123 @@ import { getMobileTheme } from "../../theme";
 import { AppButton } from "../../ui";
 
 const theme = getMobileTheme("dark");
+const ACTION_BUTTON_HEIGHT = 42;
 
 type DayActionsPanelProps = {
   state: WorkdayState;
   disabled: boolean;
+  isToday: boolean;
+  canClear: boolean;
   onPrimaryPress: () => void;
   onStopPress: () => void;
-  onAddInterruption: () => void;
-  onDeleteDay: () => void;
+  onClearDay: () => void;
 };
 
 export function DayActionsPanel({
   state,
   disabled,
+  isToday,
+  canClear,
   onPrimaryPress,
   onStopPress,
-  onAddInterruption,
-  onDeleteDay,
+  onClearDay,
 }: DayActionsPanelProps) {
   const primary = primaryAction(state);
   const canUsePrimary =
     !disabled &&
     (state.status === "idle" ||
-      state.status === "working" ||
       state.status === "paused");
   const canStop =
     !disabled && (state.status === "working" || state.status === "paused");
+  const clearDisabled = disabled || !canClear;
 
   return (
     <View style={styles.actions}>
-      <AppButton
-        title={primary.label}
-        variant={primary.variant}
-        disabled={!canUsePrimary}
-        icon={primary.icon}
-        onPress={onPrimaryPress}
-      />
+      <View style={styles.actionRow}>
+        {isToday && (
+          <>
+            <AppButton
+              title={primary.label}
+              variant="primary"
+              disabled={!canUsePrimary}
+              icon={primary.icon}
+              onPress={onPrimaryPress}
+              style={styles.smallButton}
+            />
 
-      <AppButton
-        title="Stop day"
-        variant="danger"
-        disabled={!canStop}
-        icon={<Square color={theme.colors.shell} size={16} />}
-        onPress={onStopPress}
-      />
+            <AppButton
+              title="Stop"
+              variant={canStop ? "danger" : "secondary"}
+              disabled={!canStop}
+              icon={
+                <Square
+                  color={
+                    canStop
+                      ? theme.colors.text
+                      : theme.colors.playerDisabledText
+                  }
+                  size={14}
+                />
+              }
+              onPress={onStopPress}
+              style={[styles.smallButton, canStop && styles.stopButton]}
+              disabledStyle={styles.disabledButton}
+              labelStyle={!canStop && styles.disabledLabel}
+            />
+          </>
+        )}
 
-      <AppButton
-        title="Add interruption"
-        variant="primary"
-        disabled={disabled}
-        icon={<Plus color={theme.colors.onPrimary} size={16} />}
-        onPress={onAddInterruption}
-      />
-
-      <AppButton
-        title="Delete day"
-        variant="danger"
-        disabled={disabled}
-        icon={<Trash2 color={theme.colors.shell} size={16} />}
-        onPress={onDeleteDay}
-      />
+        <AppButton
+          title="Clear"
+          variant="danger"
+          disabled={clearDisabled}
+          icon={<Trash2 color={theme.colors.shell} size={16} />}
+          onPress={onClearDay}
+          style={styles.smallButton}
+        />
+      </View>
     </View>
   );
 }
 
 function primaryAction(state: WorkdayState): {
   label: string;
-  variant: "primary" | "success" | "secondary";
   icon: ReactNode;
 } {
   if (state.status === "idle") {
     return {
-      label: "Start day",
-      variant: "success",
+      label: "Start",
       icon: <Play color={theme.colors.shell} size={16} />,
     };
   }
 
-  if (state.status === "working") {
-    return {
-      label: "Pause",
-      variant: "primary",
-      icon: <Pause color={theme.colors.onPrimary} size={16} />,
-    };
-  }
-
-  if (state.status === "paused") {
-    return {
-      label: "Resume",
-      variant: "primary",
-      icon: <RotateCcw color={theme.colors.onPrimary} size={16} />,
-    };
-  }
-
   return {
-    label: "Start day",
-    variant: "secondary",
-    icon: <Play color={theme.colors.text} size={16} />,
+    label: "Resume",
+    icon: <RotateCcw color={theme.colors.onPrimary} size={16} />,
   };
 }
 
 const styles = StyleSheet.create({
   actions: {
+    marginTop: theme.spacing.md,
+  },
+  actionRow: {
+    flexDirection: "row",
     gap: theme.spacing.sm,
+  },
+  smallButton: {
+    flex: 1,
+    minHeight: ACTION_BUTTON_HEIGHT,
+    borderRadius: theme.radius.md,
+    paddingHorizontal: theme.spacing.sm,
+  },
+  stopButton: {
+    backgroundColor: theme.colors.playerStop,
+  },
+  disabledButton: {
+    backgroundColor: theme.colors.playerDisabled,
+  },
+  disabledLabel: {
+    color: theme.colors.playerDisabledText,
   },
 });

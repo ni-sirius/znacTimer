@@ -1,10 +1,11 @@
 import { router } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { StyleSheet, Text } from "react-native";
 
 import { CalendarHeader } from "../../src/features/calendar/CalendarHeader";
 import { CalendarMonthGrid } from "../../src/features/calendar/CalendarMonthGrid";
 import { DayTypeLegend } from "../../src/features/calendar/DayTypeLegend";
+import { OverviewMonthPickerModal } from "../../src/features/overview/OverviewMonthPickerModal";
 import { useMonthStore } from "../../src/stores/monthStore";
 import { useWorkdayStore } from "../../src/stores/workdayStore";
 import { getMobileTheme } from "../../src/theme";
@@ -20,6 +21,17 @@ export default function CalendarScreen() {
   const error = useMonthStore((state) => state.error);
   const loadMonth = useMonthStore((state) => state.load);
   const today = useWorkdayStore((state) => state.today);
+  const syncToday = useWorkdayStore((state) => state.syncToday);
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [pickerYear, setPickerYear] = useState(selectedYear);
+
+  useEffect(() => {
+    syncToday();
+
+    const interval = setInterval(syncToday, 60_000);
+
+    return () => clearInterval(interval);
+  }, [syncToday]);
 
   useEffect(() => {
     if (!month) {
@@ -44,6 +56,10 @@ export default function CalendarScreen() {
           const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
           const nextYear = currentMonth === 12 ? currentYear + 1 : currentYear;
           loadMonth(nextYear, nextMonth);
+        }}
+        onPressPeriod={() => {
+          setPickerYear(currentYear);
+          setPickerVisible(true);
         }}
       />
 
@@ -71,6 +87,18 @@ export default function CalendarScreen() {
       )}
 
       {error && <Text style={styles.errorText}>{error}</Text>}
+
+      <OverviewMonthPickerModal
+        visible={pickerVisible}
+        year={pickerYear}
+        month={currentMonth}
+        onClose={() => setPickerVisible(false)}
+        onChangeYear={setPickerYear}
+        onSelect={(year, nextMonth) => {
+          setPickerVisible(false);
+          loadMonth(year, nextMonth);
+        }}
+      />
     </Screen>
   );
 }

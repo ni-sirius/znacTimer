@@ -1,4 +1,11 @@
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 
 import { getMobileTheme } from "../theme";
 
@@ -17,14 +24,23 @@ type StatusBadgeProps = {
   label: string;
   kind?: StatusBadgeKind;
   style?: StyleProp<ViewStyle>;
+  textStyle?: StyleProp<TextStyle>;
 };
 
-export function StatusBadge({ label, kind = "normal", style }: StatusBadgeProps) {
+export function StatusBadge({
+  label,
+  kind = "normal",
+  style,
+  textStyle,
+}: StatusBadgeProps) {
   const colors = statusColors[kind];
 
   return (
     <View style={[styles.badge, { backgroundColor: colors.fill }, style]}>
-      <Text style={[styles.text, { color: colors.text }]} numberOfLines={1}>
+      <Text
+        style={[styles.text, { color: colors.text }, textStyle]}
+        numberOfLines={1}
+      >
         {label}
       </Text>
     </View>
@@ -34,11 +50,11 @@ export function StatusBadge({ label, kind = "normal", style }: StatusBadgeProps)
 const statusColors: Record<StatusBadgeKind, { fill: string; text: string }> = {
   normal: {
     fill: theme.row.validDay,
-    text: theme.colors.success,
+    text: theme.colors.text,
   },
   valid: {
     fill: theme.row.validDay,
-    text: theme.colors.success,
+    text: theme.colors.text,
   },
   weekend: {
     fill: theme.row.weekend,
@@ -46,7 +62,7 @@ const statusColors: Record<StatusBadgeKind, { fill: string; text: string }> = {
   },
   holiday: {
     fill: theme.row.missingTimes,
-    text: theme.colors.danger,
+    text: theme.colors.text,
   },
   sick: {
     fill: theme.row.specialDay,
@@ -58,7 +74,7 @@ const statusColors: Record<StatusBadgeKind, { fill: string; text: string }> = {
   },
   missing: {
     fill: theme.row.missingTimes,
-    text: theme.colors.danger,
+    text: theme.colors.text,
   },
 };
 

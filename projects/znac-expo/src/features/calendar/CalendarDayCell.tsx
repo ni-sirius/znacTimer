@@ -7,6 +7,7 @@ const theme = getMobileTheme("dark");
 
 export type CalendarDayVisualType =
   | "normal"
+  | "valid"
   | "weekend"
   | "holiday"
   | "sick"
@@ -72,6 +73,11 @@ const visualColors: Record<
   { fill: string; border: string; text: string }
 > = {
   normal: {
+    fill: theme.colors.regularDayPending,
+    border: theme.colors.regularDayPending,
+    text: theme.colors.text,
+  },
+  valid: {
     fill: theme.row.validDay,
     border: theme.row.validDay,
     text: theme.colors.text,
@@ -97,9 +103,9 @@ const visualColors: Record<
     text: theme.colors.text,
   },
   missing: {
-    fill: theme.colors.surfaceMuted,
+    fill: theme.row.missingTimes,
     border: theme.row.missingTimes,
-    text: theme.colors.danger,
+    text: theme.colors.text,
   },
 };
 

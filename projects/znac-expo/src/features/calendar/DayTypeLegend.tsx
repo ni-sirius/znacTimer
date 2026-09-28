@@ -7,7 +7,7 @@ import type { CalendarDayVisualType } from "./CalendarDayCell";
 const theme = getMobileTheme("dark");
 
 const ITEMS: { label: string; type: CalendarDayVisualType }[] = [
-  { label: "Normal day", type: "normal" },
+  { label: "Regular day", type: "normal" },
   { label: "Weekend", type: "weekend" },
   { label: "Sick", type: "sick" },
   { label: "Vacation", type: "vacation" },
@@ -39,16 +39,18 @@ export function DayTypeLegend() {
 }
 
 const legendFill: Record<CalendarDayVisualType, string> = {
-  normal: theme.row.validDay,
+  normal: theme.colors.regularDayPending,
+  valid: theme.row.validDay,
   weekend: theme.row.weekend,
   holiday: theme.row.missingTimes,
   sick: theme.row.specialDay,
   vacation: theme.row.specialDay,
-  missing: theme.colors.surfaceMuted,
+  missing: theme.row.missingTimes,
 };
 
 const legendBorder: Record<CalendarDayVisualType, string> = {
-  normal: theme.row.validDay,
+  normal: theme.colors.regularDayPending,
+  valid: theme.row.validDay,
   weekend: theme.row.weekend,
   holiday: theme.row.missingTimes,
   sick: theme.row.specialDay,

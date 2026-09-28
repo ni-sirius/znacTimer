@@ -9,6 +9,7 @@ import { getMobileTheme } from "../../src/theme";
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 const darkTheme = getMobileTheme("dark");
+const IOS_NATIVE_TAB_BACKGROUND = "#050711";
 
 export default function TabLayout() {
   if (Platform.OS === "ios") {
@@ -20,7 +21,24 @@ export default function TabLayout() {
 
 function IosNativeTabs() {
   return (
-    <NativeTabs>
+    <NativeTabs
+      backgroundColor={IOS_NATIVE_TAB_BACKGROUND}
+      blurEffect="none"
+      disableTransparentOnScrollEdge
+      iconColor={{
+        default: darkTheme.colors.textMuted,
+        selected: darkTheme.colors.primary,
+      }}
+      labelStyle={{
+        default: { color: darkTheme.colors.textMuted },
+        selected: { color: darkTheme.colors.primary },
+      }}
+      shadowColor={darkTheme.colors.tabBarBorder}
+      unstable_nativeProps={{
+        colorScheme: "dark",
+        nativeContainerStyle: { backgroundColor: darkTheme.colors.shell },
+      }}
+    >
       {MAIN_TABS.map((tab) => (
         <NativeTabs.Trigger key={tab.name} name={tab.name}>
           <NativeTabs.Trigger.Icon

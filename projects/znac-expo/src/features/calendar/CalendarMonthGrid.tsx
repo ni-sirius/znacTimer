@@ -80,13 +80,14 @@ function buildCalendarCells(
       inSelectedMonth,
       isToday: isoDate === today,
       isMaterialized: Boolean(day),
-      visualType: classifyCalendarDay(isoDate, day),
+      visualType: classifyCalendarDay(isoDate, today, day),
     };
   });
 }
 
 function classifyCalendarDay(
   date: IsoDate,
+  today: IsoDate,
   day?: DayRecord,
 ): CalendarDayVisualType {
   if (!day) {
@@ -112,13 +113,15 @@ function classifyCalendarDay(
     return "sick";
   }
 
-  if (hasMissingTimes(day)) {
+  if (date < today && hasMissingTimes(day)) {
     return "missing";
   }
 
-  return isWeekendIso(day.workDate) || day.expectedWorkMinutes === 0
-    ? "weekend"
-    : "normal";
+  if (isWeekendIso(day.workDate) || day.expectedWorkMinutes === 0) {
+    return "weekend";
+  }
+
+  return day.startMinute !== null && day.endMinute !== null ? "valid" : "normal";
 }
 
 function hasMissingTimes(day: DayRecord): boolean {

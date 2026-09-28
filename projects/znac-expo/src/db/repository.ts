@@ -8,6 +8,7 @@ import type {
   WorkSchedulePeriod,
 } from "../domain/models";
 import { recalculateDayRecords } from "../domain/calculator";
+import { isNormalDay } from "../domain/constants";
 
 import {
   dayRecordFromRows,
@@ -251,6 +252,8 @@ async function getOrCreateMonth(
     return existingMonth;
   }
 
+  const schedule = await scheduleForMonth(db, year, month);
+
   await writeTransaction(db, async () => {
     const now = new Date().toISOString();
 
@@ -302,9 +305,11 @@ async function getOrCreateMonth(
         day,
       ).padStart(2, "0")}`;
 
-      const weekday = new Date(year, month - 1, day).getDay();
-
-      const expectedWorkMinutes = weekday === 0 || weekday === 6 ? 0 : 480;
+      const expectedWorkMinutes = expectedMinutesForDate(
+        workDate,
+        "",
+        schedule,
+      );
 
       await db.runAsync(
         `
@@ -456,14 +461,12 @@ async function viewMonth(
 
   const days: DayRecord[] = [];
   const daysInMonth = new Date(year, month, 0).getDate();
+  const schedule = await scheduleForMonth(db, year, month);
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const workDate = `${year}-${String(month).padStart(2, "0")}-${String(
       day,
     ).padStart(2, "0")}`;
-
-    const weekday = new Date(year, month - 1, day).getDay();
-
     days.push({
       workDate,
       specialDay: "",
@@ -471,7 +474,7 @@ async function viewMonth(
       endMinute: null,
       breakDurationMinutes: null,
       breaks: [],
-      expectedWorkMinutes: weekday === 0 || weekday === 6 ? 0 : 480,
+      expectedWorkMinutes: expectedMinutesForDate(workDate, "", schedule),
       expectedMinutesOverridden: false,
       revision: 0,
       dailyOvertimeMinutes: null,
@@ -820,6 +823,16 @@ async function replaceWorkSchedule(
   expectedRevision?: number,
 ): Promise<WorkSchedulePeriod> {
   const publicId = schedule.publicId || makePublicId();
+  const effectiveMonth = parseWorkDate(schedule.effectiveFrom);
+  const selectedMonth = await loadMonth(
+    db,
+    effectiveMonth.year,
+    effectiveMonth.month,
+  );
+
+  if (selectedMonth?.status === "closed") {
+    throw new ClosedMonthError();
+  }
 
   const updated = await writeTransaction(db, async () => {
     const existing = await db.getFirstAsync<WorkScheduleRow>(
@@ -955,7 +968,11 @@ async function replaceWorkSchedule(
       throw new RepositoryError("Work schedule was not saved.");
     }
 
-    return workScheduleFromRow(row);
+    const updatedSchedule = workScheduleFromRow(row);
+
+    await applyScheduleToMaterializedOpenMonths(db, updatedSchedule, now);
+
+    return updatedSchedule;
   });
 
   return updated;
@@ -978,6 +995,142 @@ async function setDayWorkLimit(
     },
     expectedRevision,
   );
+}
+
+async function scheduleForMonth(
+  db: SQLite.SQLiteDatabase,
+  year: number,
+  month: number,
+): Promise<WorkSchedulePeriod> {
+  const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const row = await db.getFirstAsync<WorkScheduleRow>(
+    `
+      SELECT
+        id,
+        public_id,
+        effective_from,
+        effective_to,
+        monday_minutes,
+        tuesday_minutes,
+        wednesday_minutes,
+        thursday_minutes,
+        friday_minutes,
+        saturday_minutes,
+        sunday_minutes,
+        special_day_minutes,
+        revision
+      FROM work_schedule_periods
+      WHERE dataset_id = ?
+        AND effective_from <= ?
+        AND (effective_to IS NULL OR effective_to >= ?)
+      ORDER BY effective_from DESC
+      LIMIT 1
+    `,
+    DATASET_ID,
+    monthStart,
+    monthStart,
+  );
+
+  return row ? workScheduleFromRow(row) : defaultWorkSchedule(monthStart);
+}
+
+async function applyScheduleToMaterializedOpenMonths(
+  db: SQLite.SQLiteDatabase,
+  schedule: WorkSchedulePeriod,
+  now: string,
+): Promise<void> {
+  const rows = await db.getAllAsync<{
+    id: number;
+    month_id: number;
+    work_date: string;
+    special_day: string;
+  }>(
+    `
+      SELECT
+        day_entries.id,
+        day_entries.month_id,
+        day_entries.work_date,
+        day_entries.special_day
+      FROM day_entries
+      JOIN months ON months.id = day_entries.month_id
+      WHERE months.dataset_id = ?
+        AND months.status = 'open'
+        AND day_entries.work_date >= ?
+        AND day_entries.expected_minutes_overridden = 0
+      ORDER BY day_entries.work_date
+    `,
+    DATASET_ID,
+    schedule.effectiveFrom,
+  );
+
+  const touchedMonthIds = new Set<number>();
+
+  for (const row of rows) {
+    const expectedMinutes = expectedMinutesForDate(
+      row.work_date,
+      row.special_day,
+      schedule,
+    );
+
+    await db.runAsync(
+      `
+        UPDATE day_entries
+        SET
+          expected_work_minutes = ?,
+          daily_overtime_minutes = NULL,
+          running_balance_minutes = NULL,
+          updated_at = ?,
+          revision = revision + 1
+        WHERE id = ?
+      `,
+      expectedMinutes,
+      now,
+      row.id,
+    );
+
+    touchedMonthIds.add(row.month_id);
+  }
+
+  for (const monthId of touchedMonthIds) {
+    await db.runAsync(
+      `
+        UPDATE months
+        SET
+          updated_at = ?,
+          revision = revision + 1
+        WHERE id = ?
+      `,
+      now,
+      monthId,
+    );
+  }
+}
+
+function expectedMinutesForDate(
+  workDate: string,
+  specialDay: string,
+  schedule: WorkSchedulePeriod,
+): number {
+  if (!isNormalDay(specialDay)) {
+    return schedule.specialDayMinutes;
+  }
+
+  const parsed = parseWorkDate(workDate);
+  const day = new Date(parsed.year, parsed.month - 1, Number(workDate.slice(8, 10)));
+  const mondayBasedIndex = (day.getDay() + 6) % 7;
+
+  return schedule.weekdayMinutes[mondayBasedIndex] ?? 0;
+}
+
+function defaultWorkSchedule(effectiveFrom: IsoDate): WorkSchedulePeriod {
+  return {
+    publicId: "",
+    effectiveFrom,
+    effectiveTo: null,
+    weekdayMinutes: [480, 480, 480, 480, 480, 0, 0],
+    specialDayMinutes: 0,
+    revision: 0,
+  };
 }
 
 async function startWorkday(
@@ -1026,9 +1179,9 @@ async function startPause(
     );
   }
 
-  if (minute <= day.startMinute!) {
+  if (minute < day.startMinute!) {
     throw new InvalidWorkdayTransitionError(
-      "Pause must start after workday start.",
+      "Pause cannot start before workday start.",
     );
   }
 

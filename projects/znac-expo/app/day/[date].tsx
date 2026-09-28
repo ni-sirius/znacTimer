@@ -4,7 +4,8 @@ import { StyleSheet, Text } from "react-native";
 
 import { deriveWorkdayState } from "../../src/db/repository";
 import { recalculateDayRecords } from "../../src/domain/calculator";
-import type { IsoDate, MonthRecord } from "../../src/domain/models";
+import { isNormalDay } from "../../src/domain/constants";
+import type { DayRecord, IsoDate, MonthRecord } from "../../src/domain/models";
 import { DayActionsPanel } from "../../src/features/day/DayActionsPanel";
 import { DayDetailsHeader } from "../../src/features/day/DayDetailsHeader";
 import { DayIdentityPanel } from "../../src/features/day/DayIdentityPanel";
@@ -30,10 +31,10 @@ export default function DayDetailsScreen() {
   const loading = useMonthStore((state) => state.loading);
   const error = useMonthStore((state) => state.error);
   const loadMonth = useMonthStore((state) => state.load);
+  const updateDay = useMonthStore((state) => state.updateDay);
 
   const today = useWorkdayStore((state) => state.today);
   const startForDate = useWorkdayStore((state) => state.startForDate);
-  const pauseForDate = useWorkdayStore((state) => state.pauseForDate);
   const resumeForDate = useWorkdayStore((state) => state.resumeForDate);
   const stopForDate = useWorkdayStore((state) => state.stopForDate);
   const workdayError = useWorkdayStore((state) => state.error);
@@ -67,6 +68,7 @@ export default function DayDetailsScreen() {
 
   const day = date ? selectDayByIsoDate(calculatedMonth, date) : null;
   const details = day ? selectDayDetails(day) : null;
+  const isToday = date === today;
   const workdayState =
     date && calculatedMonth
       ? deriveWorkdayState(day, calculatedMonth.status, date)
@@ -75,15 +77,14 @@ export default function DayDetailsScreen() {
           reason: "Day is unavailable",
         };
   const actionsDisabled = calculatedMonth?.status === "closed" || !day;
+  const canClearDay = day ? hasClearableDayData(day) : false;
 
   if (!date || !routeMonth) {
     return (
       <Screen>
         <Stack.Screen options={{ headerShown: false }} />
         <DayDetailsHeader
-          editDisabled
           onBack={() => router.back()}
-          onEdit={() => undefined}
         />
         <Text style={styles.emptyText}>Invalid date</Text>
       </Screen>
@@ -95,38 +96,34 @@ export default function DayDetailsScreen() {
       <Stack.Screen options={{ headerShown: false }} />
 
       <DayDetailsHeader
-        editDisabled={actionsDisabled}
         onBack={() => router.back()}
-        onEdit={() =>
-          router.push({
-            pathname: "/modals/day-editor",
-            params: { date },
-          })
-        }
       />
 
-      {details && (
+      {details && day && (
         <>
           <DayIdentityPanel details={details} />
-          <DayMetricsPanel details={details} />
+          <Text style={styles.hintText}>Tap a value to edit.</Text>
+          <DayMetricsPanel
+            day={day}
+            details={details}
+            disabled={actionsDisabled}
+            onUpdate={(changes, expectedRevision) =>
+              updateDay(day.workDate, changes, expectedRevision)
+            }
+          />
           <DayActionsPanel
             state={workdayState}
             disabled={actionsDisabled}
+            isToday={isToday}
+            canClear={canClearDay}
             onPrimaryPress={() =>
               handlePrimaryAction(date, workdayState, {
                 startForDate,
-                pauseForDate,
                 resumeForDate,
               })
             }
             onStopPress={() => stopForDate(date, currentMinuteOfDay())}
-            onAddInterruption={() =>
-              router.push({
-                pathname: "/modals/break-editor",
-                params: { date },
-              })
-            }
-            onDeleteDay={() =>
+            onClearDay={() =>
               router.push({
                 pathname: "/modals/delete-day",
                 params: { date },
@@ -154,7 +151,6 @@ function handlePrimaryAction(
   state: ReturnType<typeof deriveWorkdayState>,
   actions: {
     startForDate: (workDate: IsoDate, minute: number) => Promise<void>;
-    pauseForDate: (workDate: IsoDate, minute: number) => Promise<void>;
     resumeForDate: (workDate: IsoDate, minute: number) => Promise<void>;
   },
 ) {
@@ -162,11 +158,20 @@ function handlePrimaryAction(
 
   if (state.status === "idle") {
     actions.startForDate(workDate, minute);
-  } else if (state.status === "working") {
-    actions.pauseForDate(workDate, minute);
   } else if (state.status === "paused") {
     actions.resumeForDate(workDate, minute);
   }
+}
+
+function hasClearableDayData(day: DayRecord): boolean {
+  return (
+    !isNormalDay(day.specialDay) ||
+    day.startMinute !== null ||
+    day.endMinute !== null ||
+    day.breakDurationMinutes !== null ||
+    day.breaks.length > 0 ||
+    day.expectedMinutesOverridden
+  );
 }
 
 function normalizeDateParam(value: string | string[] | undefined): IsoDate | "" {
@@ -200,6 +205,12 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: 14,
     fontWeight: "700",
+    textAlign: "center",
+  },
+  hintText: {
+    color: theme.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "800",
     textAlign: "center",
   },
   errorText: {

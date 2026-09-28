@@ -1,22 +1,15 @@
-import { ChevronLeft, Pencil } from "lucide-react-native";
+import { ChevronLeft } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getMobileTheme } from "../../theme";
-import { IconButton } from "../../ui";
 
 const theme = getMobileTheme("dark");
 
 type DayDetailsHeaderProps = {
   onBack: () => void;
-  onEdit: () => void;
-  editDisabled?: boolean;
 };
 
-export function DayDetailsHeader({
-  onBack,
-  onEdit,
-  editDisabled = false,
-}: DayDetailsHeaderProps) {
+export function DayDetailsHeader({ onBack }: DayDetailsHeaderProps) {
   return (
     <View style={styles.header}>
       <Pressable
@@ -30,14 +23,7 @@ export function DayDetailsHeader({
 
       <Text style={styles.title}>Day details</Text>
 
-      <View style={styles.trailing}>
-        <IconButton
-          accessibilityLabel="Edit day"
-          disabled={editDisabled}
-          icon={<Pencil color={theme.colors.primary} size={18} />}
-          onPress={onEdit}
-        />
-      </View>
+      <View style={styles.trailing} />
     </View>
   );
 }

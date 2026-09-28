@@ -1,6 +1,5 @@
 import {
   HOLIDAY_DAY,
-  NORMAL_DAY,
   SICK_DAY,
   VACATION_DAY,
   WEEKEND_DAY,
@@ -17,6 +16,7 @@ import { expectedEndMinute, minuteToClockText, signedMinuteText } from "../../do
 import type { StatusBadgeKind } from "../../ui";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const REGULAR_DAY_LABEL = "Regular day";
 const MONTHS = [
   "January",
   "February",
@@ -92,7 +92,7 @@ export function dayTypeInfo(day: DayRecord): DayTypeInfo {
     return { label: WEEKEND_DAY, badgeKind: "weekend" };
   }
 
-  return { label: NORMAL_DAY, badgeKind: "normal" };
+  return { label: REGULAR_DAY_LABEL, badgeKind: "normal" };
 }
 
 export function expectedEndText(day: DayRecord): string | null {

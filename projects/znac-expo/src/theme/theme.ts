@@ -28,8 +28,13 @@ export type MobileTheme = {
     onPrimary: string;
     success: string;
     danger: string;
+    dangerMuted: string;
+    playerStop: string;
+    playerDisabled: string;
+    playerDisabledText: string;
     tabBar: string;
     tabBarBorder: string;
+    regularDayPending: string;
     shadow: string;
   };
   row: {
@@ -80,8 +85,13 @@ export function getMobileTheme(mode: ThemeMode): MobileTheme {
       onPrimary: mode === "dark" ? "#ffffff" : color(source, "on_primary"),
       success: color(source, "model.overtime_positive"),
       danger: color(source, "tokens.danger_text"),
-      tabBar: mode === "dark" ? "#111827" : color(source, "menu.surface"),
+      dangerMuted: color(source, "player.stop"),
+      playerStop: color(source, "player.stop"),
+      playerDisabled: color(source, "player.disabled"),
+      playerDisabledText: color(source, "player.disabled_text"),
+      tabBar: mode === "dark" ? "#10121d" : color(source, "menu.surface"),
       tabBarBorder: mode === "dark" ? "#2f3347" : color(source, "menu.border"),
+      regularDayPending: mode === "dark" ? "#2b2147" : color(source, "header.badge"),
       shadow: toReactNativeColor(color(source, "table.shadow")),
     },
     row: {

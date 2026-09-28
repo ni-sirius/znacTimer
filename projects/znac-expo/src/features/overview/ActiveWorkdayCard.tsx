@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { Pause, Play, RotateCcw, Square } from "lucide-react-native";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { WorkdayState } from "../../db/repository.types";
@@ -44,6 +46,7 @@ export function ActiveWorkdayCard({
           title={content.primaryLabel}
           variant={state.status === "idle" ? "success" : "primary"}
           disabled={!canUsePrimary}
+          icon={content.primaryIcon}
           onPress={onPrimaryPress}
           style={styles.actionButton}
         />
@@ -51,8 +54,18 @@ export function ActiveWorkdayCard({
           title="Stop day"
           variant="danger"
           disabled={!canStop}
+          icon={
+            <Square
+              color={
+                canStop ? theme.colors.shell : theme.colors.playerDisabledText
+              }
+              size={16}
+            />
+          }
           onPress={onStopPress}
-          style={styles.actionButton}
+          style={[styles.actionButton, canStop && styles.stopButton]}
+          disabledStyle={styles.stopButtonDisabled}
+          labelStyle={!canStop && styles.stopButtonDisabledLabel}
         />
       </View>
     </Panel>
@@ -63,12 +76,14 @@ function workdayContent(state: WorkdayState): {
   caption: string;
   title: string;
   primaryLabel: string;
+  primaryIcon: ReactNode;
 } {
   if (state.status === "idle") {
     return {
       caption: "Current day",
       title: "Ready to start",
       primaryLabel: "Start day",
+      primaryIcon: <Play color={theme.colors.shell} size={18} />,
     };
   }
 
@@ -77,6 +92,7 @@ function workdayContent(state: WorkdayState): {
       caption: `Working since ${minuteToClockText(state.startMinute)}`,
       title: "Current day is active",
       primaryLabel: "Pause",
+      primaryIcon: <Pause color={theme.colors.onPrimary} size={18} />,
     };
   }
 
@@ -85,6 +101,7 @@ function workdayContent(state: WorkdayState): {
       caption: `Working since ${minuteToClockText(state.startMinute)}`,
       title: "Current day is paused",
       primaryLabel: "Resume",
+      primaryIcon: <RotateCcw color={theme.colors.onPrimary} size={18} />,
     };
   }
 
@@ -92,7 +109,8 @@ function workdayContent(state: WorkdayState): {
     return {
       caption: `${minuteToClockText(state.startMinute)} - ${minuteToClockText(state.endMinute)}`,
       title: "Workday complete",
-      primaryLabel: "Start day",
+      primaryLabel: "Resume",
+      primaryIcon: <RotateCcw color={theme.colors.textMuted} size={18} />,
     };
   }
 
@@ -100,12 +118,19 @@ function workdayContent(state: WorkdayState): {
     caption: "Current day",
     title: state.reason,
     primaryLabel: "Start day",
+    primaryIcon: <Play color={theme.colors.textMuted} size={18} />,
   };
 }
 
 const styles = StyleSheet.create({
   panel: {
+    borderColor: theme.colors.tabBarBorder,
+    borderRadius: 24,
+    borderWidth: 1,
+    backgroundColor: theme.colors.tabBar,
     gap: theme.spacing.md,
+    paddingHorizontal: theme.spacing.xl,
+    paddingVertical: theme.spacing.md,
   },
   topRow: {
     flexDirection: "row",
@@ -139,5 +164,16 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
+    minHeight: 50,
+    borderRadius: 18,
+  },
+  stopButton: {
+    backgroundColor: theme.colors.playerStop,
+  },
+  stopButtonDisabled: {
+    backgroundColor: theme.colors.playerDisabled,
+  },
+  stopButtonDisabledLabel: {
+    color: theme.colors.playerDisabledText,
   },
 });

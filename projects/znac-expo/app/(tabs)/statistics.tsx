@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { StyleSheet, Text } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import { recalculateDayRecords } from "../../src/domain/calculator";
 import { StatisticsMetricList } from "../../src/features/statistics/StatisticsMetricList";
@@ -52,9 +52,11 @@ export default function StatisticsScreen() {
 
   return (
     <Screen>
+      <View style={styles.titleSpacer} />
+
       <StatisticsModeTabs value={mode} onChange={setMode} />
 
-      <Text style={styles.title}>{periodTitle}</Text>
+      {mode === "month" && <Text style={styles.title}>{periodTitle}</Text>}
 
       {mode === "month" && month && (
         <StatisticsMetricList statistics={statistics} />
@@ -67,7 +69,11 @@ export default function StatisticsScreen() {
       )}
 
       {mode !== "month" && (
-        <Text style={styles.emptyText}>Not available in phase 1</Text>
+        <View style={styles.center}>
+          <Text style={styles.emptyText}>
+            Feature in progress, not available yet
+          </Text>
+        </View>
       )}
 
       {error && <Text style={styles.errorText}>{error}</Text>}
@@ -76,10 +82,18 @@ export default function StatisticsScreen() {
 }
 
 const styles = StyleSheet.create({
+  titleSpacer: {
+    minHeight: 17,
+  },
   title: {
     color: theme.colors.text,
     fontSize: 22,
     fontWeight: "900",
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   emptyText: {
     color: theme.colors.textMuted,

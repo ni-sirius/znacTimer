@@ -48,7 +48,7 @@ export async function recordMigration(
 }
 
 async function applyMigration(
-  db: SQLite.SQLiteDatabase,
+  _db: SQLite.SQLiteDatabase,
   version: number,
 ): Promise<void> {
   switch (version) {

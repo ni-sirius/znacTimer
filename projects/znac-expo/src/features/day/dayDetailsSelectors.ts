@@ -34,6 +34,8 @@ const MONTHS = [
 
 export type DayDetailsViewModel = {
   workDate: IsoDate;
+  weekday: string;
+  dateText: string;
   displayDate: string;
   calendarWeek: string;
   dayTypeLabel: string;
@@ -56,6 +58,8 @@ export function selectDayDetails(day: DayRecord): DayDetailsViewModel {
 
   return {
     workDate: day.workDate,
+    weekday: weekdayText(day.workDate),
+    dateText: dateText(day.workDate),
     displayDate: fullDisplayDate(day.workDate),
     calendarWeek: calendarWeekTagIso(day.workDate),
     dayTypeLabel: dayType.label || NORMAL_DAY,
@@ -104,6 +108,22 @@ export function fullDisplayDate(value: IsoDate): string {
   return `${WEEKDAYS[parsed.getDay()]}, ${parsed.getDate()} ${
     MONTHS[parsed.getMonth()]
   } ${parsed.getFullYear()}`;
+}
+
+function weekdayText(value: IsoDate): string {
+  const parsed = parseIsoDate(value);
+
+  return parsed ? WEEKDAYS[parsed.getDay()] : value;
+}
+
+function dateText(value: IsoDate): string {
+  const parsed = parseIsoDate(value);
+
+  if (!parsed) {
+    return value;
+  }
+
+  return `${parsed.getDate()} ${MONTHS[parsed.getMonth()]} ${parsed.getFullYear()}`;
 }
 
 function interruptionsText(day: DayRecord): string {

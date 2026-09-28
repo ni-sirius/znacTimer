@@ -6,9 +6,9 @@ import {
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
+import { useColorScheme } from "react-native";
 import "react-native-reanimated";
 
-import { useColorScheme } from "../hooks/use-color-scheme";
 import { initializeDatabase } from "../src/db";
 import { useMonthStore } from "../src/stores/monthStore";
 import { useSettingsStore } from "../src/stores/settingsStore";
@@ -55,22 +55,6 @@ export default function RootLayout() {
         />
 
         <Stack.Screen
-          name="modals/day-editor"
-          options={{
-            presentation: "modal",
-            title: "Edit day",
-          }}
-        />
-
-        <Stack.Screen
-          name="modals/break-editor"
-          options={{
-            presentation: "modal",
-            title: "Edit break",
-          }}
-        />
-
-        <Stack.Screen
           name="modals/delete-day"
           options={{
             presentation: "modal",
@@ -78,21 +62,6 @@ export default function RootLayout() {
           }}
         />
 
-        <Stack.Screen
-          name="modals/close-month"
-          options={{
-            presentation: "modal",
-            title: "Close month",
-          }}
-        />
-
-        <Stack.Screen
-          name="modals/vacation-request"
-          options={{
-            presentation: "modal",
-            title: "Request vacation",
-          }}
-        />
       </Stack>
 
       <StatusBar style="auto" />

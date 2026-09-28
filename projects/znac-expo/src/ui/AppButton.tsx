@@ -7,6 +7,7 @@ import {
   View,
   type GestureResponderEvent,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 
@@ -24,6 +25,8 @@ type AppButtonProps = {
   disabled?: boolean;
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
+  disabledStyle?: StyleProp<ViewStyle>;
+  labelStyle?: StyleProp<TextStyle>;
 };
 
 export function AppButton({
@@ -34,6 +37,8 @@ export function AppButton({
   disabled = false,
   loading = false,
   style,
+  disabledStyle,
+  labelStyle,
 }: AppButtonProps) {
   const isDisabled = disabled || loading;
 
@@ -45,7 +50,7 @@ export function AppButton({
       style={({ pressed }) => [
         styles.button,
         buttonVariantStyles[variant],
-        isDisabled && styles.disabled,
+        isDisabled && (disabledStyle ?? styles.disabled),
         pressed && !isDisabled && styles.pressed,
         style,
       ]}
@@ -55,7 +60,13 @@ export function AppButton({
       ) : (
         <View style={styles.content}>
           {icon}
-          <Text style={[styles.label, { color: buttonTextColors[variant] }]}>
+          <Text
+            style={[
+              styles.label,
+              { color: buttonTextColors[variant] },
+              labelStyle,
+            ]}
+          >
             {title}
           </Text>
         </View>

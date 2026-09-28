@@ -12,22 +12,36 @@ const theme = getMobileTheme("dark");
 
 type DayRowProps = {
   day: DayRecord;
+  isToday?: boolean;
   onPress: (date: string) => void;
 };
 
-export function DayRow({ day, onPress }: DayRowProps) {
+export function DayRow({ day, isToday = false, onPress }: DayRowProps) {
   const dayType = dayTypeInfo(day);
   const endText = day.endMinute === null ? expectedEndText(day) : null;
+  const regularDayFilled =
+    dayType.badgeKind === "normal" &&
+    day.startMinute !== null &&
+    day.endMinute !== null;
+  const regularDayPending = dayType.badgeKind === "normal" && !regularDayFilled;
 
   return (
     <Pressable onPress={() => onPress(day.workDate)}>
-      <Panel style={styles.card}>
+      <Panel style={[styles.card, isToday && styles.todayCard]}>
         <View style={styles.header}>
           <View>
             <Text style={styles.date}>{formatShortDate(day.workDate)}</Text>
             <Text style={styles.week}>{weekdayCalendarWeekText(day)}</Text>
           </View>
-          <StatusBadge label={dayType.label} kind={dayType.badgeKind} />
+          <StatusBadge
+            label={dayType.label}
+            kind={regularDayFilled ? "valid" : dayType.badgeKind}
+            style={[
+              styles.dayTypeBadge,
+              regularDayPending && styles.regularDayPendingBadge,
+            ]}
+            textStyle={styles.dayTypeBadgeText}
+          />
         </View>
 
         <View style={styles.metrics}>
@@ -74,6 +88,11 @@ const styles = StyleSheet.create({
   card: {
     gap: theme.spacing.md,
   },
+  todayCard: {
+    borderColor: theme.colors.primary,
+    borderWidth: 1,
+    backgroundColor: theme.colors.surfaceRaised,
+  },
   header: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -84,6 +103,17 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: 20,
     fontWeight: "800",
+  },
+  dayTypeBadge: {
+    width: "50%",
+    minHeight: 36,
+    alignItems: "center",
+  },
+  dayTypeBadgeText: {
+    fontSize: 13,
+  },
+  regularDayPendingBadge: {
+    backgroundColor: theme.colors.regularDayPending,
   },
   week: {
     marginTop: 2,

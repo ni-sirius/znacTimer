@@ -110,6 +110,23 @@ export const useSettingsStore = create<SettingsStoreState>((set) => ({
         error: null,
       });
     } catch (error) {
+      try {
+        const db = await getDatabase();
+        const repo = createRepository(db);
+        const settings = await repo.getAppSettings();
+        const schedules = await repo.listWorkSchedules();
+
+        set({
+          themeMode: settings.themeMode,
+          showExpectedEnd: settings.showExpectedEnd,
+          schedule: schedules[0] ?? null,
+          error: storeErrorMessage(error),
+        });
+        return;
+      } catch {
+        // Keep the original save error; the next screen load can retry refresh.
+      }
+
       set({
         error: storeErrorMessage(error),
       });
