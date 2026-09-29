@@ -1582,6 +1582,7 @@ export function deriveWorkdayState(
       workDate,
       startMinute: day.startMinute,
       pauseStartMinute: openBreak.startMinute,
+      canStop: true,
     };
   }
 

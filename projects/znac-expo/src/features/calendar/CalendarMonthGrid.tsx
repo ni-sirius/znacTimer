@@ -1,12 +1,6 @@
 import { StyleSheet, Text, View } from "react-native";
 
 import {
-  HOLIDAY_DAY,
-  SICK_DAY,
-  VACATION_DAY,
-  isNormalDay,
-} from "../../domain/constants";
-import {
   daysInMonth,
   formatIsoDate,
   isWeekendIso,
@@ -15,6 +9,7 @@ import {
 import type { DayRecord, IsoDate, MonthRecord } from "../../domain/models";
 import { getMobileTheme } from "../../theme";
 import { Panel } from "../../ui";
+import { regularDayBadgeKind } from "../day/dayVisualState";
 import {
   CalendarDayCell,
   type CalendarDayCellModel,
@@ -80,74 +75,20 @@ function buildCalendarCells(
       inSelectedMonth,
       isToday: isoDate === today,
       isMaterialized: Boolean(day),
-      visualType: classifyCalendarDay(isoDate, today, day),
+      visualType: classifyCalendarDay(isoDate, day),
     };
   });
 }
 
 function classifyCalendarDay(
   date: IsoDate,
-  today: IsoDate,
   day?: DayRecord,
 ): CalendarDayVisualType {
   if (!day) {
     return isWeekendIso(date) ? "weekend" : "normal";
   }
 
-  const special = String(day.specialDay ?? "").trim();
-  const specialLower = special.toLowerCase();
-
-  if (!isNormalDay(special)) {
-    if (specialLower === HOLIDAY_DAY.toLowerCase()) {
-      return "holiday";
-    }
-
-    if (specialLower === SICK_DAY.toLowerCase()) {
-      return "sick";
-    }
-
-    if (specialLower === VACATION_DAY.toLowerCase()) {
-      return "vacation";
-    }
-
-    return "sick";
-  }
-
-  if (date < today && hasMissingTimes(day)) {
-    return "missing";
-  }
-
-  if (isWeekendIso(day.workDate) || day.expectedWorkMinutes === 0) {
-    return "weekend";
-  }
-
-  return day.startMinute !== null && day.endMinute !== null ? "valid" : "normal";
-}
-
-function hasMissingTimes(day: DayRecord): boolean {
-  if (day.expectedWorkMinutes <= 0) {
-    return false;
-  }
-
-  if (day.startMinute === null && day.endMinute === null) {
-    return false;
-  }
-
-  if (day.startMinute === null || day.endMinute === null) {
-    return true;
-  }
-
-  if (day.endMinute <= day.startMinute) {
-    return true;
-  }
-
-  return day.breaks.some(
-    (item) =>
-      item.endMinute === null ||
-      item.endMinute <= item.startMinute ||
-      item.startMinute < day.startMinute! ||
-      item.endMinute > day.endMinute!,
-  );
+  return regularDayBadgeKind(day) as CalendarDayVisualType;
 }
 
 function mondayBasedWeekday(date: Date): number {

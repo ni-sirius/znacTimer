@@ -35,6 +35,9 @@ export type MobileTheme = {
     tabBar: string;
     tabBarBorder: string;
     regularDayPending: string;
+    sickDay: string;
+    vacationDay: string;
+    holidayDay: string;
     shadow: string;
   };
   row: {
@@ -92,6 +95,9 @@ export function getMobileTheme(mode: ThemeMode): MobileTheme {
       tabBar: mode === "dark" ? "#10121d" : color(source, "menu.surface"),
       tabBarBorder: mode === "dark" ? "#2f3347" : color(source, "menu.border"),
       regularDayPending: mode === "dark" ? "#2b2147" : color(source, "header.badge"),
+      sickDay: mode === "dark" ? "#5a341f" : color(source, "row.special_day"),
+      vacationDay: mode === "dark" ? "#7a5d16" : color(source, "row.special_day"),
+      holidayDay: mode === "dark" ? "#5b2942" : color(source, "row.missing_times"),
       shadow: toReactNativeColor(color(source, "table.shadow")),
     },
     row: {

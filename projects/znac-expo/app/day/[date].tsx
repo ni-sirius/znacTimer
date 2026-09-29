@@ -1,6 +1,6 @@
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo } from "react";
-import { StyleSheet, Text } from "react-native";
+import { Alert, StyleSheet, Text } from "react-native";
 
 import { deriveWorkdayState } from "../../src/db/repository";
 import { recalculateDayRecords } from "../../src/domain/calculator";
@@ -107,6 +107,10 @@ export default function DayDetailsScreen() {
             day={day}
             details={details}
             disabled={actionsDisabled}
+            interruptionsDisabled={actionsDisabled}
+            onEditInterruptions={() =>
+              openInterruptionsEditor(date, day)
+            }
             onUpdate={(changes, expectedRevision) =>
               updateDay(day.workDate, changes, expectedRevision)
             }
@@ -144,6 +148,21 @@ export default function DayDetailsScreen() {
       )}
     </Screen>
   );
+}
+
+function openInterruptionsEditor(workDate: IsoDate, day: DayRecord) {
+  if (day.startMinute === null) {
+    Alert.alert(
+      "Cannot add interruptions",
+      "Start the day before adding interruptions.",
+    );
+    return;
+  }
+
+  router.push({
+    pathname: "/modals/break-editor",
+    params: { date: workDate },
+  });
 }
 
 function handlePrimaryAction(

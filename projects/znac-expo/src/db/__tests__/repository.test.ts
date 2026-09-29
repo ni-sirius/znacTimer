@@ -110,6 +110,30 @@ describe("deriveWorkdayState", () => {
       workDate: "2026-07-07",
       startMinute: 540,
       pauseStartMinute: 720,
+      canStop: true,
+    });
+  });
+
+  it("does not derive paused from an open break when start time is unset", () => {
+    expect(
+      deriveWorkdayState(
+        dayRecord({
+          breaks: [
+            {
+              publicId: "break-1",
+              position: 0,
+              startMinute: 720,
+              endMinute: null,
+              revision: 1,
+            },
+          ],
+        }),
+        "open",
+        "2026-07-07",
+      ),
+    ).toEqual({
+      status: "idle",
+      workDate: "2026-07-07",
     });
   });
 

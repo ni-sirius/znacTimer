@@ -2,17 +2,18 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { getMobileTheme } from "../../theme";
 import { Panel } from "../../ui";
+import { dayVisualColors } from "../day/dayVisualState";
 import type { CalendarDayVisualType } from "./CalendarDayCell";
 
 const theme = getMobileTheme("dark");
 
 const ITEMS: { label: string; type: CalendarDayVisualType }[] = [
-  { label: "Regular day", type: "normal" },
+  { label: "Not filled regular day", type: "normal" },
+  { label: "Filled regular day", type: "valid" },
   { label: "Weekend", type: "weekend" },
   { label: "Sick", type: "sick" },
   { label: "Vacation", type: "vacation" },
   { label: "Holiday", type: "holiday" },
-  { label: "Missing", type: "missing" },
 ];
 
 export function DayTypeLegend() {
@@ -25,8 +26,8 @@ export function DayTypeLegend() {
               style={[
                 styles.swatch,
                 {
-                  backgroundColor: legendFill[item.type],
-                  borderColor: legendBorder[item.type],
+                  backgroundColor: dayVisualColors(item.type).fill,
+                  borderColor: dayVisualColors(item.type).border,
                 },
               ]}
             />
@@ -38,26 +39,6 @@ export function DayTypeLegend() {
   );
 }
 
-const legendFill: Record<CalendarDayVisualType, string> = {
-  normal: theme.colors.regularDayPending,
-  valid: theme.row.validDay,
-  weekend: theme.row.weekend,
-  holiday: theme.row.missingTimes,
-  sick: theme.row.specialDay,
-  vacation: theme.row.specialDay,
-  missing: theme.row.missingTimes,
-};
-
-const legendBorder: Record<CalendarDayVisualType, string> = {
-  normal: theme.colors.regularDayPending,
-  valid: theme.row.validDay,
-  weekend: theme.row.weekend,
-  holiday: theme.row.missingTimes,
-  sick: theme.row.specialDay,
-  vacation: theme.row.specialDay,
-  missing: theme.row.missingTimes,
-};
-
 const styles = StyleSheet.create({
   panel: {
     paddingVertical: theme.spacing.sm,
@@ -65,23 +46,24 @@ const styles = StyleSheet.create({
   legend: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: theme.spacing.sm,
+    columnGap: theme.spacing.md,
+    rowGap: theme.spacing.xs,
   },
   item: {
-    minHeight: 28,
+    minHeight: 34,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing.xs,
+    gap: theme.spacing.sm,
   },
   swatch: {
-    width: 12,
-    height: 12,
+    width: 16,
+    height: 16,
     borderRadius: theme.radius.pill,
     borderWidth: 2,
   },
   label: {
     color: theme.colors.textMuted,
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "800",
   },
 });

@@ -34,7 +34,9 @@ export function DayActionsPanel({
     (state.status === "idle" ||
       state.status === "paused");
   const canStop =
-    !disabled && (state.status === "working" || state.status === "paused");
+    !disabled &&
+    (state.status === "working" ||
+      (state.status === "paused" && state.canStop));
   const clearDisabled = disabled || !canClear;
 
   return (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ThemeMode } from "../../src/db/repository.types";
 import type { WorkSchedulePeriod } from "../../src/domain/models";
@@ -32,12 +32,10 @@ export default function SettingsScreen() {
   const month = useMonthStore((state) => state.month);
   const reloadMonth = useMonthStore((state) => state.reload);
 
-  const themeMode = useSettingsStore((state) => state.themeMode);
   const showExpectedEnd = useSettingsStore((state) => state.showExpectedEnd);
   const schedule = useSettingsStore((state) => state.schedule);
   const settingsError = useSettingsStore((state) => state.error);
   const loadSettings = useSettingsStore((state) => state.load);
-  const setThemeMode = useSettingsStore((state) => state.setThemeMode);
   const setShowExpectedEnd = useSettingsStore(
     (state) => state.setShowExpectedEnd,
   );
@@ -58,8 +56,6 @@ export default function SettingsScreen() {
 
   return (
     <Screen scroll>
-      <Text style={styles.title}>Settings</Text>
-
       <ScheduleSection
         key={`${activeSchedule.publicId}-${activeSchedule.revision}-${activeSchedule.effectiveFrom}`}
         activeSchedule={activeSchedule}
@@ -82,11 +78,12 @@ export default function SettingsScreen() {
 
       <SettingsSection title="Day types">
         <View style={styles.badges}>
-          <StatusBadge label="Normal day" kind="normal" />
+          <StatusBadge label="Not filled regular day" kind="normal" />
+          <StatusBadge label="Filled regular day" kind="valid" />
           <StatusBadge label="Weekend" kind="weekend" />
-          <StatusBadge label="Holiday" kind="holiday" />
           <StatusBadge label="Sick" kind="sick" />
           <StatusBadge label="Vacation" kind="vacation" />
+          <StatusBadge label="Holiday" kind="holiday" />
         </View>
       </SettingsSection>
 
@@ -102,13 +99,19 @@ export default function SettingsScreen() {
       <SettingsSection title="Application">
         <Text style={styles.label}>Theme</Text>
         <SegmentedControl
-          value={themeMode}
+          value="dark"
           options={[
             { label: "System", value: "system" },
             { label: "Light", value: "light" },
             { label: "Dark", value: "dark" },
           ]}
-          onChange={(value: ThemeMode) => setThemeMode(value)}
+          onChange={(value: ThemeMode) => {
+            if (value === "dark") {
+              return;
+            }
+
+            Alert.alert("Feature in progress", "Theme switching is not available yet.");
+          }}
         />
         <MetricRow label="Time format" value="24-hour" />
         <Text style={styles.label}>Expected finish</Text>
@@ -392,12 +395,6 @@ function minuteToSignedText(minutes: number): string {
 }
 
 const styles = StyleSheet.create({
-  title: {
-    color: theme.colors.text,
-    fontSize: 14,
-    fontWeight: "900",
-    textAlign: "center",
-  },
   section: {
     gap: theme.spacing.md,
   },

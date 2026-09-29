@@ -1,22 +1,13 @@
 import {
-  HOLIDAY_DAY,
-  SICK_DAY,
-  VACATION_DAY,
-  WEEKEND_DAY,
-  isNormalDay,
-} from "../../domain/constants";
-import {
   buildCalendarWeekText,
   calendarWeekTagIso,
-  isWeekendIso,
   parseIsoDate,
 } from "../../domain/calendar";
 import type { BreakRecord, DayRecord, IsoDate, MonthRecord } from "../../domain/models";
 import { expectedEndMinute, minuteToClockText, signedMinuteText } from "../../domain/time";
-import type { StatusBadgeKind } from "../../ui";
+export { dayTypeInfo, type DayTypeInfo } from "../day/dayVisualState";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const REGULAR_DAY_LABEL = "Regular day";
 const MONTHS = [
   "January",
   "February",
@@ -31,11 +22,6 @@ const MONTHS = [
   "November",
   "December",
 ];
-
-export type DayTypeInfo = {
-  label: string;
-  badgeKind: StatusBadgeKind;
-};
 
 export function formatShortDate(value: IsoDate): string {
   const parsed = parseIsoDate(value);
@@ -63,36 +49,6 @@ export function monthTitle(year: number, month: number): string {
 
 export function calendarWeekSummary(month: MonthRecord, today: IsoDate): string {
   return buildCalendarWeekText(month.year, month.month, today);
-}
-
-export function dayTypeInfo(day: DayRecord): DayTypeInfo {
-  const special = String(day.specialDay ?? "").trim();
-
-  if (!isNormalDay(special)) {
-    if (special.toLowerCase() === WEEKEND_DAY.toLowerCase()) {
-      return { label: WEEKEND_DAY, badgeKind: "weekend" };
-    }
-
-    if (special.toLowerCase() === HOLIDAY_DAY.toLowerCase()) {
-      return { label: HOLIDAY_DAY, badgeKind: "holiday" };
-    }
-
-    if (special.toLowerCase() === SICK_DAY.toLowerCase()) {
-      return { label: SICK_DAY, badgeKind: "sick" };
-    }
-
-    if (special.toLowerCase() === VACATION_DAY.toLowerCase()) {
-      return { label: VACATION_DAY, badgeKind: "vacation" };
-    }
-
-    return { label: special, badgeKind: "sick" };
-  }
-
-  if (day.expectedWorkMinutes === 0 || isWeekendIso(day.workDate)) {
-    return { label: WEEKEND_DAY, badgeKind: "weekend" };
-  }
-
-  return { label: REGULAR_DAY_LABEL, badgeKind: "normal" };
 }
 
 export function expectedEndText(day: DayRecord): string | null {

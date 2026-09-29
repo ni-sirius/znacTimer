@@ -17,6 +17,7 @@ export type WorkdayState =
       workDate: IsoDate;
       startMinute: number;
       pauseStartMinute: number;
+      canStop: boolean;
     }
   | {
       status: "complete";

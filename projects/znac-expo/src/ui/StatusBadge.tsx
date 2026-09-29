@@ -7,6 +7,8 @@ import {
   type ViewStyle,
 } from "react-native";
 
+import { dayVisualColors } from "../features/day/dayVisualState";
+
 import { getMobileTheme } from "../theme";
 
 const theme = getMobileTheme("dark");
@@ -33,7 +35,7 @@ export function StatusBadge({
   style,
   textStyle,
 }: StatusBadgeProps) {
-  const colors = statusColors[kind];
+  const colors = dayVisualColors(kind);
 
   return (
     <View style={[styles.badge, { backgroundColor: colors.fill }, style]}>
@@ -46,37 +48,6 @@ export function StatusBadge({
     </View>
   );
 }
-
-const statusColors: Record<StatusBadgeKind, { fill: string; text: string }> = {
-  normal: {
-    fill: theme.row.validDay,
-    text: theme.colors.text,
-  },
-  valid: {
-    fill: theme.row.validDay,
-    text: theme.colors.text,
-  },
-  weekend: {
-    fill: theme.row.weekend,
-    text: theme.colors.text,
-  },
-  holiday: {
-    fill: theme.row.missingTimes,
-    text: theme.colors.text,
-  },
-  sick: {
-    fill: theme.row.specialDay,
-    text: theme.colors.text,
-  },
-  vacation: {
-    fill: theme.row.specialDay,
-    text: theme.colors.text,
-  },
-  missing: {
-    fill: theme.row.missingTimes,
-    text: theme.colors.text,
-  },
-};
 
 const styles = StyleSheet.create({
   badge: {

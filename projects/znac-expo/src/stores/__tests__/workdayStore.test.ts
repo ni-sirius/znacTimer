@@ -205,6 +205,7 @@ describe("useWorkdayStore", () => {
       workDate: "2026-07-07",
       startMinute: 540,
       pauseStartMinute: 720,
+      canStop: true,
     });
   });
 });

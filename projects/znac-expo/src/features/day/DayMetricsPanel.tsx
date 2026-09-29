@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { DayChanges } from "../../db/repository.types";
 import type { DayRecord } from "../../domain/models";
@@ -20,6 +20,8 @@ type DayMetricsPanelProps = {
   day: DayRecord;
   details: DayDetailsViewModel;
   disabled: boolean;
+  interruptionsDisabled: boolean;
+  onEditInterruptions: () => void;
   onUpdate: (changes: DayChanges, expectedRevision: number) => Promise<void>;
 };
 
@@ -29,6 +31,8 @@ export function DayMetricsPanel({
   day,
   details,
   disabled,
+  interruptionsDisabled,
+  onEditInterruptions,
   onUpdate,
 }: DayMetricsPanelProps) {
   const [focusedField, setFocusedField] = useState<EditableField | null>(null);
@@ -75,23 +79,31 @@ export function DayMetricsPanel({
         }
         onFocus={() => setFocusedField("end")}
       />
-      <MetricRow
+      <EditableLinkRow
+        disabled={interruptionsDisabled}
         label="Interruptions"
-        style={styles.readonlyRow}
+        onPress={onEditInterruptions}
         value={details.interruptionsText}
       />
       <EditableMetricRow
-        key={`break-${day.revision}-${day.breakDurationMinutes ?? "unset"}`}
+        key={`break-${day.revision}-${details.totalBreakText}`}
         disabled={disabled}
         focused={focusedField === "breakDuration"}
-        initialValue={minuteToFormClock(day.breakDurationMinutes)}
+        initialValue={
+          day.breaks.length > 0
+            ? details.totalBreakText
+            : minuteToFormClock(day.breakDurationMinutes)
+        }
         label="Total break"
         onBlur={() => {
           setFocusedField(null);
         }}
         onCommit={(nextValue, setValue) =>
           commitClockChange({
-            currentValue: minuteToFormClock(day.breakDurationMinutes),
+            currentValue:
+              day.breaks.length > 0
+                ? details.totalBreakText
+                : minuteToFormClock(day.breakDurationMinutes),
             nextValue,
             setValue,
             update: (nextMinute) =>
@@ -122,6 +134,38 @@ export function DayMetricsPanel({
         style={styles.readonlyRow}
       />
     </Panel>
+  );
+}
+
+function EditableLinkRow({
+  disabled,
+  label,
+  onPress,
+  value,
+}: {
+  disabled: boolean;
+  label: string;
+  onPress: () => void;
+  value: string;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.interruptionsRow,
+        pressed && !disabled && styles.pressedRow,
+      ]}
+    >
+      <Text style={styles.editableLabel}>{label}</Text>
+      <Text
+        numberOfLines={3}
+        style={[styles.linkValue, disabled && styles.inputDisabled]}
+      >
+        {value}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -157,7 +201,9 @@ function EditableMetricRow({
           onBlur();
           void onCommit(value, setValue);
         }}
-        onChangeText={(text) => setValue(formatClockInputText(text))}
+        onChangeText={(text) =>
+          setValue(formatClockInputText(text, value))
+        }
         onFocus={onFocus}
         placeholder="--:--"
         placeholderTextColor={theme.colors.textSubtle}
@@ -210,6 +256,16 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surfaceMuted,
     paddingHorizontal: theme.spacing.sm,
   },
+  interruptionsRow: {
+    minHeight: 50,
+    gap: theme.spacing.xs,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    backgroundColor: theme.colors.surfaceMuted,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+  },
   editableRowFocused: {
     borderColor: theme.colors.primary,
   },
@@ -233,5 +289,14 @@ const styles = StyleSheet.create({
   },
   inputDisabled: {
     color: theme.colors.textMuted,
+  },
+  linkValue: {
+    color: theme.colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 18,
+  },
+  pressedRow: {
+    borderColor: theme.colors.primary,
   },
 });

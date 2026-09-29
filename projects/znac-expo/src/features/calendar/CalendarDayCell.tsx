@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { IsoDate } from "../../domain/models";
 import { getMobileTheme } from "../../theme";
+import { dayVisualColors } from "../day/dayVisualState";
 
 const theme = getMobileTheme("dark");
 
@@ -29,7 +30,7 @@ type CalendarDayCellProps = {
 };
 
 export function CalendarDayCell({ cell, onPress }: CalendarDayCellProps) {
-  const colors = visualColors[cell.visualType];
+  const colors = dayVisualColors(cell.visualType);
   const disabled = !cell.inSelectedMonth || !cell.isMaterialized;
 
   return (
@@ -67,47 +68,6 @@ export function CalendarDayCell({ cell, onPress }: CalendarDayCellProps) {
     </Pressable>
   );
 }
-
-const visualColors: Record<
-  CalendarDayVisualType,
-  { fill: string; border: string; text: string }
-> = {
-  normal: {
-    fill: theme.colors.regularDayPending,
-    border: theme.colors.regularDayPending,
-    text: theme.colors.text,
-  },
-  valid: {
-    fill: theme.row.validDay,
-    border: theme.row.validDay,
-    text: theme.colors.text,
-  },
-  weekend: {
-    fill: theme.row.weekend,
-    border: theme.row.weekend,
-    text: theme.colors.text,
-  },
-  holiday: {
-    fill: theme.row.missingTimes,
-    border: theme.row.missingTimes,
-    text: theme.colors.text,
-  },
-  sick: {
-    fill: theme.row.specialDay,
-    border: theme.row.specialDay,
-    text: theme.colors.text,
-  },
-  vacation: {
-    fill: theme.row.specialDay,
-    border: theme.row.specialDay,
-    text: theme.colors.text,
-  },
-  missing: {
-    fill: theme.row.missingTimes,
-    border: theme.row.missingTimes,
-    text: theme.colors.text,
-  },
-};
 
 const styles = StyleSheet.create({
   slot: {

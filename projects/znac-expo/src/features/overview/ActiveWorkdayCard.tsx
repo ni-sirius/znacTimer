@@ -27,7 +27,9 @@ export function ActiveWorkdayCard({
     state.status === "idle" ||
     state.status === "working" ||
     state.status === "paused";
-  const canStop = state.status === "working" || state.status === "paused";
+  const canStop =
+    state.status === "working" ||
+    (state.status === "paused" && state.canStop);
 
   return (
     <Panel style={styles.panel}>

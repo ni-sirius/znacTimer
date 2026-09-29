@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { DayRecord } from "../../domain/models";
-import { expectedEndText, formatShortDate, dayTypeInfo, weekdayCalendarWeekText } from "../overview/overviewFormat";
+import { dayTypeInfo, regularDayBadgeKind } from "./dayVisualState";
+import { expectedEndText, formatShortDate, weekdayCalendarWeekText } from "../overview/overviewFormat";
 import { minuteToClockText } from "../../domain/time";
 import { getMobileTheme } from "../../theme";
 import { Panel, StatusBadge } from "../../ui";
@@ -18,12 +19,9 @@ type DayRowProps = {
 
 export function DayRow({ day, isToday = false, onPress }: DayRowProps) {
   const dayType = dayTypeInfo(day);
+  const badgeKind = regularDayBadgeKind(day);
   const endText = day.endMinute === null ? expectedEndText(day) : null;
-  const regularDayFilled =
-    dayType.badgeKind === "normal" &&
-    day.startMinute !== null &&
-    day.endMinute !== null;
-  const regularDayPending = dayType.badgeKind === "normal" && !regularDayFilled;
+  const regularDayPending = badgeKind === "normal";
 
   return (
     <Pressable onPress={() => onPress(day.workDate)}>
@@ -35,7 +33,7 @@ export function DayRow({ day, isToday = false, onPress }: DayRowProps) {
           </View>
           <StatusBadge
             label={dayType.label}
-            kind={regularDayFilled ? "valid" : dayType.badgeKind}
+            kind={badgeKind}
             style={[
               styles.dayTypeBadge,
               regularDayPending && styles.regularDayPendingBadge,

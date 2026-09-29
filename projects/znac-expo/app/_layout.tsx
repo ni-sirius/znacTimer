@@ -1,12 +1,7 @@
-import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
-} from "expo-router/react-navigation";
+import { DarkTheme, ThemeProvider } from "expo-router/react-navigation";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
-import { useColorScheme } from "react-native";
 import "react-native-reanimated";
 
 import { initializeDatabase } from "../src/db";
@@ -18,7 +13,6 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
   const loadMonth = useMonthStore((state) => state.load);
   const loadSettings = useSettingsStore((state) => state.load);
   const [databaseReady, setDatabaseReady] = useState(false);
@@ -43,7 +37,7 @@ export default function RootLayout() {
   }
 
   return (
-    <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={DarkTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 
@@ -55,16 +49,23 @@ export default function RootLayout() {
         />
 
         <Stack.Screen
+          name="modals/break-editor"
+          options={{
+            presentation: "modal",
+            title: "Interruptions",
+          }}
+        />
+
+        <Stack.Screen
           name="modals/delete-day"
           options={{
             presentation: "modal",
             title: "Delete day",
           }}
         />
-
       </Stack>
 
-      <StatusBar style="auto" />
+      <StatusBar style="light" />
     </ThemeProvider>
   );
 }
