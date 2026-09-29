@@ -212,9 +212,19 @@ def _bundle_summary(bundle_path: Path) -> dict:
 
 
 def _validate_bundle(bundle_path: Path) -> None:
-    metadata_directories = tuple(bundle_path.rglob("znactime-*.dist-info"))
+    metadata_directories = tuple(
+        sorted(
+            {
+                path.resolve()
+                for path in bundle_path.rglob("znactime-*.dist-info")
+            }
+        )
+    )
     if len(metadata_directories) != 1:
-        raise BuildError("The bundle must contain exactly one znacTime metadata directory.")
+        raise BuildError(
+            "The bundle must contain exactly one znacTime metadata directory; "
+            f"found {len(metadata_directories)} physical directories."
+        )
     metadata_files = {
         path.relative_to(metadata_directories[0]).as_posix()
         for path in metadata_directories[0].rglob("*")

@@ -419,6 +419,23 @@ class PackagingBuildTest(unittest.TestCase):
             with self.assertRaisesRegex(packaging_build.BuildError, "unexpected editable"):
                 packaging_build._validate_bundle(bundle)
 
+    def test_bundle_deduplicates_macos_metadata_crosslink_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            metadata = bundle / "Contents" / "Resources" / "znactime-0.6.0.dist-info"
+            metadata.mkdir(parents=True)
+            (metadata / "METADATA").write_text("Version: 0.6.0\n", encoding="utf-8")
+            alias = metadata / ".." / metadata.name
+            original_rglob = Path.rglob
+
+            def macos_crosslinks(path, pattern):
+                if path == bundle and pattern == "znactime-*.dist-info":
+                    return iter((metadata, alias))
+                return original_rglob(path, pattern)
+
+            with patch.object(Path, "rglob", new=macos_crosslinks):
+                packaging_build._validate_bundle(bundle)
+
 
 if __name__ == "__main__":
     unittest.main()
