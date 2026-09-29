@@ -14,6 +14,7 @@ if not VERSION:
 PACKAGING_DIR = Path(SPECPATH).resolve()
 PROJECT_ROOT = PACKAGING_DIR.parent
 APP_ICON = PROJECT_ROOT / "znactime" / "ui" / "qt" / "assets" / "app_icon.png"
+WINDOWS_ICON = PACKAGING_DIR / "windows" / "znactime.ico"
 THEMES_DIR = PROJECT_ROOT / "znactime" / "ui" / "qt" / "themes"
 
 metadata_source, metadata_destination = copy_metadata("znactime")[0]
@@ -61,7 +62,7 @@ executable = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon=str(APP_ICON),
+    icon=str(WINDOWS_ICON if TARGET == "windows-x64" else APP_ICON),
     disable_windowed_traceback=False,
     argv_emulation=False,
     **exe_options,

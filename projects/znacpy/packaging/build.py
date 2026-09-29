@@ -5,9 +5,12 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
+import struct
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import metadata
@@ -18,9 +21,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGING_DIR = PROJECT_ROOT / "packaging"
 SPEC_PATH = PACKAGING_DIR / "znactime.spec"
 DIST_ROOT = PROJECT_ROOT / "dist" / "bundle"
+RELEASE_ROOT = PROJECT_ROOT / "dist" / "release"
 WORK_ROOT = PROJECT_ROOT / "build" / "pyinstaller"
 SUPPORTED_TARGETS = ("windows-x64", "macos-arm64")
 MANIFEST_SCHEMA_VERSION = 1
+INNO_SETUP_VERSION = "7.0.2"
+WINDOWS_PACKAGING_DIR = PACKAGING_DIR / "windows"
+WINDOWS_ICON_PATH = WINDOWS_PACKAGING_DIR / "znactime.ico"
+INNO_SETUP_SCRIPT_PATH = WINDOWS_PACKAGING_DIR / "znactime.iss"
+LICENSE_PATH = PROJECT_ROOT.parents[1] / "LICENSE"
 
 
 class BuildError(RuntimeError):
@@ -51,6 +60,22 @@ class BuildContext:
     @property
     def manifest_path(self) -> Path:
         return self.dist_path / "build-manifest.json"
+
+    @property
+    def installer_name(self) -> str:
+        return f"znacTime-{self.version}-{self.target}-Setup.exe"
+
+    @property
+    def installer_path(self) -> Path:
+        return RELEASE_ROOT / self.installer_name
+
+    @property
+    def release_manifest_path(self) -> Path:
+        return RELEASE_ROOT / f"znacTime-{self.version}-{self.target}-manifest.json"
+
+    @property
+    def installer_checksum_path(self) -> Path:
+        return RELEASE_ROOT / f"{self.installer_name}.sha256"
 
 
 def detect_host(system: str | None = None, machine: str | None = None) -> str:
@@ -103,6 +128,16 @@ def validate_inputs() -> None:
     if missing:
         names = ", ".join(path.relative_to(PROJECT_ROOT).as_posix() for path in missing)
         raise BuildError(f"Missing packaging inputs: {names}.")
+
+
+def validate_installer_inputs(context: BuildContext) -> None:
+    if context.target != "windows-x64":
+        raise BuildError("Installer creation is supported only for windows-x64.")
+    required = (WINDOWS_ICON_PATH, INNO_SETUP_SCRIPT_PATH, LICENSE_PATH)
+    missing = tuple(path for path in required if not path.is_file())
+    if missing:
+        names = ", ".join(path.name for path in missing)
+        raise BuildError(f"Missing Windows installer inputs: {names}.")
 
 
 def _sha256(path: Path) -> str:
@@ -170,6 +205,11 @@ def _command_output(command: list[str]) -> str:
 
 
 def _uv_version() -> str:
+    configuration = tomllib.loads(
+        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    required = configuration["tool"]["uv"]["required-version"]
+    required_version = required.removeprefix("==")
     executable = shutil.which("uv")
     if executable is None:
         local_name = "uv.exe" if os.name == "nt" else "uv"
@@ -180,8 +220,11 @@ def _uv_version() -> str:
         except OSError:
             executable = None
     if executable is None:
-        raise BuildError("The uv executable could not be located for the build manifest.")
-    return _command_output([executable, "--version"])
+        return f"uv {required_version} (required; not invoked)"
+    detected = _command_output([executable, "--version"])
+    if detected != f"uv {required_version}":
+        raise BuildError(f"{required} is required by pyproject.toml; found {detected}.")
+    return detected
 
 
 def _source_state() -> dict:
@@ -237,6 +280,153 @@ def _pyinstaller_command(context: BuildContext) -> list[str]:
     ]
 
 
+def _inno_setup_candidates(environment: dict[str, str] | None = None) -> tuple[Path, ...]:
+    environment = os.environ if environment is None else environment
+    candidates = []
+    configured = environment.get("INNO_SETUP_COMPILER")
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend(
+        (
+            PROJECT_ROOT
+            / ".native-tools"
+            / "inno-setup"
+            / INNO_SETUP_VERSION
+            / "ISCC.exe",
+            Path("C:/Program Files/Inno Setup 7/ISCC.exe"),
+            Path("C:/Program Files (x86)/Inno Setup 7/ISCC.exe"),
+        )
+    )
+    discovered = shutil.which("ISCC.exe")
+    if discovered:
+        candidates.append(Path(discovered))
+    return tuple(candidates)
+
+
+def find_inno_setup_compiler(
+    environment: dict[str, str] | None = None,
+) -> Path:
+    for candidate in _inno_setup_candidates(environment):
+        if candidate.is_file():
+            return candidate.resolve()
+    raise BuildError(
+        f"Inno Setup {INNO_SETUP_VERSION} compiler was not found. "
+        "Install it locally or set INNO_SETUP_COMPILER."
+    )
+
+
+def _inno_setup_banner(path: Path) -> str:
+    try:
+        completed = subprocess.run(
+            [str(path), "/?"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise BuildError(f"Could not run the Inno Setup compiler at {path}.") from error
+    return "\n".join((completed.stdout, completed.stderr)).strip()
+
+
+def _inno_setup_version(path: Path) -> str:
+    banner = _inno_setup_banner(path)
+    major_match = re.search(r"Inno Setup (\d+) Command-Line Compiler", banner)
+    history_path = path.parent / "whatsnew.htm"
+    try:
+        history = history_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise BuildError(
+            f"Could not inspect the Inno Setup version beside {path}."
+        ) from error
+    version_match = re.search(r'<span class="ver">(\d+\.\d+\.\d+)\s*</span>', history)
+    if major_match is None or version_match is None:
+        raise BuildError(f"Could not identify the Inno Setup version at {path}.")
+    version = version_match.group(1)
+    if major_match.group(1) != version.split(".", 1)[0]:
+        raise BuildError(f"Inno Setup compiler files are inconsistent at {path}.")
+    return version
+
+
+def validate_inno_setup_compiler(path: Path) -> str:
+    version = _inno_setup_version(path)
+    if version != INNO_SETUP_VERSION:
+        raise BuildError(
+            f"Inno Setup {INNO_SETUP_VERSION} is required; found {version} at {path}."
+        )
+    return version
+
+
+def _inno_setup_command(context: BuildContext, compiler: Path) -> list[str]:
+    return [
+        str(compiler),
+        "/Qp",
+        f"/DAppVersion={context.version}",
+        f"/DBundleDir={context.bundle_path}",
+        f"/DOutputDir={RELEASE_ROOT}",
+        f"/DOutputBaseFilename={context.installer_path.stem}",
+        f"/DAppIcon={WINDOWS_ICON_PATH}",
+        f"/DLicenseFile={LICENSE_PATH}",
+        str(INNO_SETUP_SCRIPT_PATH),
+    ]
+
+
+def _validate_windows_x64_executable(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size < 64:
+        raise BuildError(f"Windows artifact is missing or empty: {path.name}.")
+    with path.open("rb") as stream:
+        if stream.read(2) != b"MZ":
+            raise BuildError(f"Windows artifact has no DOS header: {path.name}.")
+        stream.seek(0x3C)
+        pe_offset_data = stream.read(4)
+        if len(pe_offset_data) != 4:
+            raise BuildError(f"Windows artifact has an invalid DOS header: {path.name}.")
+        stream.seek(struct.unpack("<I", pe_offset_data)[0])
+        if stream.read(4) != b"PE\0\0":
+            raise BuildError(f"Windows artifact has no PE header: {path.name}.")
+        machine_data = stream.read(2)
+    if len(machine_data) != 2 or struct.unpack("<H", machine_data)[0] != 0x8664:
+        raise BuildError(f"Windows artifact is not x64: {path.name}.")
+
+
+def build_windows_installer(
+    context: BuildContext,
+    compiler: Path,
+    compiler_version: str,
+) -> Path:
+    validate_installer_inputs(context)
+    RELEASE_ROOT.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            _inno_setup_command(context, compiler),
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise BuildError("Windows Setup creation failed.") from error
+
+    _validate_windows_x64_executable(context.installer_path)
+    installer_digest = _sha256(context.installer_path)
+    context.installer_checksum_path.write_text(
+        f"{installer_digest}  {context.installer_name}\n",
+        encoding="ascii",
+    )
+    try:
+        release_manifest = json.loads(context.manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BuildError("Could not read the bundle manifest for the release.") from error
+    release_manifest["installer"] = {
+        "path": context.installer_path.relative_to(PROJECT_ROOT).as_posix(),
+        "sha256": installer_digest,
+        "size_bytes": context.installer_path.stat().st_size,
+    }
+    release_manifest["tools"]["inno_setup"] = compiler_version
+    context.release_manifest_path.write_text(
+        json.dumps(release_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return context.installer_path
+
+
 def build(context: BuildContext) -> Path:
     validate_inputs()
     provenance = _provenance(context)
@@ -271,6 +461,11 @@ def main(argv=None) -> int:
         default="auto",
     )
     parser.add_argument("--mode", choices=("unsigned",), default="unsigned")
+    parser.add_argument(
+        "--installer",
+        action="store_true",
+        help="Also create an unsigned Windows Setup artifact in dist/release.",
+    )
     arguments = parser.parse_args(argv)
     try:
         target, host_system, host_machine = resolve_target(arguments.target)
@@ -281,11 +476,30 @@ def main(argv=None) -> int:
             version=metadata.version("znactime"),
             mode=arguments.mode,
         )
+        compiler = None
+        compiler_version = None
+        if arguments.installer:
+            validate_installer_inputs(context)
+            compiler = find_inno_setup_compiler()
+            compiler_version = validate_inno_setup_compiler(compiler)
         bundle_path = build(context)
+        installer_path = None
+        if arguments.installer:
+            installer_path = build_windows_installer(
+                context,
+                compiler,
+                compiler_version,
+            )
     except BuildError as error:
         parser.exit(1, f"error: {error}\n")
     print(f"Bundle: {bundle_path.relative_to(PROJECT_ROOT).as_posix()}")
     print(f"Manifest: {context.manifest_path.relative_to(PROJECT_ROOT).as_posix()}")
+    if installer_path is not None:
+        print(f"Setup: {installer_path.relative_to(PROJECT_ROOT).as_posix()}")
+        print(
+            "Release manifest: "
+            f"{context.release_manifest_path.relative_to(PROJECT_ROOT).as_posix()}"
+        )
     return 0
 
 

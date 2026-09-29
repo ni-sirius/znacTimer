@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,15 @@ _spec.loader.exec_module(packaging_build)
 
 
 class PackagingBuildTest(unittest.TestCase):
+    @staticmethod
+    def _write_windows_x64_executable(path):
+        content = bytearray(0x88)
+        content[0:2] = b"MZ"
+        content[0x3C:0x40] = struct.pack("<I", 0x80)
+        content[0x80:0x84] = b"PE\0\0"
+        content[0x84:0x86] = struct.pack("<H", 0x8664)
+        path.write_bytes(content)
+
     def test_supported_hosts_resolve_to_native_targets(self):
         self.assertEqual(
             packaging_build.detect_host("Windows", "AMD64"),
@@ -54,10 +64,147 @@ class PackagingBuildTest(unittest.TestCase):
         self.assertIn(str(context.work_path), command)
         self.assertIn(str(context.dist_path), command)
 
-    def test_shared_spec_embeds_the_existing_icon_in_native_bundles(self):
+    def test_uv_manifest_version_falls_back_to_central_project_pin(self):
+        with (
+            patch.object(packaging_build.shutil, "which", return_value=None),
+            patch.object(packaging_build.Path, "is_file", return_value=False),
+        ):
+            version = packaging_build._uv_version()
+
+        self.assertEqual(version, "uv 0.12.19 (required; not invoked)")
+
+    def test_shared_spec_uses_native_windows_icon_and_existing_macos_icon(self):
         spec_text = packaging_build.SPEC_PATH.read_text(encoding="utf-8")
 
-        self.assertEqual(spec_text.count("icon=str(APP_ICON)"), 2)
+        self.assertIn(
+            'icon=str(WINDOWS_ICON if TARGET == "windows-x64" else APP_ICON)',
+            spec_text,
+        )
+        self.assertEqual(spec_text.count("icon=str(APP_ICON)"), 1)
+        icon = packaging_build.WINDOWS_ICON_PATH.read_bytes()
+        self.assertEqual(icon[:4], b"\0\0\1\0")
+        self.assertEqual(struct.unpack("<H", icon[4:6])[0], 7)
+
+    def test_inno_setup_definition_is_per_user_and_installs_the_full_bundle(self):
+        definition = packaging_build.INNO_SETUP_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("AppId={{B9DA5C75-3877-4A4B-BF19-2C8EF8D04EA1}", definition)
+        self.assertIn("PrivilegesRequired=lowest", definition)
+        self.assertIn(r"DefaultDirName={localappdata}\Programs\znacTime", definition)
+        self.assertIn("SetupArchitecture=x64", definition)
+        self.assertIn('Source: "{#BundleDir}\\*"', definition)
+        self.assertIn(r'Name: "{autoprograms}\znacTime"', definition)
+        self.assertNotIn("[UninstallDelete]", definition)
+
+    def test_installer_command_uses_pinned_tool_and_release_paths(self):
+        context = packaging_build.BuildContext(
+            "windows-x64",
+            "Windows",
+            "AMD64",
+            "0.6.0",
+        )
+        compiler = Path("C:/tools/ISCC.exe")
+
+        command = packaging_build._inno_setup_command(context, compiler)
+
+        self.assertEqual(packaging_build.INNO_SETUP_VERSION, "7.0.2")
+        self.assertEqual(command[0], str(compiler))
+        self.assertIn("/DAppVersion=0.6.0", command)
+        self.assertIn(f"/DBundleDir={context.bundle_path}", command)
+        self.assertIn(
+            "/DOutputBaseFilename=znacTime-0.6.0-windows-x64-Setup",
+            command,
+        )
+
+    def test_inno_setup_version_is_read_from_banner_and_latest_history_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            compiler = Path(temporary) / "ISCC.exe"
+            compiler.write_bytes(b"compiler")
+            (compiler.parent / "whatsnew.htm").write_text(
+                '<span class="ver">7.0.2 </span><span class="date">date</span>\n'
+                '<span class="ver">7.0.1 </span>',
+                encoding="utf-8",
+            )
+            with patch.object(
+                packaging_build,
+                "_inno_setup_banner",
+                return_value="Inno Setup 7 Command-Line Compiler",
+            ):
+                version = packaging_build.validate_inno_setup_compiler(compiler)
+
+        self.assertEqual(version, "7.0.2")
+
+    def test_windows_artifact_verification_requires_x64_pe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact = Path(temporary) / "setup.exe"
+            self._write_windows_x64_executable(artifact)
+
+            packaging_build._validate_windows_x64_executable(artifact)
+
+            content = bytearray(artifact.read_bytes())
+            content[0x84:0x86] = struct.pack("<H", 0x014C)
+            artifact.write_bytes(content)
+            with self.assertRaisesRegex(packaging_build.BuildError, "not x64"):
+                packaging_build._validate_windows_x64_executable(artifact)
+
+    def test_installer_creates_checksum_and_release_manifest(self):
+        original_dist_root = packaging_build.DIST_ROOT
+        original_release_root = packaging_build.RELEASE_ROOT
+        try:
+            with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temporary:
+                root = Path(temporary)
+                packaging_build.DIST_ROOT = root / "bundle"
+                packaging_build.RELEASE_ROOT = root / "release"
+                context = packaging_build.BuildContext(
+                    "windows-x64",
+                    "Windows",
+                    "AMD64",
+                    "0.6.0",
+                )
+                context.dist_path.mkdir(parents=True)
+                context.manifest_path.write_text(
+                    json.dumps({"tools": {"python": "3.12.14"}}),
+                    encoding="utf-8",
+                )
+
+                def create_installer(*args, **kwargs):
+                    self._write_windows_x64_executable(context.installer_path)
+
+                with patch.object(
+                    packaging_build.subprocess,
+                    "run",
+                    side_effect=create_installer,
+                ):
+                    result = packaging_build.build_windows_installer(
+                        context,
+                        Path("C:/tools/ISCC.exe"),
+                        "7.0.2",
+                    )
+
+                release_manifest = json.loads(
+                    context.release_manifest_path.read_text(encoding="utf-8")
+                )
+                self.assertEqual(result, context.installer_path)
+                self.assertEqual(release_manifest["tools"]["inno_setup"], "7.0.2")
+                self.assertEqual(
+                    release_manifest["installer"]["path"],
+                    context.installer_path.relative_to(PROJECT_ROOT).as_posix(),
+                )
+                self.assertIn(context.installer_name, context.installer_checksum_path.read_text())
+        finally:
+            packaging_build.DIST_ROOT = original_dist_root
+            packaging_build.RELEASE_ROOT = original_release_root
+
+    def test_installer_rejects_non_windows_target(self):
+        context = packaging_build.BuildContext(
+            "macos-arm64",
+            "Darwin",
+            "arm64",
+            "0.6.0",
+        )
+
+        with self.assertRaisesRegex(packaging_build.BuildError, "only for windows-x64"):
+            packaging_build.validate_installer_inputs(context)
 
     def test_manifest_records_reproducibility_inputs_without_absolute_paths(self):
         original_dist_root = packaging_build.DIST_ROOT

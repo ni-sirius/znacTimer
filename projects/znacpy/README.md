@@ -106,9 +106,13 @@ On Windows, the local convenience scripts use the project `.venv` directly:
 scripts\run_dev.cmd
 scripts\build_windows.cmd
 scripts\build_windows.cmd --run
+scripts\build_windows.cmd --release
+scripts\build_windows.cmd --release --run
 ```
 
-The last command starts the completed bundle after a successful build.
+`--release` additionally creates the unsigned Windows Setup, checksum, and release
+manifest in `dist/release`. `--run` starts the completed application bundle after a
+successful build; it never runs the installer.
 
 ## Data and privacy
 
