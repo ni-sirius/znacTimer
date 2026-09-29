@@ -1,16 +1,13 @@
 name: znacpy CI
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/znacpy-ci.yml"
-      - ".gitattributes"
-      - "projects/znacpy/**"
-      - "scripts/check_release_tree.py"
   push:
+    branches:
+      - main
     paths:
       - ".github/workflows/znacpy-ci.yml"
       - ".gitattributes"
+      - "LICENSE"
       - "projects/znacpy/**"
       - "scripts/check_release_tree.py"
   workflow_dispatch:

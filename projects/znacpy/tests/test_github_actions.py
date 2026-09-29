@@ -13,11 +13,17 @@ class GitHubActionsTest(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    def test_workflow_is_root_scoped_and_path_filtered_to_znacpy(self):
+    def test_workflow_is_root_scoped_and_runs_on_main_push_or_manually(self):
         self.assertTrue(WORKFLOW_PATH.is_file())
         self.assertFalse((PROJECT_ROOT / ".github").exists())
-        self.assertIn('"projects/znacpy/**"', self.workflow)
-        self.assertIn('".github/workflows/znacpy-ci.yml"', self.workflow)
+        self.assertIn(
+            "on:\n  push:\n    branches:\n      - main\n    paths:",
+            self.workflow,
+        )
+        self.assertIn('      - "projects/znacpy/**"', self.workflow)
+        self.assertIn('      - ".github/workflows/znacpy-ci.yml"', self.workflow)
+        self.assertIn("  workflow_dispatch:", self.workflow)
+        self.assertNotIn("pull_request:", self.workflow)
         self.assertIn("permissions:\n  contents: read", self.workflow)
         self.assertNotIn("pull_request_target:", self.workflow)
 
