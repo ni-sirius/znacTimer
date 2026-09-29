@@ -128,6 +128,10 @@ Without `--release`, the build script creates only the `.app`. `--release` addit
 creates the ad-hoc-signed DMG, checksum, and release manifest. `--run` opens the `.app`,
 never the DMG.
 
+The root monorepo workflow `.github/workflows/znacpy-ci.yml` runs the same local build
+entry points on Windows x64 and macOS arm64. Pull requests, pushes affecting `znacpy`,
+and manual dispatches produce verified unsigned candidate artifacts with smoke reports.
+
 ## Data and privacy
 
 znacTime does not require an account or cloud service. Its authoritative

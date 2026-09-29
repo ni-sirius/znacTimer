@@ -18,6 +18,7 @@ class ReleaseTreeTest(unittest.TestCase):
     def test_allowlist_accepts_reviewed_source_types(self):
         allowed = (
             ".gitattributes",
+            ".github/workflows/znacpy-ci.yml",
             ".vscode/settings.json",
             "README.md",
             "projects/znacpy/.python-version",
@@ -26,6 +27,7 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/.vscode/settings.json",
             "projects/znacpy/packaging/build.py",
             "projects/znacpy/packaging/launcher.py",
+            "projects/znacpy/packaging/native-tools.json",
             "projects/znacpy/packaging/znactime.spec",
             "projects/znacpy/packaging/windows/znactime.ico",
             "projects/znacpy/packaging/windows/znactime.iss",
@@ -67,6 +69,8 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/packaging/windows/unreviewed.json",
             "projects/znacpy/packaging/macos/compiler.bin",
             "projects/znacpy/packaging/macos/unreviewed.json",
+            ".github/workflows/unreviewed.ps1",
+            ".github/private-token.txt",
             "projects/znacpy/scripts/unreviewed.bat",
             "projects/znacpy/scripts/unreviewed.zsh",
             "projects/otherplatform/unreviewed.js",

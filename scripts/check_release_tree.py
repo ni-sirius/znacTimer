@@ -18,6 +18,7 @@ EXACT_FILES = frozenset(
         "projects/znacpy/.python-version",
         "projects/znacpy/README.md",
         "projects/znacpy/THIRD_PARTY_NOTICES.md",
+        "projects/znacpy/packaging/native-tools.json",
         "projects/znacpy/pyproject.toml",
         "projects/znacpy/uv.lock",
         "projects/znacpy/tracker.py",
@@ -43,6 +44,8 @@ def is_release_source(relative_path: str) -> bool:
         return True
     if normalized.startswith("docs/"):
         return path.suffix == ".md"
+    if normalized.startswith(".github/workflows/"):
+        return path.suffix in {".yml", ".yaml"}
     if normalized.startswith(("scripts/", "projects/znacpy/tests/")):
         return path.suffix == ".py"
     if normalized.startswith("projects/znacpy/scripts/"):

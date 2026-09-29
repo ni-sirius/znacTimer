@@ -1,0 +1,7 @@
+{
+  "inno_setup": {
+    "version": "7.0.2",
+    "url": "https://github.com/jrsoftware/issrc/releases/download/is-7_0_2/innosetup-7.0.2-x64.exe",
+    "sha256": "5ad54ca3def786f8f4212552e54cc6d8d61329e2d24a1cfee0571d42c2684ff1"
+  }
+}

@@ -239,6 +239,14 @@ class PackagingBuildTest(unittest.TestCase):
         command = packaging_build._inno_setup_command(context, compiler)
 
         self.assertEqual(packaging_build.INNO_SETUP_VERSION, "7.0.2")
+        self.assertEqual(
+            packaging_build.INNO_SETUP_VERSION,
+            packaging_build.NATIVE_TOOLS["inno_setup"]["version"],
+        )
+        self.assertRegex(
+            packaging_build.NATIVE_TOOLS["inno_setup"]["sha256"],
+            r"^[0-9a-f]{64}$",
+        )
         self.assertEqual(command[0], str(compiler))
         self.assertIn("/DAppVersion=0.6.0", command)
         self.assertIn(f"/DBundleDir={context.bundle_path}", command)

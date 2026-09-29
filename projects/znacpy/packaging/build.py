@@ -20,12 +20,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGING_DIR = PROJECT_ROOT / "packaging"
 SPEC_PATH = PACKAGING_DIR / "znactime.spec"
+NATIVE_TOOLS_PATH = PACKAGING_DIR / "native-tools.json"
 DIST_ROOT = PROJECT_ROOT / "dist" / "bundle"
 RELEASE_ROOT = PROJECT_ROOT / "dist" / "release"
 WORK_ROOT = PROJECT_ROOT / "build" / "pyinstaller"
 SUPPORTED_TARGETS = ("windows-x64", "macos-arm64")
 MANIFEST_SCHEMA_VERSION = 1
-INNO_SETUP_VERSION = "7.0.2"
+NATIVE_TOOLS = json.loads(NATIVE_TOOLS_PATH.read_text(encoding="utf-8"))
+INNO_SETUP_VERSION = NATIVE_TOOLS["inno_setup"]["version"]
 WINDOWS_PACKAGING_DIR = PACKAGING_DIR / "windows"
 WINDOWS_ICON_PATH = WINDOWS_PACKAGING_DIR / "znactime.ico"
 INNO_SETUP_SCRIPT_PATH = WINDOWS_PACKAGING_DIR / "znactime.iss"
@@ -136,6 +138,7 @@ def resolve_target(
 def _required_inputs() -> tuple[Path, ...]:
     return (
         PACKAGING_DIR / "launcher.py",
+        NATIVE_TOOLS_PATH,
         SPEC_PATH,
         PROJECT_ROOT / "pyproject.toml",
         PROJECT_ROOT / "uv.lock",
@@ -268,6 +271,7 @@ def _source_state() -> dict:
 
 def _provenance(context: BuildContext) -> dict:
     inputs = {
+        "native_tools_sha256": _sha256(NATIVE_TOOLS_PATH),
         "spec_sha256": _sha256(SPEC_PATH),
         "uv_lock_sha256": _sha256(PROJECT_ROOT / "uv.lock"),
     }
