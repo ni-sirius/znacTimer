@@ -6,7 +6,7 @@ set "PROJECT_PYTHON=%PROJECT_ROOT%\.venv\Scripts\python.exe"
 set "BUNDLE_DIR=%PROJECT_ROOT%\dist\bundle\windows-x64\znacTime"
 set "BUNDLE_EXE=%BUNDLE_DIR%\znacTime.exe"
 set "RUN_AFTER_BUILD="
-set "INSTALLER_ARGUMENT="
+set "PACKAGE_ARGUMENT="
 
 :parse_arguments
 if "%~1"=="" goto build
@@ -20,7 +20,7 @@ shift
 goto parse_arguments
 
 :enable_release
-set "INSTALLER_ARGUMENT=--installer"
+set "PACKAGE_ARGUMENT=--package"
 shift
 goto parse_arguments
 
@@ -32,7 +32,7 @@ if not exist "%PROJECT_PYTHON%" (
 )
 
 pushd "%PROJECT_ROOT%"
-"%PROJECT_PYTHON%" packaging\build.py --target windows-x64 --mode unsigned %INSTALLER_ARGUMENT%
+"%PROJECT_PYTHON%" packaging\build.py --target windows-x64 --mode unsigned %PACKAGE_ARGUMENT%
 set "BUILD_EXIT_CODE=%ERRORLEVEL%"
 popd
 

@@ -15,6 +15,8 @@ PACKAGING_DIR = Path(SPECPATH).resolve()
 PROJECT_ROOT = PACKAGING_DIR.parent
 APP_ICON = PROJECT_ROOT / "znactime" / "ui" / "qt" / "assets" / "app_icon.png"
 WINDOWS_ICON = PACKAGING_DIR / "windows" / "znactime.ico"
+MACOS_ICON = PACKAGING_DIR / "macos" / "znactime.icns"
+MACOS_ENTITLEMENTS = PACKAGING_DIR / "macos" / "entitlements.plist"
 THEMES_DIR = PROJECT_ROOT / "znactime" / "ui" / "qt" / "themes"
 
 metadata_source, metadata_destination = copy_metadata("znactime")[0]
@@ -50,6 +52,7 @@ pyz = PYZ(analysis.pure)
 exe_options = {}
 if TARGET == "macos-arm64":
     exe_options["target_arch"] = "arm64"
+    exe_options["entitlements_file"] = str(MACOS_ENTITLEMENTS)
 
 executable = EXE(
     pyz,
@@ -62,7 +65,7 @@ executable = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon=str(WINDOWS_ICON if TARGET == "windows-x64" else APP_ICON),
+    icon=str(WINDOWS_ICON if TARGET == "windows-x64" else MACOS_ICON),
     disable_windowed_traceback=False,
     argv_emulation=False,
     **exe_options,
@@ -80,7 +83,7 @@ if TARGET == "macos-arm64":
     application = BUNDLE(
         bundle,
         name="znacTime.app",
-        icon=str(APP_ICON),
+        icon=str(MACOS_ICON),
         bundle_identifier="org.znac.znactime",
         version=VERSION,
         info_plist={

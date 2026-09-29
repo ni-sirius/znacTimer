@@ -17,6 +17,7 @@ tracked_files = _release_tree.tracked_files
 class ReleaseTreeTest(unittest.TestCase):
     def test_allowlist_accepts_reviewed_source_types(self):
         allowed = (
+            ".gitattributes",
             ".vscode/settings.json",
             "README.md",
             "projects/znacpy/.python-version",
@@ -28,8 +29,12 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/packaging/znactime.spec",
             "projects/znacpy/packaging/windows/znactime.ico",
             "projects/znacpy/packaging/windows/znactime.iss",
+            "projects/znacpy/packaging/macos/znactime.icns",
+            "projects/znacpy/packaging/macos/entitlements.plist",
             "projects/znacpy/scripts/build_windows.cmd",
+            "projects/znacpy/scripts/build_macos.sh",
             "projects/znacpy/scripts/run_dev.cmd",
+            "projects/znacpy/scripts/run_dev.sh",
             "projects/znacpy/tests/test_release_tree.py",
             "projects/znacpy/scripts/verify_legacy_import.py",
             "projects/otherplatform/README.md",
@@ -60,7 +65,10 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/packaging/unreviewed.ico",
             "projects/znacpy/packaging/windows/compiler.exe",
             "projects/znacpy/packaging/windows/unreviewed.json",
+            "projects/znacpy/packaging/macos/compiler.bin",
+            "projects/znacpy/packaging/macos/unreviewed.json",
             "projects/znacpy/scripts/unreviewed.bat",
+            "projects/znacpy/scripts/unreviewed.zsh",
             "projects/otherplatform/unreviewed.js",
             "contracts/fixtures/personal-records.csv",
             "requirements.txt",

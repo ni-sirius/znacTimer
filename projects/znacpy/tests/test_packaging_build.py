@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import plistlib
 import struct
 import sys
 import tempfile
@@ -73,17 +74,147 @@ class PackagingBuildTest(unittest.TestCase):
 
         self.assertEqual(version, "uv 0.12.19 (required; not invoked)")
 
-    def test_shared_spec_uses_native_windows_icon_and_existing_macos_icon(self):
+    def test_shared_spec_uses_native_icons_and_macos_entitlements(self):
         spec_text = packaging_build.SPEC_PATH.read_text(encoding="utf-8")
 
         self.assertIn(
-            'icon=str(WINDOWS_ICON if TARGET == "windows-x64" else APP_ICON)',
+            'icon=str(WINDOWS_ICON if TARGET == "windows-x64" else MACOS_ICON)',
             spec_text,
         )
-        self.assertEqual(spec_text.count("icon=str(APP_ICON)"), 1)
+        self.assertIn('exe_options["entitlements_file"] = str(MACOS_ENTITLEMENTS)', spec_text)
+        self.assertIn("icon=str(MACOS_ICON)", spec_text)
         icon = packaging_build.WINDOWS_ICON_PATH.read_bytes()
         self.assertEqual(icon[:4], b"\0\0\1\0")
         self.assertEqual(struct.unpack("<H", icon[4:6])[0], 7)
+        macos_icon = packaging_build.MACOS_ICON_PATH.read_bytes()
+        self.assertEqual(macos_icon[:4], b"icns")
+        entitlements = plistlib.loads(
+            packaging_build.MACOS_ENTITLEMENTS_PATH.read_bytes()
+        )
+        self.assertEqual(entitlements, {})
+
+    def test_macos_commands_verify_app_signature_and_create_compressed_dmg(self):
+        context = packaging_build.BuildContext(
+            "macos-arm64",
+            "Darwin",
+            "arm64",
+            "0.6.0",
+        )
+        tools = packaging_build.MacOSTools(
+            Path("/usr/bin/codesign"),
+            Path("/usr/bin/hdiutil"),
+            Path("/usr/bin/xcodebuild"),
+            "Xcode 18.0",
+        )
+
+        verify = packaging_build._codesign_verify_command(context, tools)
+        create = packaging_build._hdiutil_create_command(context, tools)
+
+        self.assertEqual(verify[1:5], ["--verify", "--deep", "--strict", "--verbose=2"])
+        self.assertEqual(create[1:4], ["create", "-volname", "znacTime"])
+        self.assertIn("-srcfolder", create)
+        self.assertIn("UDZO", create)
+        self.assertEqual(Path(create[-1]), context.disk_image_path)
+
+    def test_macos_dmg_creates_checksum_and_release_manifest(self):
+        original_dist_root = packaging_build.DIST_ROOT
+        original_release_root = packaging_build.RELEASE_ROOT
+        try:
+            with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temporary:
+                root = Path(temporary)
+                packaging_build.DIST_ROOT = root / "bundle"
+                packaging_build.RELEASE_ROOT = root / "release"
+                context = packaging_build.BuildContext(
+                    "macos-arm64",
+                    "Darwin",
+                    "arm64",
+                    "0.6.0",
+                )
+                executable = context.bundle_path / "Contents" / "MacOS" / "znacTime"
+                executable.parent.mkdir(parents=True)
+                executable.write_bytes(b"Mach-O")
+                context.manifest_path.write_text(
+                    json.dumps({"tools": {"python": "3.12.14"}}),
+                    encoding="utf-8",
+                )
+                tools = packaging_build.MacOSTools(
+                    Path("/usr/bin/codesign"),
+                    Path("/usr/bin/hdiutil"),
+                    Path("/usr/bin/xcodebuild"),
+                    "Xcode 18.0\nBuild version 18A1",
+                )
+
+                def create_disk_image(command, **kwargs):
+                    if len(command) > 1 and command[1] == "create":
+                        content = bytearray(1024)
+                        content[-512:-508] = b"koly"
+                        context.disk_image_path.write_bytes(content)
+
+                with patch.object(
+                    packaging_build.subprocess,
+                    "run",
+                    side_effect=create_disk_image,
+                ) as run:
+                    result = packaging_build.build_macos_dmg(context, tools)
+
+                release_manifest = json.loads(
+                    context.release_manifest_path.read_text(encoding="utf-8")
+                )
+                self.assertEqual(result, context.disk_image_path)
+                self.assertEqual(run.call_count, 3)
+                self.assertEqual(
+                    release_manifest["disk_image"]["path"],
+                    context.disk_image_path.relative_to(PROJECT_ROOT).as_posix(),
+                )
+                self.assertEqual(release_manifest["signature"]["application"], "ad-hoc")
+                self.assertEqual(release_manifest["tools"]["xcode"], tools.xcode_version)
+                self.assertIn(
+                    context.disk_image_name,
+                    context.disk_image_checksum_path.read_text(),
+                )
+        finally:
+            packaging_build.DIST_ROOT = original_dist_root
+            packaging_build.RELEASE_ROOT = original_release_root
+
+    def test_dmg_verification_requires_udif_trailer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact = Path(temporary) / "znacTime.dmg"
+            content = bytearray(512)
+            content[0:4] = b"koly"
+            artifact.write_bytes(content)
+
+            packaging_build._validate_dmg(artifact)
+
+            artifact.write_bytes(bytes(512))
+            with self.assertRaisesRegex(packaging_build.BuildError, "UDIF trailer"):
+                packaging_build._validate_dmg(artifact)
+
+    def test_macos_package_rejects_non_macos_target(self):
+        context = packaging_build.BuildContext(
+            "windows-x64",
+            "Windows",
+            "AMD64",
+            "0.6.0",
+        )
+
+        with self.assertRaisesRegex(packaging_build.BuildError, "only for macos-arm64"):
+            packaging_build.validate_macos_package_inputs(context)
+
+    def test_macos_scripts_are_thin_local_entry_points(self):
+        run_script = (PROJECT_ROOT / "scripts" / "run_dev.sh").read_text(
+            encoding="utf-8"
+        )
+        build_script = (PROJECT_ROOT / "scripts" / "build_macos.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertTrue(run_script.startswith("#!/usr/bin/env bash\n"))
+        self.assertIn('"$PROJECT_PYTHON" -m znactime "$@"', run_script)
+        self.assertIn('"$(uname -s)" != "Darwin"', build_script)
+        self.assertIn('"$(uname -m)" != "arm64"', build_script)
+        self.assertIn("PACKAGE_ARGUMENTS=(--package)", build_script)
+        self.assertIn("--target macos-arm64", build_script)
+        self.assertIn('open "$APP_BUNDLE"', build_script)
 
     def test_inno_setup_definition_is_per_user_and_installs_the_full_bundle(self):
         definition = packaging_build.INNO_SETUP_SCRIPT_PATH.read_text(encoding="utf-8")

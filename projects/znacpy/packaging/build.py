@@ -29,6 +29,9 @@ INNO_SETUP_VERSION = "7.0.2"
 WINDOWS_PACKAGING_DIR = PACKAGING_DIR / "windows"
 WINDOWS_ICON_PATH = WINDOWS_PACKAGING_DIR / "znactime.ico"
 INNO_SETUP_SCRIPT_PATH = WINDOWS_PACKAGING_DIR / "znactime.iss"
+MACOS_PACKAGING_DIR = PACKAGING_DIR / "macos"
+MACOS_ICON_PATH = MACOS_PACKAGING_DIR / "znactime.icns"
+MACOS_ENTITLEMENTS_PATH = MACOS_PACKAGING_DIR / "entitlements.plist"
 LICENSE_PATH = PROJECT_ROOT.parents[1] / "LICENSE"
 
 
@@ -76,6 +79,26 @@ class BuildContext:
     @property
     def installer_checksum_path(self) -> Path:
         return RELEASE_ROOT / f"{self.installer_name}.sha256"
+
+    @property
+    def disk_image_name(self) -> str:
+        return f"znacTime-{self.version}-{self.target}.dmg"
+
+    @property
+    def disk_image_path(self) -> Path:
+        return RELEASE_ROOT / self.disk_image_name
+
+    @property
+    def disk_image_checksum_path(self) -> Path:
+        return RELEASE_ROOT / f"{self.disk_image_name}.sha256"
+
+
+@dataclass(frozen=True)
+class MacOSTools:
+    codesign: Path
+    hdiutil: Path
+    xcodebuild: Path
+    xcode_version: str
 
 
 def detect_host(system: str | None = None, machine: str | None = None) -> str:
@@ -138,6 +161,16 @@ def validate_installer_inputs(context: BuildContext) -> None:
     if missing:
         names = ", ".join(path.name for path in missing)
         raise BuildError(f"Missing Windows installer inputs: {names}.")
+
+
+def validate_macos_package_inputs(context: BuildContext) -> None:
+    if context.target != "macos-arm64":
+        raise BuildError("DMG creation is supported only for macos-arm64.")
+    required = (MACOS_ICON_PATH, MACOS_ENTITLEMENTS_PATH)
+    missing = tuple(path for path in required if not path.is_file())
+    if missing:
+        names = ", ".join(path.name for path in missing)
+        raise BuildError(f"Missing macOS package inputs: {names}.")
 
 
 def _sha256(path: Path) -> str:
@@ -234,6 +267,15 @@ def _source_state() -> dict:
 
 
 def _provenance(context: BuildContext) -> dict:
+    inputs = {
+        "spec_sha256": _sha256(SPEC_PATH),
+        "uv_lock_sha256": _sha256(PROJECT_ROOT / "uv.lock"),
+    }
+    if context.target == "windows-x64":
+        inputs["icon_sha256"] = _sha256(WINDOWS_ICON_PATH)
+    if context.target == "macos-arm64":
+        inputs["entitlements_sha256"] = _sha256(MACOS_ENTITLEMENTS_PATH)
+        inputs["icon_sha256"] = _sha256(MACOS_ICON_PATH)
     return {
         "application": {"name": "znactime", "version": context.version},
         "build": {
@@ -245,10 +287,7 @@ def _provenance(context: BuildContext) -> dict:
             "machine": context.host_machine,
             "system": context.host_system,
         },
-        "inputs": {
-            "spec_sha256": _sha256(SPEC_PATH),
-            "uv_lock_sha256": _sha256(PROJECT_ROOT / "uv.lock"),
-        },
+        "inputs": inputs,
         "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
         "source": _source_state(),
         "tools": {
@@ -427,6 +466,106 @@ def build_windows_installer(
     return context.installer_path
 
 
+def _native_tool(name: str) -> Path:
+    executable = shutil.which(name)
+    if executable is None:
+        raise BuildError(f"Required macOS tool was not found: {name}.")
+    return Path(executable).resolve()
+
+
+def find_macos_tools() -> MacOSTools:
+    codesign = _native_tool("codesign")
+    hdiutil = _native_tool("hdiutil")
+    xcodebuild = _native_tool("xcodebuild")
+    xcode_version = _command_output([str(xcodebuild), "-version"])
+    return MacOSTools(codesign, hdiutil, xcodebuild, xcode_version)
+
+
+def _codesign_verify_command(context: BuildContext, tools: MacOSTools) -> list[str]:
+    return [
+        str(tools.codesign),
+        "--verify",
+        "--deep",
+        "--strict",
+        "--verbose=2",
+        str(context.bundle_path),
+    ]
+
+
+def _hdiutil_create_command(context: BuildContext, tools: MacOSTools) -> list[str]:
+    return [
+        str(tools.hdiutil),
+        "create",
+        "-volname",
+        "znacTime",
+        "-srcfolder",
+        str(context.bundle_path),
+        "-ov",
+        "-format",
+        "UDZO",
+        str(context.disk_image_path),
+    ]
+
+
+def _validate_dmg(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size < 512:
+        raise BuildError(f"macOS disk image is missing or empty: {path.name}.")
+    with path.open("rb") as stream:
+        stream.seek(-512, os.SEEK_END)
+        signature = stream.read(4)
+    if signature != b"koly":
+        raise BuildError(f"macOS disk image has no UDIF trailer: {path.name}.")
+
+
+def build_macos_dmg(context: BuildContext, tools: MacOSTools) -> Path:
+    validate_macos_package_inputs(context)
+    executable = context.bundle_path / "Contents" / "MacOS" / "znacTime"
+    if not executable.is_file():
+        raise BuildError("The macOS application bundle is incomplete.")
+    RELEASE_ROOT.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            _codesign_verify_command(context, tools),
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+        subprocess.run(
+            _hdiutil_create_command(context, tools),
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+        subprocess.run(
+            [str(tools.hdiutil), "verify", str(context.disk_image_path)],
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise BuildError("macOS ad-hoc signature or DMG creation failed.") from error
+
+    _validate_dmg(context.disk_image_path)
+    disk_image_digest = _sha256(context.disk_image_path)
+    context.disk_image_checksum_path.write_text(
+        f"{disk_image_digest}  {context.disk_image_name}\n",
+        encoding="ascii",
+    )
+    try:
+        release_manifest = json.loads(context.manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BuildError("Could not read the bundle manifest for the release.") from error
+    release_manifest["disk_image"] = {
+        "path": context.disk_image_path.relative_to(PROJECT_ROOT).as_posix(),
+        "sha256": disk_image_digest,
+        "size_bytes": context.disk_image_path.stat().st_size,
+    }
+    release_manifest["signature"] = {"application": "ad-hoc"}
+    release_manifest["tools"]["xcode"] = tools.xcode_version
+    context.release_manifest_path.write_text(
+        json.dumps(release_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return context.disk_image_path
+
+
 def build(context: BuildContext) -> Path:
     validate_inputs()
     provenance = _provenance(context)
@@ -435,6 +574,8 @@ def build(context: BuildContext) -> Path:
     environment = os.environ.copy()
     environment["ZNACTIME_BUILD_TARGET"] = context.target
     environment["ZNACTIME_BUILD_VERSION"] = context.version
+    if context.target == "macos-arm64":
+        environment["PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR"] = "1"
     try:
         subprocess.run(
             _pyinstaller_command(context),
@@ -462,9 +603,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--mode", choices=("unsigned",), default="unsigned")
     parser.add_argument(
+        "--package",
         "--installer",
+        dest="native_package",
         action="store_true",
-        help="Also create an unsigned Windows Setup artifact in dist/release.",
+        help="Also create the target's unsigned native package in dist/release.",
     )
     arguments = parser.parse_args(argv)
     try:
@@ -476,26 +619,28 @@ def main(argv=None) -> int:
             version=metadata.version("znactime"),
             mode=arguments.mode,
         )
-        compiler = None
-        compiler_version = None
-        if arguments.installer:
-            validate_installer_inputs(context)
-            compiler = find_inno_setup_compiler()
-            compiler_version = validate_inno_setup_compiler(compiler)
+        native_tools = None
+        if arguments.native_package:
+            if context.target == "windows-x64":
+                validate_installer_inputs(context)
+                compiler = find_inno_setup_compiler()
+                compiler_version = validate_inno_setup_compiler(compiler)
+                native_tools = (compiler, compiler_version)
+            else:
+                validate_macos_package_inputs(context)
+                native_tools = find_macos_tools()
         bundle_path = build(context)
-        installer_path = None
-        if arguments.installer:
-            installer_path = build_windows_installer(
-                context,
-                compiler,
-                compiler_version,
-            )
+        package_path = None
+        if arguments.native_package and context.target == "windows-x64":
+            package_path = build_windows_installer(context, *native_tools)
+        if arguments.native_package and context.target == "macos-arm64":
+            package_path = build_macos_dmg(context, native_tools)
     except BuildError as error:
         parser.exit(1, f"error: {error}\n")
     print(f"Bundle: {bundle_path.relative_to(PROJECT_ROOT).as_posix()}")
     print(f"Manifest: {context.manifest_path.relative_to(PROJECT_ROOT).as_posix()}")
-    if installer_path is not None:
-        print(f"Setup: {installer_path.relative_to(PROJECT_ROOT).as_posix()}")
+    if package_path is not None:
+        print(f"Package: {package_path.relative_to(PROJECT_ROOT).as_posix()}")
         print(
             "Release manifest: "
             f"{context.release_manifest_path.relative_to(PROJECT_ROOT).as_posix()}"

@@ -114,6 +114,20 @@ scripts\build_windows.cmd --release --run
 manifest in `dist/release`. `--run` starts the completed application bundle after a
 successful build; it never runs the installer.
 
+On macOS Apple silicon, use the matching local scripts:
+
+```bash
+./scripts/run_dev.sh
+./scripts/build_macos.sh
+./scripts/build_macos.sh --run
+./scripts/build_macos.sh --release
+./scripts/build_macos.sh --release --run
+```
+
+Without `--release`, the build script creates only the `.app`. `--release` additionally
+creates the ad-hoc-signed DMG, checksum, and release manifest. `--run` opens the `.app`,
+never the DMG.
+
 ## Data and privacy
 
 znacTime does not require an account or cloud service. Its authoritative

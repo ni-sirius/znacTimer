@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 EXACT_FILES = frozenset(
     {
         ".gitignore",
+        ".gitattributes",
         ".vscode/settings.json",
         "LICENSE",
         "README.md",
@@ -45,10 +46,12 @@ def is_release_source(relative_path: str) -> bool:
     if normalized.startswith(("scripts/", "projects/znacpy/tests/")):
         return path.suffix == ".py"
     if normalized.startswith("projects/znacpy/scripts/"):
-        return path.suffix in {".py", ".cmd"}
+        return path.suffix in {".py", ".cmd", ".sh"}
     if normalized.startswith("projects/znacpy/packaging/"):
         if normalized.startswith("projects/znacpy/packaging/windows/"):
             return path.suffix in {".ico", ".iss"}
+        if normalized.startswith("projects/znacpy/packaging/macos/"):
+            return path.suffix in {".icns", ".plist"}
         return path.suffix in {".py", ".spec"}
     if normalized.startswith("projects/znacpy/znactime/"):
         return path.suffix in {".py", ".json"}
