@@ -74,6 +74,25 @@ class PackagingBuildTest(unittest.TestCase):
 
         self.assertEqual(version, "uv 0.12.19 (required; not invoked)")
 
+    def test_uv_version_accepts_build_metadata_for_the_pinned_version(self):
+        detected = "uv 0.12.19 (bea138450 2026-09-24 x86_64-pc-windows-msvc)"
+        with (
+            patch.object(packaging_build.shutil, "which", return_value="uv"),
+            patch.object(packaging_build, "_command_output", return_value=detected),
+        ):
+            version = packaging_build._uv_version()
+
+        self.assertEqual(version, detected)
+
+    def test_uv_version_rejects_a_different_semantic_version(self):
+        detected = "uv 0.12.20 (different build)"
+        with (
+            patch.object(packaging_build.shutil, "which", return_value="uv"),
+            patch.object(packaging_build, "_command_output", return_value=detected),
+        ):
+            with self.assertRaisesRegex(packaging_build.BuildError, "==0.12.19"):
+                packaging_build._uv_version()
+
     def test_shared_spec_uses_native_icons_and_macos_entitlements(self):
         spec_text = packaging_build.SPEC_PATH.read_text(encoding="utf-8")
 

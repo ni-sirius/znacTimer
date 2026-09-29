@@ -13,17 +13,20 @@ class GitHubActionsTest(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    def test_workflow_is_root_scoped_and_runs_on_main_push_or_manually(self):
+    def test_workflow_runs_for_main_prs_main_pushes_or_manual_dispatch(self):
         self.assertTrue(WORKFLOW_PATH.is_file())
         self.assertFalse((PROJECT_ROOT / ".github").exists())
         self.assertIn(
-            "on:\n  push:\n    branches:\n      - main\n    paths:",
+            "on:\n  pull_request:\n    branches:\n      - main\n    paths:",
             self.workflow,
         )
-        self.assertIn('      - "projects/znacpy/**"', self.workflow)
-        self.assertIn('      - ".github/workflows/znacpy-ci.yml"', self.workflow)
+        self.assertIn("\n  push:\n    branches:\n      - main\n    paths:", self.workflow)
+        self.assertEqual(self.workflow.count('      - "projects/znacpy/**"'), 2)
+        self.assertEqual(
+            self.workflow.count('      - ".github/workflows/znacpy-ci.yml"'),
+            2,
+        )
         self.assertIn("  workflow_dispatch:", self.workflow)
-        self.assertNotIn("pull_request:", self.workflow)
         self.assertIn("permissions:\n  contents: read", self.workflow)
         self.assertNotIn("pull_request_target:", self.workflow)
 
@@ -58,6 +61,14 @@ class GitHubActionsTest(unittest.TestCase):
         self.assertIn("macos-arm64.dmg.sha256", self.workflow)
         self.assertEqual(self.workflow.count("if-no-files-found: error"), 2)
         self.assertEqual(self.workflow.count("retention-days: 14"), 2)
+        self.assertIn(
+            "if: github.event_name != 'pull_request' && matrix.target == 'windows-x64'",
+            self.workflow,
+        )
+        self.assertIn(
+            "if: github.event_name != 'pull_request' && matrix.target == 'macos-arm64'",
+            self.workflow,
+        )
 
 
 if __name__ == "__main__":

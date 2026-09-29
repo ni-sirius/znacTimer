@@ -258,7 +258,10 @@ def _uv_version() -> str:
     if executable is None:
         return f"uv {required_version} (required; not invoked)"
     detected = _command_output([executable, "--version"])
-    if detected != f"uv {required_version}":
+    version_match = re.match(r"^uv\s+(\d+\.\d+\.\d+)(?:\s|$)", detected)
+    if version_match is None:
+        raise BuildError(f"Could not identify the uv version from: {detected}.")
+    if version_match.group(1) != required_version:
         raise BuildError(f"{required} is required by pyproject.toml; found {detected}.")
     return detected
 
