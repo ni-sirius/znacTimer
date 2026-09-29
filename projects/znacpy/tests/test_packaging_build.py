@@ -121,17 +121,20 @@ class PackagingBuildTest(unittest.TestCase):
         )
         tools = packaging_build.MacOSTools(
             Path("/usr/bin/codesign"),
+            Path("/usr/bin/ditto"),
             Path("/usr/bin/hdiutil"),
             Path("/usr/bin/xcodebuild"),
             "Xcode 18.0",
         )
+        source_path = Path("/tmp/znactime-dmg")
 
         verify = packaging_build._codesign_verify_command(context, tools)
-        create = packaging_build._hdiutil_create_command(context, tools)
+        create = packaging_build._hdiutil_create_command(context, tools, source_path)
 
         self.assertEqual(verify[1:5], ["--verify", "--deep", "--strict", "--verbose=2"])
         self.assertEqual(create[1:4], ["create", "-volname", "znacTime"])
         self.assertIn("-srcfolder", create)
+        self.assertIn(str(source_path), create)
         self.assertIn("UDZO", create)
         self.assertEqual(Path(create[-1]), context.disk_image_path)
 
@@ -158,6 +161,7 @@ class PackagingBuildTest(unittest.TestCase):
                 )
                 tools = packaging_build.MacOSTools(
                     Path("/usr/bin/codesign"),
+                    Path("/usr/bin/ditto"),
                     Path("/usr/bin/hdiutil"),
                     Path("/usr/bin/xcodebuild"),
                     "Xcode 18.0\nBuild version 18A1",
@@ -179,8 +183,15 @@ class PackagingBuildTest(unittest.TestCase):
                 release_manifest = json.loads(
                     context.release_manifest_path.read_text(encoding="utf-8")
                 )
+                commands = [call.args[0] for call in run.call_args_list]
+                staged_bundle = Path(commands[0][-1])
                 self.assertEqual(result, context.disk_image_path)
-                self.assertEqual(run.call_count, 3)
+                self.assertEqual(run.call_count, 4)
+                self.assertEqual(commands[0][0], str(tools.ditto))
+                self.assertEqual(staged_bundle.name, context.bundle_path.name)
+                self.assertEqual(Path(commands[1][-1]), staged_bundle)
+                source_index = commands[2].index("-srcfolder") + 1
+                self.assertEqual(Path(commands[2][source_index]), staged_bundle.parent)
                 self.assertEqual(
                     release_manifest["disk_image"]["path"],
                     context.disk_image_path.relative_to(PROJECT_ROOT).as_posix(),
@@ -194,6 +205,45 @@ class PackagingBuildTest(unittest.TestCase):
         finally:
             packaging_build.DIST_ROOT = original_dist_root
             packaging_build.RELEASE_ROOT = original_release_root
+
+    def test_macos_dmg_creation_retries_transient_hdiutil_failure(self):
+        context = packaging_build.BuildContext(
+            "macos-arm64",
+            "Darwin",
+            "arm64",
+            "0.6.0",
+        )
+        tools = packaging_build.MacOSTools(
+            Path("/usr/bin/codesign"),
+            Path("/usr/bin/ditto"),
+            Path("/usr/bin/hdiutil"),
+            Path("/usr/bin/xcodebuild"),
+            "Xcode 18.0",
+        )
+        calls = 0
+
+        def create_disk_image(command, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise packaging_build.subprocess.CalledProcessError(1, command)
+
+        with (
+            patch.object(
+                packaging_build.subprocess,
+                "run",
+                side_effect=create_disk_image,
+            ),
+            patch.object(packaging_build.time, "sleep") as sleep,
+        ):
+            packaging_build._create_dmg_with_retries(
+                context,
+                tools,
+                Path("/tmp/znactime-dmg"),
+            )
+
+        self.assertEqual(calls, 2)
+        sleep.assert_called_once_with(2)
 
     def test_dmg_verification_requires_udif_trailer(self):
         with tempfile.TemporaryDirectory() as temporary:
