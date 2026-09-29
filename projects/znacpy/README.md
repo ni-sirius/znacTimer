@@ -100,6 +100,16 @@ You can also launch the application with:
 uv run python tracker.py
 ```
 
+On Windows, the local convenience scripts use the project `.venv` directly:
+
+```cmd
+scripts\run_dev.cmd
+scripts\build_windows.cmd
+scripts\build_windows.cmd --run
+```
+
+The last command starts the completed bundle after a successful build.
+
 ## Data and privacy
 
 znacTime does not require an account or cloud service. Its authoritative

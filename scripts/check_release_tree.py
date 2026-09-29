@@ -42,8 +42,12 @@ def is_release_source(relative_path: str) -> bool:
         return True
     if normalized.startswith("docs/"):
         return path.suffix == ".md"
-    if normalized.startswith(("scripts/", "projects/znacpy/scripts/", "projects/znacpy/tests/")):
+    if normalized.startswith(("scripts/", "projects/znacpy/tests/")):
         return path.suffix == ".py"
+    if normalized.startswith("projects/znacpy/scripts/"):
+        return path.suffix in {".py", ".cmd"}
+    if normalized.startswith("projects/znacpy/packaging/"):
+        return path.suffix in {".py", ".spec"}
     if normalized.startswith("projects/znacpy/znactime/"):
         return path.suffix in {".py", ".json"}
     return False
