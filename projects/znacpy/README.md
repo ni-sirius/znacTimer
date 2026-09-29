@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.0-6941c6">
+  <img alt="Version" src="https://img.shields.io/github/v/release/ni-sirius/znacTimer?display_name=tag&sort=semver">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white">
   <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6-41cd52?logo=qt&logoColor=white">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-146c43"></a>
@@ -74,8 +74,9 @@ header displays **Closed**, and the month remains available for review.
 
 ### Requirements
 
-- CPython 3.12
-- 64-bit Windows (the reviewed dependency lock targets `win_amd64` wheels)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- CPython 3.12 (installed automatically by uv when needed)
+- 64-bit Windows or macOS on Apple silicon
 
 ### Install and run
 
@@ -83,26 +84,54 @@ header displays **Closed**, and the month remains available for review.
 git clone https://github.com/ni-sirius/znacTimer.git
 cd znacTimer/projects/znacpy
 
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m znactime
+uv sync --locked
+uv run znactime
 ```
 
-If `.venv` already exists and works, skip its creation. These commands do not
-require activating the environment or changing PowerShell's execution policy.
-
-`requirements.txt` is the production lock: it pins direct and transitive packages,
-accepts binary wheels only, and verifies their SHA-256 hashes. Development and test
-environments use `requirements-dev.txt`; it currently adds no packages beyond the
-production lock. Dependency upgrades must update `requirements.in`, review the complete
-resolution, and regenerate the hashes together. Release builds must install from
-`requirements.txt`, not directly from `requirements.in`.
+uv manages `.venv` and the exact interpreter selected by `.python-version`; activation is
+not required. `pyproject.toml` is the only hand-edited source of Python dependencies. The
+committed `uv.lock` fixes the complete Windows x64 and macOS arm64 resolution, including
+hashes. Dependency updates must change the project metadata and regenerate the lock
+together.
 
 You can also launch the application with:
 
 ```powershell
-.\.venv\Scripts\python.exe tracker.py
+uv run python tracker.py
 ```
+
+On Windows, the local convenience scripts use the project `.venv` directly:
+
+```cmd
+scripts\run_dev.cmd
+scripts\build_windows.cmd
+scripts\build_windows.cmd --run
+scripts\build_windows.cmd --release
+scripts\build_windows.cmd --release --run
+```
+
+`--release` additionally creates the unsigned Windows Setup, checksum, and release
+manifest in `dist/release`. `--run` starts the completed application bundle after a
+successful build; it never runs the installer.
+
+On macOS Apple silicon, use the matching local scripts:
+
+```bash
+./scripts/run_dev.sh
+./scripts/build_macos.sh
+./scripts/build_macos.sh --run
+./scripts/build_macos.sh --release
+./scripts/build_macos.sh --release --run
+```
+
+Without `--release`, the build script creates only the `.app`. `--release` additionally
+creates the ad-hoc-signed DMG, checksum, and release manifest. `--run` opens the `.app`,
+never the DMG.
+
+The root monorepo workflow `.github/workflows/znacpy-ci.yml` runs the same local build
+entry points on Windows x64 and macOS arm64. It runs after relevant `znacpy` changes are
+pushed to `main`, or through a manual GitHub Actions dispatch, and produces verified
+unsigned candidate artifacts with smoke reports.
 
 ## Data and privacy
 

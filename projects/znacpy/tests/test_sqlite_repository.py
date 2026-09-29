@@ -1282,9 +1282,10 @@ class SQLiteRepositoryTest(unittest.TestCase):
             with self.assertRaisesRegex(StorageError, "Recovery backup:") as raised:
                 SQLiteRepository(legacy_path)
 
-        self.assertEqual(
-            raised.exception.recovery_backup_path,
-            next((legacy_path.parent / "recovery").glob("*/v3-chain.db")),
+        self.assertTrue(
+            raised.exception.recovery_backup_path.samefile(
+                next((legacy_path.parent / "recovery").glob("*/v3-chain.db"))
+            )
         )
         self.assertTrue(raised.exception.migration_signature)
 

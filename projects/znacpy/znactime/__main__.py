@@ -47,7 +47,13 @@ def application_settings():
     return QSettings(APP_NAME, APP_NAME)
 
 
-def main(*, database=None, settings=None):
+def main(argv=None, *, database=None, settings=None):
+    runtime_arguments = sys.argv[1:] if argv is None else list(argv)
+    if "--smoke-test" in runtime_arguments:
+        from znactime.smoke import cli_main
+
+        return cli_main(runtime_arguments)
+
     _set_windows_app_user_model_id()
     app = QApplication(sys.argv)
     app.setOrganizationName(ORGANIZATION_NAME)

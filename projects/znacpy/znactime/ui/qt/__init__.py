@@ -136,7 +136,7 @@ except ModuleNotFoundError as error:
             raise AttributeError(name)
         raise ModuleNotFoundError(
             "PySide6 is required for the Qt UI. Install dependencies with "
-            "`pip install -r requirements.txt`."
+            "`uv sync --locked`."
         ) from _PYQT_IMPORT_ERROR
 
 

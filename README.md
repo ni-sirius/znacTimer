@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.0-6941c6">
+  <img alt="Version" src="https://img.shields.io/github/v/release/ni-sirius/znacTimer?display_name=tag&sort=semver">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white">
   <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6-41cd52?logo=qt&logoColor=white">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-146c43"></a>
@@ -73,8 +73,9 @@ header displays **Closed**, and the month remains available for review.
 
 ### Requirements
 
-- CPython 3.12
-- 64-bit Windows (the reviewed dependency lock targets `win_amd64` wheels)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- CPython 3.12 (installed automatically by uv when needed)
+- 64-bit Windows or macOS on Apple silicon
 
 ### Install and run
 
@@ -82,23 +83,18 @@ header displays **Closed**, and the month remains available for review.
 git clone https://github.com/ni-sirius/znacTimer.git
 cd znacTimer/projects/znacpy
 
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m znactime
+uv sync --locked
+uv run znactime
 ```
 
-`requirements.txt` is the production lock: it pins direct and transitive packages,
-accepts binary wheels only, and verifies their SHA-256 hashes. Development and test
-environments use `requirements-dev.txt`; it currently adds no packages beyond the
-production lock. Dependency upgrades must update `requirements.in`, review the complete
-resolution, and regenerate the hashes together. Release builds must install from
-`requirements.txt`, not directly from `requirements.in`.
+`pyproject.toml` is the only hand-edited source of Python dependencies. The committed
+`uv.lock` fixes the complete Windows x64 and macOS arm64 resolution, including hashes.
+Dependency updates must change the project metadata and regenerate the lock together.
 
 You can also launch the application with:
 
 ```powershell
-python tracker.py
+uv run python tracker.py
 ```
 
 ## Data and privacy

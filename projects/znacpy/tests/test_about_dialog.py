@@ -1,7 +1,7 @@
 import os
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -46,7 +46,6 @@ class AboutDialogTest(unittest.TestCase):
         dialog = create_about_dialog()
         text = dialog.text()
 
-        self.assertEqual(dialog.windowTitle(), "About znacTime")
         self.assertIn(VERSION, text)
         self.assertIn(ABOUT_LICENSE, text)
         self.assertIn(PYSIDE_VERSION, text)
@@ -55,6 +54,13 @@ class AboutDialogTest(unittest.TestCase):
         self.assertIn(ABOUT_WEBSITE, text)
         self.assertIn(ABOUT_CONTACT, text)
         self.assertFalse(dialog.iconPixmap().isNull())
+
+    @patch("znactime.ui.qt.app.QMessageBox")
+    def test_about_dialog_configures_product_title(self, message_box):
+        dialog = create_about_dialog()
+
+        self.assertIs(dialog, message_box.return_value)
+        dialog.setWindowTitle.assert_called_once_with("About znacTime")
 
     def test_repository_contains_mit_license(self):
         license_text = (Path(__file__).resolve().parents[3] / "LICENSE").read_text(

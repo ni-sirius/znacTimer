@@ -1,80 +1,93 @@
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK_ENTRY = re.compile(
-    r"^([a-z0-9-]+)==([^\s\\]+)\s+\\\s*$\n"
-    r"^\s+--hash=sha256:([0-9a-f]{64})$",
-    re.MULTILINE,
+REPOSITORY_ROOT = ROOT.parents[1]
+OBSOLETE_REQUIREMENTS = (
+    "requirements.in",
+    "requirements.txt",
+    "requirements-dev.txt",
 )
+TARGET_ENVIRONMENTS = {
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+}
+
+
+def _requirement_name(requirement):
+    return re.split(r"[<>=!~ ;\[]", requirement.casefold(), maxsplit=1)[0]
 
 
 class DependencyLockTest(unittest.TestCase):
-    def test_runtime_lock_is_exact_binary_only_and_hash_verified(self):
-        lock_text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
-        entries = {
-            name: (version, digest)
-            for name, version, digest in LOCK_ENTRY.findall(lock_text)
+    @classmethod
+    def setUpClass(cls):
+        cls.project = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        cls.lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+
+    def test_project_declares_runtime_and_build_dependencies(self):
+        runtime = {
+            _requirement_name(item)
+            for item in self.project["project"]["dependencies"]
+        }
+        build = {
+            _requirement_name(item)
+            for item in self.project["dependency-groups"]["build"]
         }
 
-        self.assertIn("--only-binary=:all:", lock_text)
-        self.assertIn("--require-hashes", lock_text)
+        self.assertEqual(runtime, {"pyside6", "reportlab"})
+        self.assertEqual(build, {"pyinstaller"})
         self.assertEqual(
-            entries,
-            {
-                "charset-normalizer": (
-                    "3.4.4",
-                    "a79cfe37875f822425b89a82333404539ae63dbdddf97f84dcbc3d339aae9525",
-                ),
-                "pillow": (
-                    "12.1.0",
-                    "d70534cea9e7966169ad29a903b99fc507e932069a881d0965a1a84bb57f6c6d",
-                ),
-                "pyside6": (
-                    "6.11.1",
-                    "0968877ab1fb4ef3587a284da6fe05e8647ada56a6a3750b6395188e01f4aba6",
-                ),
-                "pyside6-addons": (
-                    "6.11.1",
-                    "0d13c4dfd671b050a48e4f8d8ddc724b7248f9c0437e7fc47fdf316278572923",
-                ),
-                "pyside6-essentials": (
-                    "6.11.1",
-                    "63311bd48e32c584599ab04b9ef7c324082374cd2c9fa533f978fb893bb47e40",
-                ),
-                "reportlab": (
-                    "4.4.9",
-                    "68e2d103ae8041a37714e8896ec9b79a1c1e911d68c3bd2ea17546568cf17bfd",
-                ),
-                "shiboken6": (
-                    "6.11.1",
-                    "c2c6863aa80ec18c0f82cea3417837b279cdc60024ac17123461dc9042577df7",
-                ),
-            },
+            self.project["build-system"]["build-backend"],
+            "hatchling.build",
         )
 
-    def test_direct_dependencies_match_locked_versions(self):
-        source_lines = {
-            line.casefold()
-            for line in (ROOT / "requirements.in").read_text(encoding="utf-8").splitlines()
-            if line and not line.startswith("#")
-        }
-        lock_text = (ROOT / "requirements.txt").read_text(encoding="utf-8").casefold()
+    def test_uv_resolution_is_limited_to_supported_native_targets(self):
+        uv = self.project["tool"]["uv"]
 
-        self.assertEqual(source_lines, {"pyside6==6.11.1", "reportlab==4.4.9"})
-        self.assertTrue(all(line in lock_text for line in source_lines))
+        self.assertRegex(uv["required-version"], r"^==\d+\.\d+\.\d+$")
+        self.assertEqual(set(uv["environments"]), TARGET_ENVIRONMENTS)
+        self.assertEqual(set(uv["required-environments"]), TARGET_ENVIRONMENTS)
 
-    def test_development_entry_point_includes_production_lock(self):
-        development = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
+    def test_lock_contains_project_and_declared_direct_dependencies(self):
+        packages = {item["name"]: item for item in self.lock["package"]}
+        project = self.project["project"]
 
-        active_lines = [
-            line.strip()
-            for line in development.splitlines()
-            if line.strip() and not line.startswith("#")
-        ]
-        self.assertEqual(active_lines, ["-r requirements.txt"])
+        self.assertIn("znactime", packages)
+        self.assertEqual(packages["znactime"]["version"], project["version"])
+        for requirement in (
+            *project["dependencies"],
+            *self.project["dependency-groups"]["build"],
+        ):
+            self.assertIn(_requirement_name(requirement), packages)
+
+    def test_legacy_requirements_entry_points_are_removed(self):
+        self.assertTrue(
+            all(not (ROOT / name).exists() for name in OBSOLETE_REQUIREMENTS)
+        )
+
+    def test_application_version_has_one_literal_source(self):
+        configured = (ROOT / "znactime" / "config.py").read_text(encoding="utf-8")
+        readmes = (
+            (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8"),
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+        )
+
+        self.assertRegex(self.project["project"]["version"], r"^\d+\.\d+\.\d+$")
+        self.assertIn('VERSION = version("znactime")', configured)
+        self.assertTrue(
+            all(self.project["project"]["version"] not in text for text in readmes)
+        )
+
+    def test_gui_entry_point_uses_existing_composition_root(self):
+        self.assertEqual(
+            self.project["project"]["gui-scripts"]["znactime"],
+            "znactime.__main__:main",
+        )
 
 
 if __name__ == "__main__":

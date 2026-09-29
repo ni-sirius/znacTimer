@@ -10,14 +10,17 @@ from pathlib import Path, PurePosixPath
 EXACT_FILES = frozenset(
     {
         ".gitignore",
+        ".gitattributes",
+        ".vscode/settings.json",
         "LICENSE",
         "README.md",
         "projects/znacpy/.vscode/settings.json",
+        "projects/znacpy/.python-version",
         "projects/znacpy/README.md",
         "projects/znacpy/THIRD_PARTY_NOTICES.md",
-        "projects/znacpy/requirements.in",
-        "projects/znacpy/requirements.txt",
-        "projects/znacpy/requirements-dev.txt",
+        "projects/znacpy/packaging/native-tools.json",
+        "projects/znacpy/pyproject.toml",
+        "projects/znacpy/uv.lock",
         "projects/znacpy/tracker.py",
         "projects/otherplatform/README.md",
         "contracts/README.md",
@@ -41,8 +44,18 @@ def is_release_source(relative_path: str) -> bool:
         return True
     if normalized.startswith("docs/"):
         return path.suffix == ".md"
-    if normalized.startswith(("scripts/", "projects/znacpy/scripts/", "projects/znacpy/tests/")):
+    if normalized.startswith(".github/workflows/"):
+        return path.suffix in {".yml", ".yaml"}
+    if normalized.startswith(("scripts/", "projects/znacpy/tests/")):
         return path.suffix == ".py"
+    if normalized.startswith("projects/znacpy/scripts/"):
+        return path.suffix in {".py", ".cmd", ".sh"}
+    if normalized.startswith("projects/znacpy/packaging/"):
+        if normalized.startswith("projects/znacpy/packaging/windows/"):
+            return path.suffix in {".ico", ".iss"}
+        if normalized.startswith("projects/znacpy/packaging/macos/"):
+            return path.suffix in {".icns", ".plist"}
+        return path.suffix in {".py", ".spec"}
     if normalized.startswith("projects/znacpy/znactime/"):
         return path.suffix in {".py", ".json"}
     return False

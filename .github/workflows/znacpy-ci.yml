@@ -1,0 +1,180 @@
+name: znacpy CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/znacpy-ci.yml"
+      - ".gitattributes"
+      - "LICENSE"
+      - "projects/znacpy/**"
+      - "scripts/check_release_tree.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: znacpy-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-candidate:
+    name: ${{ matrix.target }} unsigned candidate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            runner: windows-2025
+            artifact: znactime-windows-x64-unsigned
+          - target: macos-arm64
+            runner: macos-15
+            artifact: znactime-macos-arm64-unsigned
+
+    defaults:
+      run:
+        working-directory: projects/znacpy
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify Windows x64 runner
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+            throw "Expected Windows x64, found $env:PROCESSOR_ARCHITECTURE."
+          }
+
+      - name: Verify macOS arm64 runner
+        if: matrix.target == 'macos-arm64'
+        shell: bash
+        run: |
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version-file: pyproject.toml
+          working-directory: projects/znacpy
+          enable-cache: true
+          cache-dependency-glob: projects/znacpy/uv.lock
+
+      - name: Install pinned Python
+        run: uv python install
+
+      - name: Sync locked dependencies
+        run: uv sync --locked --group build
+
+      - name: Run tests
+        run: uv run python -m unittest discover -s tests -v
+
+      - name: Install pinned Inno Setup
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          $config = Get-Content -LiteralPath "packaging/native-tools.json" -Raw | ConvertFrom-Json
+          $tool = $config.inno_setup
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup-$($tool.version)-x64.exe"
+          $installDirectory = Join-Path $env:RUNNER_TEMP "inno-setup-$($tool.version)"
+          Invoke-WebRequest -Uri $tool.url -OutFile $installer
+
+          $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+          if ($actualHash -ne $tool.sha256) {
+            throw "Inno Setup checksum mismatch."
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne "Valid") {
+            throw "Inno Setup Authenticode signature is not valid: $($signature.Status)."
+          }
+
+          $arguments = @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/PORTABLE=1",
+            "/DIR=`"$installDirectory`""
+          )
+          $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) {
+            throw "Inno Setup installation failed with exit code $($process.ExitCode)."
+          }
+          "INNO_SETUP_COMPILER=$installDirectory\ISCC.exe" >> $env:GITHUB_ENV
+
+      - name: Build Windows candidate
+        if: matrix.target == 'windows-x64'
+        shell: cmd
+        run: scripts\build_windows.cmd --release
+
+      - name: Build macOS candidate
+        if: matrix.target == 'macos-arm64'
+        shell: bash
+        run: bash scripts/build_macos.sh --release
+
+      - name: Smoke-test Windows bundle
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "znactime-smoke"
+          $dataDirectory = Join-Path $smokeRoot "data"
+          $report = Join-Path $PWD "dist/release/znacTime-windows-x64-smoke.json"
+          New-Item -ItemType Directory -Force -Path $dataDirectory | Out-Null
+          $executable = Join-Path $PWD "dist/bundle/windows-x64/znacTime/znacTime.exe"
+          $arguments = @("--smoke-test", "--data-dir", $dataDirectory, "--report", $report)
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) {
+            throw "Packaged smoke test failed with exit code $($process.ExitCode)."
+          }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if (-not $result.success) {
+            throw "Packaged smoke report indicates failure."
+          }
+
+      - name: Smoke-test macOS bundle
+        if: matrix.target == 'macos-arm64'
+        shell: bash
+        run: |
+          smoke_root="$RUNNER_TEMP/znactime-smoke"
+          report="$PWD/dist/release/znacTime-macos-arm64-smoke.json"
+          mkdir -p "$smoke_root/data"
+          dist/bundle/macos-arm64/znacTime.app/Contents/MacOS/znacTime \
+            --smoke-test \
+            --data-dir "$smoke_root/data" \
+            --report "$report"
+          .venv/bin/python -c 'import json, pathlib, sys; report=json.loads(pathlib.Path(sys.argv[1]).read_text()); raise SystemExit(0 if report.get("success") is True else 1)' "$report"
+
+      - name: Upload Windows candidate
+        if: matrix.target == 'windows-x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            projects/znacpy/dist/release/znacTime-*-windows-x64-Setup.exe
+            projects/znacpy/dist/release/znacTime-*-windows-x64-Setup.exe.sha256
+            projects/znacpy/dist/release/znacTime-*-windows-x64-manifest.json
+            projects/znacpy/dist/release/znacTime-windows-x64-smoke.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload macOS candidate
+        if: matrix.target == 'macos-arm64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            projects/znacpy/dist/release/znacTime-*-macos-arm64.dmg
+            projects/znacpy/dist/release/znacTime-*-macos-arm64.dmg.sha256
+            projects/znacpy/dist/release/znacTime-*-macos-arm64-manifest.json
+            projects/znacpy/dist/release/znacTime-macos-arm64-smoke.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

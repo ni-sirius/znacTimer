@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling==1.30.1"]
+build-backend = "hatchling.build"
+
+[project]
+name = "znactime"
+version = "0.6.0"
+description = "Local-first desktop time tracker"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+    "PySide6==6.11.1",
+    "reportlab==4.4.9",
+]
+
+[project.gui-scripts]
+znactime = "znactime.__main__:main"
+
+[dependency-groups]
+build = [
+    "pyinstaller==6.22.3",
+]
+dev = [
+    "pip",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["znactime"]
+
+[tool.uv]
+required-version = "==0.12.19"
+environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+required-environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
