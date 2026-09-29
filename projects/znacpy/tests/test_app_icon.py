@@ -36,6 +36,7 @@ class AppIconTest(unittest.TestCase):
             patch(
                 "znactime.__main__.ctypes.windll",
                 SimpleNamespace(shell32=shell32),
+                create=True,
             ),
         ):
             configured = _set_windows_app_user_model_id()
