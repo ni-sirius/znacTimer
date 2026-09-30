@@ -74,6 +74,25 @@ class PackagingBuildTest(unittest.TestCase):
 
         self.assertEqual(version, "uv 0.12.19 (required; not invoked)")
 
+    def test_uv_version_accepts_build_metadata_for_the_pinned_version(self):
+        detected = "uv 0.12.19 (bea138450 2026-09-24 x86_64-pc-windows-msvc)"
+        with (
+            patch.object(packaging_build.shutil, "which", return_value="uv"),
+            patch.object(packaging_build, "_command_output", return_value=detected),
+        ):
+            version = packaging_build._uv_version()
+
+        self.assertEqual(version, detected)
+
+    def test_uv_version_rejects_a_different_semantic_version(self):
+        detected = "uv 0.12.20 (different build)"
+        with (
+            patch.object(packaging_build.shutil, "which", return_value="uv"),
+            patch.object(packaging_build, "_command_output", return_value=detected),
+        ):
+            with self.assertRaisesRegex(packaging_build.BuildError, "==0.12.19"):
+                packaging_build._uv_version()
+
     def test_shared_spec_uses_native_icons_and_macos_entitlements(self):
         spec_text = packaging_build.SPEC_PATH.read_text(encoding="utf-8")
 
@@ -102,17 +121,20 @@ class PackagingBuildTest(unittest.TestCase):
         )
         tools = packaging_build.MacOSTools(
             Path("/usr/bin/codesign"),
+            Path("/usr/bin/ditto"),
             Path("/usr/bin/hdiutil"),
             Path("/usr/bin/xcodebuild"),
             "Xcode 18.0",
         )
+        source_path = Path("/tmp/znactime-dmg")
 
         verify = packaging_build._codesign_verify_command(context, tools)
-        create = packaging_build._hdiutil_create_command(context, tools)
+        create = packaging_build._hdiutil_create_command(context, tools, source_path)
 
         self.assertEqual(verify[1:5], ["--verify", "--deep", "--strict", "--verbose=2"])
         self.assertEqual(create[1:4], ["create", "-volname", "znacTime"])
         self.assertIn("-srcfolder", create)
+        self.assertIn(str(source_path), create)
         self.assertIn("UDZO", create)
         self.assertEqual(Path(create[-1]), context.disk_image_path)
 
@@ -139,6 +161,7 @@ class PackagingBuildTest(unittest.TestCase):
                 )
                 tools = packaging_build.MacOSTools(
                     Path("/usr/bin/codesign"),
+                    Path("/usr/bin/ditto"),
                     Path("/usr/bin/hdiutil"),
                     Path("/usr/bin/xcodebuild"),
                     "Xcode 18.0\nBuild version 18A1",
@@ -160,8 +183,15 @@ class PackagingBuildTest(unittest.TestCase):
                 release_manifest = json.loads(
                     context.release_manifest_path.read_text(encoding="utf-8")
                 )
+                commands = [call.args[0] for call in run.call_args_list]
+                staged_bundle = Path(commands[0][-1])
                 self.assertEqual(result, context.disk_image_path)
-                self.assertEqual(run.call_count, 3)
+                self.assertEqual(run.call_count, 4)
+                self.assertEqual(commands[0][0], str(tools.ditto))
+                self.assertEqual(staged_bundle.name, context.bundle_path.name)
+                self.assertEqual(Path(commands[1][-1]), staged_bundle)
+                source_index = commands[2].index("-srcfolder") + 1
+                self.assertEqual(Path(commands[2][source_index]), staged_bundle.parent)
                 self.assertEqual(
                     release_manifest["disk_image"]["path"],
                     context.disk_image_path.relative_to(PROJECT_ROOT).as_posix(),
@@ -175,6 +205,45 @@ class PackagingBuildTest(unittest.TestCase):
         finally:
             packaging_build.DIST_ROOT = original_dist_root
             packaging_build.RELEASE_ROOT = original_release_root
+
+    def test_macos_dmg_creation_retries_transient_hdiutil_failure(self):
+        context = packaging_build.BuildContext(
+            "macos-arm64",
+            "Darwin",
+            "arm64",
+            "0.6.0",
+        )
+        tools = packaging_build.MacOSTools(
+            Path("/usr/bin/codesign"),
+            Path("/usr/bin/ditto"),
+            Path("/usr/bin/hdiutil"),
+            Path("/usr/bin/xcodebuild"),
+            "Xcode 18.0",
+        )
+        calls = 0
+
+        def create_disk_image(command, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise packaging_build.subprocess.CalledProcessError(1, command)
+
+        with (
+            patch.object(
+                packaging_build.subprocess,
+                "run",
+                side_effect=create_disk_image,
+            ),
+            patch.object(packaging_build.time, "sleep") as sleep,
+        ):
+            packaging_build._create_dmg_with_retries(
+                context,
+                tools,
+                Path("/tmp/znactime-dmg"),
+            )
+
+        self.assertEqual(calls, 2)
+        sleep.assert_called_once_with(2)
 
     def test_dmg_verification_requires_udif_trailer(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -398,6 +467,23 @@ class PackagingBuildTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(packaging_build.BuildError, "unexpected editable"):
+                packaging_build._validate_bundle(bundle)
+
+    def test_bundle_deduplicates_macos_metadata_crosslink_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            metadata = bundle / "Contents" / "Resources" / "znactime-0.6.0.dist-info"
+            metadata.mkdir(parents=True)
+            (metadata / "METADATA").write_text("Version: 0.6.0\n", encoding="utf-8")
+            alias = metadata / ".." / metadata.name
+            original_rglob = Path.rglob
+
+            def macos_crosslinks(path, pattern):
+                if path == bundle and pattern == "znactime-*.dist-info":
+                    return iter((metadata, alias))
+                return original_rglob(path, pattern)
+
+            with patch.object(Path, "rglob", new=macos_crosslinks):
                 packaging_build._validate_bundle(bundle)
 
 

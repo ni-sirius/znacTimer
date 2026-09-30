@@ -129,9 +129,11 @@ creates the ad-hoc-signed DMG, checksum, and release manifest. `--run` opens the
 never the DMG.
 
 The root monorepo workflow `.github/workflows/znacpy-ci.yml` runs the same local build
-entry points on Windows x64 and macOS arm64. It runs after relevant `znacpy` changes are
-pushed to `main`, or through a manual GitHub Actions dispatch, and produces verified
-unsigned candidate artifacts with smoke reports.
+entry points on Windows x64 and macOS arm64. It runs for relevant pull requests targeting
+`main`, after relevant changes are pushed to `main`, or through a manual GitHub Actions
+dispatch. Each run produces verified unsigned candidate artifacts with smoke reports.
+Pull-request runs build and smoke-test both packages without uploading them; push and
+manual runs upload the candidate artifacts for download.
 
 ## Data and privacy
 

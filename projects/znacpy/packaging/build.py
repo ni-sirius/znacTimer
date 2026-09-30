@@ -10,6 +10,8 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
+import time
 import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,6 +37,7 @@ MACOS_PACKAGING_DIR = PACKAGING_DIR / "macos"
 MACOS_ICON_PATH = MACOS_PACKAGING_DIR / "znactime.icns"
 MACOS_ENTITLEMENTS_PATH = MACOS_PACKAGING_DIR / "entitlements.plist"
 LICENSE_PATH = PROJECT_ROOT.parents[1] / "LICENSE"
+DMG_CREATE_ATTEMPTS = 3
 
 
 class BuildError(RuntimeError):
@@ -98,6 +101,7 @@ class BuildContext:
 @dataclass(frozen=True)
 class MacOSTools:
     codesign: Path
+    ditto: Path
     hdiutil: Path
     xcodebuild: Path
     xcode_version: str
@@ -212,9 +216,19 @@ def _bundle_summary(bundle_path: Path) -> dict:
 
 
 def _validate_bundle(bundle_path: Path) -> None:
-    metadata_directories = tuple(bundle_path.rglob("znactime-*.dist-info"))
+    metadata_directories = tuple(
+        sorted(
+            {
+                path.resolve()
+                for path in bundle_path.rglob("znactime-*.dist-info")
+            }
+        )
+    )
     if len(metadata_directories) != 1:
-        raise BuildError("The bundle must contain exactly one znacTime metadata directory.")
+        raise BuildError(
+            "The bundle must contain exactly one znacTime metadata directory; "
+            f"found {len(metadata_directories)} physical directories."
+        )
     metadata_files = {
         path.relative_to(metadata_directories[0]).as_posix()
         for path in metadata_directories[0].rglob("*")
@@ -258,7 +272,10 @@ def _uv_version() -> str:
     if executable is None:
         return f"uv {required_version} (required; not invoked)"
     detected = _command_output([executable, "--version"])
-    if detected != f"uv {required_version}":
+    version_match = re.match(r"^uv\s+(\d+\.\d+\.\d+)(?:\s|$)", detected)
+    if version_match is None:
+        raise BuildError(f"Could not identify the uv version from: {detected}.")
+    if version_match.group(1) != required_version:
         raise BuildError(f"{required} is required by pyproject.toml; found {detected}.")
     return detected
 
@@ -479,36 +496,68 @@ def _native_tool(name: str) -> Path:
 
 def find_macos_tools() -> MacOSTools:
     codesign = _native_tool("codesign")
+    ditto = _native_tool("ditto")
     hdiutil = _native_tool("hdiutil")
     xcodebuild = _native_tool("xcodebuild")
     xcode_version = _command_output([str(xcodebuild), "-version"])
-    return MacOSTools(codesign, hdiutil, xcodebuild, xcode_version)
+    return MacOSTools(codesign, ditto, hdiutil, xcodebuild, xcode_version)
 
 
-def _codesign_verify_command(context: BuildContext, tools: MacOSTools) -> list[str]:
+def _codesign_verify_command(
+    context: BuildContext,
+    tools: MacOSTools,
+    bundle_path: Path | None = None,
+) -> list[str]:
     return [
         str(tools.codesign),
         "--verify",
         "--deep",
         "--strict",
         "--verbose=2",
-        str(context.bundle_path),
+        str(context.bundle_path if bundle_path is None else bundle_path),
     ]
 
 
-def _hdiutil_create_command(context: BuildContext, tools: MacOSTools) -> list[str]:
+def _hdiutil_create_command(
+    context: BuildContext,
+    tools: MacOSTools,
+    source_path: Path,
+) -> list[str]:
     return [
         str(tools.hdiutil),
         "create",
         "-volname",
         "znacTime",
         "-srcfolder",
-        str(context.bundle_path),
+        str(source_path),
         "-ov",
         "-format",
         "UDZO",
         str(context.disk_image_path),
     ]
+
+
+def _create_dmg_with_retries(
+    context: BuildContext,
+    tools: MacOSTools,
+    source_path: Path,
+) -> None:
+    command = _hdiutil_create_command(context, tools, source_path)
+    for attempt in range(1, DMG_CREATE_ATTEMPTS + 1):
+        try:
+            subprocess.run(command, cwd=PROJECT_ROOT, check=True)
+            return
+        except subprocess.CalledProcessError:
+            if attempt == DMG_CREATE_ATTEMPTS:
+                raise
+            delay_seconds = 2**attempt
+            print(
+                "hdiutil create failed; "
+                f"retrying in {delay_seconds} seconds "
+                f"({attempt}/{DMG_CREATE_ATTEMPTS}).",
+                file=sys.stderr,
+            )
+            time.sleep(delay_seconds)
 
 
 def _validate_dmg(path: Path) -> None:
@@ -528,23 +577,29 @@ def build_macos_dmg(context: BuildContext, tools: MacOSTools) -> Path:
         raise BuildError("The macOS application bundle is incomplete.")
     RELEASE_ROOT.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(
-            _codesign_verify_command(context, tools),
-            cwd=PROJECT_ROOT,
-            check=True,
-        )
-        subprocess.run(
-            _hdiutil_create_command(context, tools),
-            cwd=PROJECT_ROOT,
-            check=True,
-        )
+        with tempfile.TemporaryDirectory(prefix="znactime-dmg-") as temporary:
+            source_path = Path(temporary)
+            staged_bundle_path = source_path / context.bundle_path.name
+            subprocess.run(
+                [str(tools.ditto), str(context.bundle_path), str(staged_bundle_path)],
+                cwd=PROJECT_ROOT,
+                check=True,
+            )
+            subprocess.run(
+                _codesign_verify_command(context, tools, staged_bundle_path),
+                cwd=PROJECT_ROOT,
+                check=True,
+            )
+            _create_dmg_with_retries(context, tools, source_path)
         subprocess.run(
             [str(tools.hdiutil), "verify", str(context.disk_image_path)],
             cwd=PROJECT_ROOT,
             check=True,
         )
     except (OSError, subprocess.CalledProcessError) as error:
-        raise BuildError("macOS ad-hoc signature or DMG creation failed.") from error
+        raise BuildError(
+            "macOS staging, ad-hoc signature, or DMG creation failed."
+        ) from error
 
     _validate_dmg(context.disk_image_path)
     disk_image_digest = _sha256(context.disk_image_path)
