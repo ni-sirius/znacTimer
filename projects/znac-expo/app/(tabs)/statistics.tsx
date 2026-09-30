@@ -52,8 +52,6 @@ export default function StatisticsScreen() {
 
   return (
     <Screen>
-      <View style={styles.titleSpacer} />
-
       <StatisticsModeTabs value={mode} onChange={setMode} />
 
       {mode === "month" && <Text style={styles.title}>{periodTitle}</Text>}
@@ -82,9 +80,6 @@ export default function StatisticsScreen() {
 }
 
 const styles = StyleSheet.create({
-  titleSpacer: {
-    minHeight: 17,
-  },
   title: {
     color: theme.colors.text,
     fontSize: 22,

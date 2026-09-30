@@ -59,12 +59,13 @@ const styles = StyleSheet.create({
     flex: 1,
     color: theme.colors.textMuted,
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.text,
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "700",
     textAlign: "right",
   },
 });

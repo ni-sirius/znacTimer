@@ -4,6 +4,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { getMobileTheme } from "../../theme";
 
 const theme = getMobileTheme("dark");
+const ACTIVE_SELECTION_COLOR = theme.colors.primary;
 
 const MONTHS = [
   "Jan",
@@ -50,7 +51,7 @@ export function OverviewMonthPickerModal({
             onPress={onClose}
             style={styles.closeButton}
           >
-            <X color={theme.colors.textMuted} size={20} />
+            <X color={theme.colors.textMuted} size={16} />
           </Pressable>
 
           <View style={styles.yearRow}>
@@ -74,8 +75,6 @@ export function OverviewMonthPickerModal({
               <ChevronRight color={theme.colors.primary} size={22} />
             </Pressable>
           </View>
-
-          <View style={styles.divider} />
 
           <View style={styles.monthGrid}>
             {MONTHS.map((label, index) => {
@@ -111,25 +110,25 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.58)",
+    backgroundColor: "rgba(0, 0, 0, 0.72)",
     paddingHorizontal: theme.spacing.xl,
   },
   sheet: {
     position: "relative",
     borderColor: theme.colors.border,
-    borderRadius: 20,
+    borderRadius: theme.radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: theme.colors.surfaceRaised,
-    padding: theme.spacing.md,
-    paddingTop: 48,
-    gap: theme.spacing.sm,
+    padding: theme.spacing.lg,
+    paddingTop: theme.spacing.xl + theme.spacing.sm,
+    gap: theme.spacing.lg,
   },
   closeButton: {
     position: "absolute",
-    top: theme.spacing.sm,
-    right: theme.spacing.sm,
-    width: 34,
-    height: 34,
+    top: theme.spacing.md,
+    right: theme.spacing.md,
+    width: 26,
+    height: 26,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.radius.pill,
@@ -141,40 +140,38 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: theme.spacing.sm,
+    gap: theme.spacing.xs,
   },
   yearButton: {
-    width: 36,
+    width: 30,
     height: 36,
     alignItems: "center",
     justifyContent: "center",
   },
   sideYear: {
-    color: theme.colors.textMuted,
+    minWidth: 54,
+    color: theme.colors.textSubtle,
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: "600",
+    textAlign: "center",
   },
   activeYear: {
-    minWidth: 72,
+    minWidth: 76,
     overflow: "hidden",
     borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: ACTIVE_SELECTION_COLOR,
     color: theme.colors.onPrimary,
     fontSize: 15,
-    fontWeight: "900",
+    fontWeight: "800",
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.sm,
     textAlign: "center",
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: theme.colors.border,
   },
   monthGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    rowGap: theme.spacing.sm,
+    rowGap: theme.spacing.md,
   },
   monthButton: {
     width: "23%",
@@ -182,19 +179,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderColor: theme.colors.border,
-    borderRadius: theme.radius.lg,
+    borderRadius: theme.radius.md,
     borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: theme.colors.surface,
   },
   monthButtonActive: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: ACTIVE_SELECTION_COLOR,
   },
   monthText: {
-    color: theme.colors.text,
+    color: theme.colors.textMuted,
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   monthTextActive: {
     color: theme.colors.onPrimary,
+    fontWeight: "800",
   },
 });

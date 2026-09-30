@@ -17,11 +17,10 @@ import { useWorkdayStore } from "../../src/stores/workdayStore";
 import { getMobileTheme } from "../../src/theme";
 
 const theme = getMobileTheme("dark");
-const DAY_ROW_HEIGHT = 150;
-const TOP_BAR_HEIGHT = 90;
-const WORKDAY_CARD_HEIGHT = 142;
+const DAY_ROW_HEIGHT = 136;
+const TOP_BAR_HEIGHT = 116;
+const WORKDAY_CARD_HEIGHT = 134;
 const TAB_BAR_RESERVED_HEIGHT = 80;
-const FLOATING_HORIZONTAL_INSET = 24;
 const DAY_CARD_HORIZONTAL_INSET = 32;
 
 export default function OverviewScreen() {
@@ -98,11 +97,11 @@ export default function OverviewScreen() {
     today,
   );
   const elapsedText = elapsedForState(workdayState, now);
-  const bottomOffset = TAB_BAR_RESERVED_HEIGHT + theme.spacing.sm * 2;
+  const bottomOffset = TAB_BAR_RESERVED_HEIGHT + theme.spacing.xs;
 
   return (
     <View style={styles.screen}>
-      <View style={[styles.topBar, { top: insets.top + theme.spacing.sm }]}>
+      <View style={[styles.topBar, { paddingTop: insets.top + theme.spacing.lg }]}>
         <OverviewSummaryBar
           year={selectedYear}
           month={selectedMonth}
@@ -137,8 +136,8 @@ export default function OverviewScreen() {
           contentContainerStyle={[
             styles.listContent,
             {
-              paddingTop: TOP_BAR_HEIGHT + theme.spacing.lg,
-              paddingBottom: bottomOffset + WORKDAY_CARD_HEIGHT + theme.spacing.md,
+              paddingTop: TOP_BAR_HEIGHT + theme.spacing.md,
+              paddingBottom: bottomOffset + WORKDAY_CARD_HEIGHT + theme.spacing.lg,
             },
           ]}
           getItemLayout={(_, index) => ({
@@ -165,6 +164,11 @@ export default function OverviewScreen() {
       {(monthError || workdayError) && (
         <Text style={styles.errorText}>{monthError ?? workdayError}</Text>
       )}
+
+      <View
+        pointerEvents="none"
+        style={[styles.tabBarUnderlay, { height: bottomOffset }]}
+      />
 
       <View style={[styles.floatingWorkday, { bottom: bottomOffset }]}>
         <ActiveWorkdayCard
@@ -244,12 +248,17 @@ const styles = StyleSheet.create({
   },
   topBar: {
     position: "absolute",
-    left: FLOATING_HORIZONTAL_INSET,
-    right: FLOATING_HORIZONTAL_INSET,
+    left: 0,
+    right: 0,
     zIndex: 6,
+    borderBottomColor: theme.colors.tabBarBorder,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    backgroundColor: theme.colors.shell,
+    paddingBottom: theme.spacing.md,
+    paddingHorizontal: DAY_CARD_HORIZONTAL_INSET,
   },
   listContent: {
-    gap: theme.spacing.sm,
+    gap: theme.spacing.md,
     paddingHorizontal: DAY_CARD_HORIZONTAL_INSET,
   },
   list: {
@@ -257,9 +266,23 @@ const styles = StyleSheet.create({
   },
   floatingWorkday: {
     position: "absolute",
-    left: FLOATING_HORIZONTAL_INSET,
-    right: FLOATING_HORIZONTAL_INSET,
+    left: 0,
+    right: 0,
     zIndex: 5,
+    borderTopColor: theme.colors.tabBarBorder,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    backgroundColor: theme.colors.shell,
+    paddingHorizontal: DAY_CARD_HORIZONTAL_INSET,
+    paddingTop: theme.spacing.lg,
+    paddingBottom: theme.spacing.md,
+  },
+  tabBarUnderlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 4,
+    backgroundColor: theme.colors.shell,
   },
   errorText: {
     color: theme.colors.danger,

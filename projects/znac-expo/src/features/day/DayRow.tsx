@@ -84,7 +84,8 @@ function Metric({
 
 const styles = StyleSheet.create({
   card: {
-    gap: theme.spacing.md,
+    gap: theme.spacing.sm,
+    paddingVertical: theme.spacing.md,
   },
   todayCard: {
     borderColor: theme.colors.primary,
@@ -104,7 +105,7 @@ const styles = StyleSheet.create({
   },
   dayTypeBadge: {
     width: "50%",
-    minHeight: 36,
+    minHeight: 34,
     alignItems: "center",
   },
   dayTypeBadgeText: {
@@ -130,13 +131,13 @@ const styles = StyleSheet.create({
   metricLabel: {
     color: theme.colors.textMuted,
     fontSize: 11,
-    fontWeight: "800",
+    fontWeight: "700",
   },
   metricValue: {
     marginTop: 2,
     color: theme.colors.text,
     fontSize: 13,
-    fontWeight: "800",
+    fontWeight: "700",
   },
   mutedValue: {
     color: theme.colors.textSubtle,

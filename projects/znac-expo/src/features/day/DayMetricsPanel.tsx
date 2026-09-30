@@ -242,26 +242,26 @@ async function commitClockChange({
 
 const styles = StyleSheet.create({
   panel: {
-    gap: theme.spacing.xs,
+    gap: theme.spacing.sm,
   },
   editableRow: {
-    minHeight: 38,
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing.md,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.md,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: theme.colors.surfaceMuted,
     paddingHorizontal: theme.spacing.sm,
   },
   interruptionsRow: {
-    minHeight: 50,
+    minHeight: 46,
     gap: theme.spacing.xs,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.md,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: theme.colors.surfaceMuted,
     paddingHorizontal: theme.spacing.sm,
     paddingVertical: theme.spacing.xs,
@@ -277,13 +277,13 @@ const styles = StyleSheet.create({
     flex: 1,
     color: theme.colors.textMuted,
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   input: {
     minWidth: 78,
     color: theme.colors.text,
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "700",
     padding: 0,
     textAlign: "right",
   },
@@ -293,7 +293,7 @@ const styles = StyleSheet.create({
   linkValue: {
     color: theme.colors.text,
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "700",
     lineHeight: 18,
   },
   pressedRow: {

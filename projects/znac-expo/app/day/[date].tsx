@@ -228,9 +228,10 @@ const styles = StyleSheet.create({
   },
   hintText: {
     color: theme.colors.textSubtle,
-    fontSize: 12,
-    fontWeight: "800",
-    textAlign: "center",
+    fontSize: 11,
+    fontWeight: "500",
+    paddingHorizontal: theme.spacing.xs,
+    textAlign: "left",
   },
   errorText: {
     color: theme.colors.danger,

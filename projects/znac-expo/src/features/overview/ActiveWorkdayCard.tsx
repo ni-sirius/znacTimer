@@ -59,7 +59,7 @@ export function ActiveWorkdayCard({
           icon={
             <Square
               color={
-                canStop ? theme.colors.shell : theme.colors.playerDisabledText
+                canStop ? theme.colors.text : theme.colors.playerDisabledText
               }
               size={16}
             />
@@ -126,13 +126,11 @@ function workdayContent(state: WorkdayState): {
 
 const styles = StyleSheet.create({
   panel: {
-    borderColor: theme.colors.tabBarBorder,
-    borderRadius: 24,
-    borderWidth: 1,
-    backgroundColor: theme.colors.tabBar,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: theme.colors.shell,
     gap: theme.spacing.md,
-    paddingHorizontal: theme.spacing.xl,
-    paddingVertical: theme.spacing.md,
+    padding: 0,
   },
   topRow: {
     flexDirection: "row",
@@ -143,13 +141,13 @@ const styles = StyleSheet.create({
   caption: {
     color: theme.colors.textMuted,
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   title: {
     marginTop: 2,
     color: theme.colors.text,
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: "700",
   },
   elapsed: {
     alignItems: "flex-end",
@@ -166,7 +164,7 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    minHeight: 50,
+    minHeight: 48,
     borderRadius: 18,
   },
   stopButton: {

@@ -51,16 +51,18 @@ export default function RootLayout() {
         <Stack.Screen
           name="modals/break-editor"
           options={{
-            presentation: "modal",
-            title: "Interruptions",
+            animation: "fade",
+            headerShown: false,
+            presentation: "transparentModal",
           }}
         />
 
         <Stack.Screen
           name="modals/delete-day"
           options={{
-            presentation: "modal",
-            title: "Delete day",
+            animation: "fade",
+            headerShown: false,
+            presentation: "transparentModal",
           }}
         />
       </Stack>

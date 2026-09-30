@@ -30,6 +30,8 @@ export function Screen({
     return (
       <SafeAreaView style={[styles.screen, style]}>
         <ScrollView
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[
             styles.content,
@@ -65,11 +67,11 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    paddingBottom: theme.spacing.xl * 4,
+    paddingBottom: theme.spacing.xl * 6,
   },
   paddedContent: {
     paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.md,
-    gap: theme.spacing.md,
+    paddingTop: theme.spacing.lg,
+    gap: theme.spacing.lg,
   },
 });

@@ -41,6 +41,9 @@ export function AppButton({
   labelStyle,
 }: AppButtonProps) {
   const isDisabled = disabled || loading;
+  const labelColor = isDisabled
+    ? theme.colors.playerDisabledText
+    : buttonTextColors[variant];
 
   return (
     <Pressable
@@ -51,7 +54,8 @@ export function AppButton({
         styles.button,
         buttonVariantStyles[variant],
         isDisabled && (disabledStyle ?? styles.disabled),
-        pressed && !isDisabled && styles.pressed,
+        pressed && !isDisabled && variant === "danger" && styles.dangerPressed,
+        pressed && !isDisabled && variant !== "danger" && styles.pressed,
         style,
       ]}
     >
@@ -63,7 +67,7 @@ export function AppButton({
           <Text
             style={[
               styles.label,
-              { color: buttonTextColors[variant] },
+              { color: labelColor },
               labelStyle,
             ]}
           >
@@ -77,7 +81,7 @@ export function AppButton({
 
 const styles = StyleSheet.create({
   button: {
-    minHeight: 42,
+    minHeight: 40,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.radius.lg,
@@ -91,13 +95,17 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "700",
   },
   disabled: {
-    opacity: 0.48,
+    backgroundColor: theme.colors.playerDisabled,
+    opacity: 1,
   },
   pressed: {
     opacity: 0.86,
+  },
+  dangerPressed: {
+    backgroundColor: theme.colors.dangerMuted,
   },
 });
 
@@ -109,7 +117,7 @@ const buttonVariantStyles = StyleSheet.create({
     backgroundColor: theme.colors.success,
   },
   danger: {
-    backgroundColor: theme.colors.danger,
+    backgroundColor: theme.colors.playerStop,
   },
   secondary: {
     backgroundColor: theme.colors.surfaceMuted,
@@ -119,6 +127,6 @@ const buttonVariantStyles = StyleSheet.create({
 const buttonTextColors: Record<AppButtonVariant, string> = {
   primary: theme.colors.onPrimary,
   success: theme.colors.shell,
-  danger: theme.colors.shell,
+  danger: theme.colors.text,
   secondary: theme.colors.text,
 };

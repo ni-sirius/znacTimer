@@ -43,8 +43,16 @@ export function CalendarMonthGrid({
       </View>
 
       <View style={styles.grid}>
-        {cells.map((cell) => (
-          <CalendarDayCell key={cell.date} cell={cell} onPress={onDayPress} />
+        {chunkCells(cells).map((row) => (
+          <View key={row[0]?.date} style={styles.dayRow}>
+            {row.map((cell) => (
+              <CalendarDayCell
+                key={cell.date}
+                cell={cell}
+                onPress={onDayPress}
+              />
+            ))}
+          </View>
         ))}
       </View>
     </Panel>
@@ -91,6 +99,16 @@ function classifyCalendarDay(
   return regularDayBadgeKind(day) as CalendarDayVisualType;
 }
 
+function chunkCells(cells: CalendarDayCellModel[]): CalendarDayCellModel[][] {
+  const rows: CalendarDayCellModel[][] = [];
+
+  for (let index = 0; index < cells.length; index += 7) {
+    rows.push(cells.slice(index, index + 7));
+  }
+
+  return rows;
+}
+
 function mondayBasedWeekday(date: Date): number {
   const parsed = parseIsoDate(formatIsoDate(date));
 
@@ -113,11 +131,13 @@ const styles = StyleSheet.create({
     flex: 1,
     color: theme.colors.textMuted,
     fontSize: 11,
-    fontWeight: "900",
+    fontWeight: "700",
     textAlign: "center",
   },
   grid: {
+    gap: theme.spacing.xs,
+  },
+  dayRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
   },
 });

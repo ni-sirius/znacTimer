@@ -51,6 +51,7 @@ export function CalendarDayCell({ cell, onPress }: CalendarDayCellProps) {
             backgroundColor: colors.fill,
             borderColor: cell.isToday ? theme.colors.primary : colors.border,
           },
+          cell.isToday && styles.todayCircle,
           !cell.inSelectedMonth && styles.outsideMonthCircle,
         ]}
       >
@@ -71,25 +72,28 @@ export function CalendarDayCell({ cell, onPress }: CalendarDayCellProps) {
 
 const styles = StyleSheet.create({
   slot: {
-    width: "14.285714%",
+    flex: 1,
     aspectRatio: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   circle: {
-    width: 42,
-    height: 42,
+    width: 40,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.radius.pill,
-    borderWidth: 2,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  todayCircle: {
+    borderWidth: 1,
   },
   dayText: {
     fontSize: 15,
-    fontWeight: "900",
+    fontWeight: "800",
   },
   outsideMonthSlot: {
-    opacity: 0.42,
+    opacity: 0.32,
   },
   outsideMonthCircle: {
     backgroundColor: theme.colors.surface,

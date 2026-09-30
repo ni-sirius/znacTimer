@@ -80,7 +80,7 @@ export function getMobileTheme(mode: ThemeMode): MobileTheme {
         mode === "dark" ? "#1c2030" : color(source, "header.control"),
       surfaceMuted:
         mode === "dark" ? "#23243a" : color(source, "header.badge"),
-      border: mode === "dark" ? "#2b3042" : color(source, "tokens.panel_border"),
+      border: mode === "dark" ? "#252a3a" : color(source, "tokens.panel_border"),
       text: color(source, "tokens.panel_text"),
       textMuted: color(source, "tokens.panel_muted"),
       textSubtle: color(source, "palette.placeholder_text"),
@@ -89,11 +89,11 @@ export function getMobileTheme(mode: ThemeMode): MobileTheme {
       success: color(source, "model.overtime_positive"),
       danger: color(source, "tokens.danger_text"),
       dangerMuted: color(source, "player.stop"),
-      playerStop: color(source, "player.stop"),
+      playerStop: mode === "dark" ? "#9b485a" : color(source, "player.stop"),
       playerDisabled: color(source, "player.disabled"),
       playerDisabledText: color(source, "player.disabled_text"),
       tabBar: mode === "dark" ? "#10121d" : color(source, "menu.surface"),
-      tabBarBorder: mode === "dark" ? "#2f3347" : color(source, "menu.border"),
+      tabBarBorder: mode === "dark" ? "#303548" : color(source, "menu.border"),
       regularDayPending: mode === "dark" ? "#2b2147" : color(source, "header.badge"),
       sickDay: mode === "dark" ? "#5a341f" : color(source, "row.special_day"),
       vacationDay: mode === "dark" ? "#7a5d16" : color(source, "row.special_day"),
@@ -116,7 +116,7 @@ export function getMobileTheme(mode: ThemeMode): MobileTheme {
     radius: {
       sm: 4,
       md: 6,
-      lg: 8,
+      lg: 14,
       pill: 999,
     },
   };

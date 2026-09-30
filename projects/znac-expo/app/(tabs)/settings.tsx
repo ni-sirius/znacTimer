@@ -55,7 +55,7 @@ export default function SettingsScreen() {
   const scheduleClosed = month?.status === "closed";
 
   return (
-    <Screen scroll>
+    <Screen scroll contentStyle={styles.screenContent}>
       <ScheduleSection
         key={`${activeSchedule.publicId}-${activeSchedule.revision}-${activeSchedule.effectiveFrom}`}
         activeSchedule={activeSchedule}
@@ -93,6 +93,7 @@ export default function SettingsScreen() {
           label="Export"
           value="Ready for API/storage layer"
           divider={false}
+          valueStyle={styles.longValue}
         />
       </SettingsSection>
 
@@ -395,18 +396,21 @@ function minuteToSignedText(minutes: number): string {
 }
 
 const styles = StyleSheet.create({
+  screenContent: {
+    paddingBottom: theme.spacing.xl * 2,
+  },
   section: {
     gap: theme.spacing.md,
   },
   sectionTitle: {
     color: theme.colors.text,
-    fontSize: 16,
-    fontWeight: "900",
+    fontSize: 15,
+    fontWeight: "700",
   },
   label: {
     color: theme.colors.textMuted,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   targetList: {
     gap: theme.spacing.xs,
@@ -424,7 +428,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: theme.colors.textMuted,
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   targetInputs: {
     flexDirection: "row",
@@ -440,7 +444,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surfaceMuted,
     color: theme.colors.text,
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "700",
     paddingHorizontal: theme.spacing.sm,
     textAlign: "right",
   },
@@ -451,7 +455,7 @@ const styles = StyleSheet.create({
   unitText: {
     color: theme.colors.textMuted,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   badges: {
     flexDirection: "row",
@@ -461,12 +465,17 @@ const styles = StyleSheet.create({
   closedText: {
     color: theme.colors.textMuted,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "600",
     textAlign: "center",
   },
   errorText: {
     color: theme.colors.danger,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "600",
+  },
+  longValue: {
+    color: theme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "600",
   },
 });

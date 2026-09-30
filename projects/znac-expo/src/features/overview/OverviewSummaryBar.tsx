@@ -91,15 +91,9 @@ function todaySummary(today: IsoDate): string {
 
 const styles = StyleSheet.create({
   bar: {
-    minHeight: 78,
+    minHeight: 72,
     flexDirection: "row",
     alignItems: "center",
-    borderColor: theme.colors.tabBarBorder,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    backgroundColor: theme.colors.tabBar,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
     gap: theme.spacing.md,
   },
   period: {
@@ -121,13 +115,13 @@ const styles = StyleSheet.create({
   monthTitle: {
     color: theme.colors.text,
     fontSize: 17,
-    fontWeight: "900",
+    fontWeight: "800",
   },
   subText: {
     marginTop: 2,
     color: theme.colors.textMuted,
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   metrics: {
     flexDirection: "row",
@@ -142,12 +136,12 @@ const styles = StyleSheet.create({
   metricLabel: {
     color: theme.colors.primary,
     fontSize: 11,
-    fontWeight: "800",
+    fontWeight: "700",
   },
   metricValue: {
     marginTop: 2,
     fontSize: 20,
-    fontWeight: "900",
+    fontWeight: "800",
   },
   positiveValue: {
     color: theme.colors.success,

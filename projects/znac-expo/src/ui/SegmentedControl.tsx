@@ -50,7 +50,7 @@ export function SegmentedControl<TValue extends string>({
 
 const styles = StyleSheet.create({
   container: {
-    minHeight: 42,
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
     borderColor: theme.colors.border,
@@ -61,7 +61,7 @@ const styles = StyleSheet.create({
   },
   segment: {
     flex: 1,
-    minHeight: 34,
+    minHeight: 28,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.radius.md,
@@ -76,9 +76,10 @@ const styles = StyleSheet.create({
   label: {
     color: theme.colors.textMuted,
     fontSize: 13,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   activeLabel: {
     color: theme.colors.onPrimary,
+    fontWeight: "800",
   },
 });

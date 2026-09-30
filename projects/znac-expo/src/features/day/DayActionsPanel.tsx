@@ -79,7 +79,16 @@ export function DayActionsPanel({
           title="Clear"
           variant="danger"
           disabled={clearDisabled}
-          icon={<Trash2 color={theme.colors.shell} size={16} />}
+          icon={
+            <Trash2
+              color={
+                clearDisabled
+                  ? theme.colors.playerDisabledText
+                  : theme.colors.text
+              }
+              size={16}
+            />
+          }
           onPress={onClearDay}
           style={styles.smallButton}
         />

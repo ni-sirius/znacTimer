@@ -9,7 +9,6 @@ import { getMobileTheme } from "../../src/theme";
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 const darkTheme = getMobileTheme("dark");
-const IOS_NATIVE_TAB_BACKGROUND = "#050711";
 
 export default function TabLayout() {
   if (Platform.OS === "ios") {
@@ -22,7 +21,7 @@ export default function TabLayout() {
 function IosNativeTabs() {
   return (
     <NativeTabs
-      backgroundColor={IOS_NATIVE_TAB_BACKGROUND}
+      backgroundColor={darkTheme.colors.shell}
       blurEffect="none"
       disableTransparentOnScrollEdge
       iconColor={{
@@ -30,8 +29,8 @@ function IosNativeTabs() {
         selected: darkTheme.colors.primary,
       }}
       labelStyle={{
-        default: { color: darkTheme.colors.textMuted },
-        selected: { color: darkTheme.colors.primary },
+        default: { color: darkTheme.colors.textMuted, fontWeight: "500" },
+        selected: { color: darkTheme.colors.primary, fontWeight: "600" },
       }}
       shadowColor={darkTheme.colors.tabBarBorder}
       unstable_nativeProps={{
@@ -61,8 +60,11 @@ function AndroidTabs() {
         headerShown: false,
         tabBarActiveTintColor: darkTheme.colors.primary,
         tabBarInactiveTintColor: darkTheme.colors.textMuted,
+        tabBarLabelStyle: {
+          fontWeight: "500",
+        },
         tabBarStyle: {
-          backgroundColor: darkTheme.colors.tabBar,
+          backgroundColor: darkTheme.colors.shell,
           borderTopColor: darkTheme.colors.tabBarBorder,
         },
       }}

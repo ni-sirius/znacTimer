@@ -41,29 +41,29 @@ export function DayTypeLegend() {
 
 const styles = StyleSheet.create({
   panel: {
-    paddingVertical: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
   },
   legend: {
     flexDirection: "row",
     flexWrap: "wrap",
-    columnGap: theme.spacing.md,
-    rowGap: theme.spacing.xs,
+    columnGap: theme.spacing.sm,
+    rowGap: 0,
   },
   item: {
-    minHeight: 34,
+    minHeight: 24,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing.sm,
+    gap: theme.spacing.xs,
   },
   swatch: {
-    width: 16,
-    height: 16,
+    width: 10,
+    height: 10,
     borderRadius: theme.radius.pill,
-    borderWidth: 2,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   label: {
     color: theme.colors.textMuted,
-    fontSize: 13,
-    fontWeight: "800",
+    fontSize: 11,
+    fontWeight: "600",
   },
 });
