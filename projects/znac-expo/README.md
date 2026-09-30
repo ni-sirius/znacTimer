@@ -1,50 +1,108 @@
-# Welcome to your Expo app 👋
+# Znac Timer Expo
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Mobile Expo implementation of Znac Timer.
 
-## Get started
+This app is the first mobile phase of the desktop Znac Timer workflow. It uses
+Expo Router, SQLite, Zustand stores, and a small shared UI/theme layer based on
+the existing Znac theme JSON files.
 
-1. Install dependencies
+## Current Scope
 
-   ```bash
-   npm install
-   ```
+Implemented in this phase:
 
-2. Start the app
+- Overview screen with month summary, day list, and workday controls.
+- Calendar screen with month grid, day status colors, and month/year picker.
+- Month statistics screen.
+- Day details screen with inline editing.
+- Interruption editor with multiple break intervals.
+- Clear day confirmation dialog.
+- Settings screen with weekday-based daily target controls.
+- SQLite schema, migrations, repository API, and persistence.
+- Domain parity layer for time, calendar, calculator, and validation logic.
+- Zustand stores for month, settings, and derived workday state.
+- Dark-theme-first mobile UI based on `src/theme/source/dark.json`.
 
-   ```bash
-   npx expo start
-   ```
+Not implemented yet:
 
-In the output, you'll find options to open the app in a
+- Vacation workflow.
+- Year and all-time statistics.
+- File import/export/backup actions.
+- Full light theme polish.
+- Cloud sync or remote storage.
+- Full desktop feature parity.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Requirements
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- Node.js compatible with the project dependencies.
+- Expo Go compatible with the configured Expo SDK.
+- Android device/emulator for the primary phase 1 target.
 
-## Get a fresh project
+## Getting Started
 
-When you're ready, run:
+Install dependencies:
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Start Expo:
 
-## Learn more
+```bash
+npx expo start -c
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Open the app in Expo Go on Android.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Useful scripts:
 
-## Join the community
+```bash
+npm run lint
+npm test
+npx --no-install tsc --noEmit
+```
 
-Join our community of developers creating universal apps.
+## Project Structure
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```text
+app/
+  (tabs)/              Tab routes: Overview, Calendar, Statistics, Vacation, Settings
+  day/[date].tsx       Day details route
+  modals/              Confirmation and editor overlays
+
+src/domain/            Domain models, time/calendar helpers, calculator, validation
+src/db/                SQLite connection, schema, migrations, repository
+src/stores/            Zustand stores and selectors
+src/theme/             JSON theme source and mobile theme resolver
+src/ui/                Shared UI primitives
+src/features/          Feature-level screen components
+src/navigation/        Shared tab configuration
+```
+
+## Data and Date Rules
+
+- Domain and SQLite dates use ISO `YYYY-MM-DD`.
+- Display formatting is handled only at the UI boundary.
+- `expectedEnd` / expected finish values are display-only helpers and are not
+  stored in `DayRecord`.
+- Active workday state is derived from the current day row, not stored as a
+  separate UI state copy.
+
+## Testing
+
+Tests are written with Vitest and cover:
+
+- domain parity behavior;
+- repository and schema behavior;
+- Zustand store behavior;
+- theme resolver behavior.
+
+Run:
+
+```bash
+npm test
+```
+
+## Notes
+
+This directory is part of the root repository. It is not a nested git
+repository and should not contain its own `.git` or `.gitignore`.
