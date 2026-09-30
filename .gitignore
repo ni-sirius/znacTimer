@@ -44,6 +44,9 @@ closed_[0-1][0-9].flag
 /projects/znacpy/build/
 /projects/znacpy/dist/
 /projects/znacpy/.native-tools/
+/projects/znac-expo/node_modules/
+/projects/znac-expo/.expo/
+/projects/znac-expo/expo-env.d.ts
 *.egg-info/
 .coverage
 htmlcov/
