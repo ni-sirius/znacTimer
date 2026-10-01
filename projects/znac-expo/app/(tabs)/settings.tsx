@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import Constants from "expo-constants";
 import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ThemeMode } from "../../src/db/repository.types";
@@ -16,6 +17,7 @@ import {
 } from "../../src/ui";
 
 const theme = getMobileTheme("dark");
+const APP_VERSION = Constants.expoConfig?.version;
 const WEEKDAYS = [
   "Monday",
   "Tuesday",
@@ -130,6 +132,9 @@ export default function SettingsScreen() {
         <Text style={styles.closedText}>Closed month blocks schedule changes.</Text>
       )}
       {settingsError && <Text style={styles.errorText}>{settingsError}</Text>}
+      <Text style={styles.appDetails}>
+        znacTime{APP_VERSION ? ` ${APP_VERSION}` : ""}
+      </Text>
     </Screen>
   );
 }
@@ -477,5 +482,11 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: 12,
     fontWeight: "600",
+  },
+  appDetails: {
+    color: theme.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
   },
 });
