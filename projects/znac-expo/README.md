@@ -33,22 +33,38 @@ Not implemented yet:
 
 ## Requirements
 
-- Node.js compatible with the project dependencies.
+- Node.js 22.13 or newer.
 - Expo Go compatible with the configured Expo SDK.
 - Android device/emulator for the primary phase 1 target.
 
 ## Getting Started
 
-Install dependencies:
+On Windows, bootstrap the project once after cloning or whenever the lockfile
+changes:
 
-```bash
-npm install
+```powershell
+.\scripts\bootstrap-windows.cmd
 ```
 
-Start Expo:
+The bootstrapper checks for Node.js 22.13 or newer. If Node.js is missing or
+outdated and Windows Package Manager is available, it can install the current
+Node.js LTS release after asking for confirmation. A Windows elevation prompt
+may appear.
+
+For normal daily development, start Expo with:
+
+```powershell
+.\scripts\dev-windows.cmd
+```
+
+Arguments are forwarded to Expo, so a cache-clearing start is available with
+`.\scripts\dev-windows.cmd --clear`.
+
+The equivalent manual commands are:
 
 ```bash
-npx expo start -c
+npm ci
+npm run start -- --clear
 ```
 
 Open the app in Expo Go on Android.
