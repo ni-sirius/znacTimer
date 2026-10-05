@@ -300,10 +300,23 @@ class MonthTableModel(QAbstractTableModel):
         return ""
 
     def _badge_data(self, entry, column):
+        try:
+            input_due = datetime.strptime(entry.date, DATE_FORMAT).date() <= self._today
+        except (TypeError, ValueError):
+            input_due = False
+        input_due = (
+            input_due
+            and not self.month_closed
+            and (entry.expected_work_minutes is None or entry.expected_work_minutes > 0)
+        )
+        empty_state = BadgeState.ACTION if input_due else BadgeState.EMPTY
         if column == Column.SPECIAL_DAY:
+            state = entry.row_color or BadgeState.EMPTY
+            if state in (DayStatus.MISSING_TIMES, DayStatus.MISSING_TIMES_TODAY):
+                state = empty_state
             return {
                 "texts": [entry.special or NORMAL_DAY],
-                "state": entry.row_color or BadgeState.EMPTY,
+                "state": state,
                 "full_width": True,
                 "plain": self.month_closed,
             }
@@ -383,7 +396,7 @@ class MonthTableModel(QAbstractTableModel):
                     {
                         "text": "+",
                         "icon": InterruptionAction.ADD,
-                        "state": BadgeState.EMPTY,
+                        "state": empty_state,
                         "target": {
                             "action": InterruptionAction.ADD,
                             "period_index": None,
@@ -394,7 +407,7 @@ class MonthTableModel(QAbstractTableModel):
                 "kind": BadgeKind.INTERRUPTION,
                 "texts": texts if texts else ["+"],
                 "items": items,
-                "state": BadgeState.INFO if active else BadgeState.EMPTY,
+                "state": BadgeState.INFO if active else empty_state,
                 "total_pause_time": total_pause_time,
             }
 
@@ -423,8 +436,9 @@ class MonthTableModel(QAbstractTableModel):
         return {
             "texts": [value],
             "state": (
-                BadgeState.SUCCESS if value != UNSET_TIME else BadgeState.EMPTY
+                BadgeState.SUCCESS if value != UNSET_TIME else empty_state
             ),
+            "outline": value == UNSET_TIME and empty_state == BadgeState.ACTION,
             "plain": self.month_closed,
         }
 

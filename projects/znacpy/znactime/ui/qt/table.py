@@ -750,6 +750,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 (BadgeState.SUCCESS, "success"),
                 (BadgeState.INFO, "info"),
                 (BadgeState.EMPTY, "empty"),
+                (BadgeState.ACTION, "action"),
             )
         }
         row_color = row_color_hex(state, dark=dark)

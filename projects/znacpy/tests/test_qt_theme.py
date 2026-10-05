@@ -128,7 +128,7 @@ class QtThemeTest(unittest.TestCase):
                 "player.border": "tokens.panel_border",
                 "menu.text": "tokens.panel_text",
                 "header.muted": "tokens.panel_muted",
-                "table.expected_text": "tokens.danger_text",
+                "table.expected_text": "primary",
                 "table.info_fill": "tokens.info_surface",
                 "table.interval_separator": "tokens.info_text",
             }

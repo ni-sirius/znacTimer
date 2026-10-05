@@ -16,6 +16,7 @@ class BadgeKind:
 
 class BadgeState:
     EMPTY = "empty"
+    ACTION = "action"
     INFO = "info"
     SUCCESS = "success"
     EXPECTED = "expected"

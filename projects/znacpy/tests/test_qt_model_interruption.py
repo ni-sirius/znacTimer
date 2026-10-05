@@ -70,7 +70,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(model.index(0, 5).data(), "00:00")
         self.assertEqual(
             model.index(0, 2).data(BADGE_ROLE)["state"],
-            "missing_times",
+            "action",
         )
 
     def test_only_interruption_starts_custom_edit_path(self):
@@ -274,17 +274,51 @@ class QtModelInterruptionTest(unittest.TestCase):
         badge = model.index(0, 4).data(BADGE_ROLE)
 
         self.assertEqual(badge["texts"], ["--:--"])
-        self.assertEqual(badge["state"], "empty")
+        self.assertEqual(badge["state"], "action")
+        self.assertTrue(badge["outline"])
 
-    def test_expected_badge_uses_red_outline_colors(self):
+    def test_expected_badge_uses_purple_outline_colors(self):
         delegate = CurrentTimeDelegate()
 
         with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
             colors = delegate._badge_colors("expected")
 
         self.assertEqual(colors["fill"].name(), "#ffffff")
-        self.assertEqual(colors["text"].name(), "#c23b4d")
-        self.assertEqual(colors["border"].name(), "#c23b4d")
+        self.assertEqual(colors["text"].name(), "#6941c6")
+        self.assertEqual(colors["border"].name(), "#6941c6")
+
+    def test_input_prompts_only_highlight_due_workdays_in_open_month(self):
+        model = MonthTableModel()
+        model.set_entries([
+            DayEntry("", "17.06.2024", "", "--:--", "--:--", "00:00"),
+            DayEntry("", "18.06.2024", "", "--:--", "--:--", "00:00"),
+            DayEntry("", "19.06.2024", "", "--:--", "--:--", "00:00"),
+            DayEntry("", "16.06.2024", "Weekend", "--:--", "--:--", "00:00",
+                     row_color="weekend", expected_work_minutes=0),
+        ])
+        model.recalculate(today=date(2024, 6, 18), autosave=False)
+
+        for row in (0, 1):
+            self.assertEqual(model.index(row, 2).data(BADGE_ROLE)["state"], "action")
+            for column in (3, 4):
+                badge = model.index(row, column).data(BADGE_ROLE)
+                self.assertEqual(badge["state"], "action")
+                self.assertTrue(badge["outline"])
+            pause = model.index(row, 5).data(BADGE_ROLE)["items"][-1]
+            self.assertEqual(pause["state"], "action")
+            self.assertFalse(pause.get("outline", False))
+
+        for row in (2, 3):
+            self.assertEqual(model.index(row, 3).data(BADGE_ROLE)["state"], "empty")
+            self.assertFalse(model.index(row, 3).data(BADGE_ROLE)["outline"])
+            self.assertEqual(
+                model.index(row, 5).data(BADGE_ROLE)["items"][-1]["state"], "empty"
+            )
+        self.assertEqual(model.index(2, 2).data(BADGE_ROLE)["state"], "empty")
+
+        model.set_month_closed(True)
+        self.assertEqual(model.index(0, 2).data(BADGE_ROLE)["state"], "empty")
+        self.assertEqual(model.index(0, 3).data(BADGE_ROLE)["state"], "empty")
 
     def test_expected_badge_uses_accent_colors_when_hovered(self):
         delegate = CurrentTimeDelegate()
