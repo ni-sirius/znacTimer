@@ -29,7 +29,7 @@ from znactime.storage.csv_format import spreadsheet_safe_text
 from znactime.storage.legacy_csv_import import preflight_legacy_data
 from znactime.storage.legacy_csv_import import LegacyImportCancelled
 from znactime.storage.sqlite.repository import SQLiteRepository
-from znactime.storage.sqlite.schema import SCHEMA_VERSION, SCHEMA_V6_INITIAL_SQL
+from znactime.storage.sqlite.schema import SCHEMA_VERSION, SCHEMA_V6_INITIAL_SQL, SCHEMA_V6_SQL
 
 
 class SQLiteRepositoryTest(unittest.TestCase):
@@ -301,12 +301,30 @@ class SQLiteRepositoryTest(unittest.TestCase):
             """,
             (str(uuid.uuid4()), dataset_id),
         )
+        month_id = sql.execute(
+            "INSERT INTO months(dataset_id, year, month, status, opening_balance_minutes, created_at, updated_at) "
+            "VALUES (?, 2024, 6, 'open', 0, 'x', 'x')",
+            (dataset_id,),
+        ).lastrowid
+        sql.execute(
+            "INSERT INTO day_entries(month_id, work_date, special_day, start_minute, end_minute, "
+            "break_duration_minutes, expected_work_minutes, created_at, updated_at) "
+            "VALUES (?, '2024-06-03', 'Normal day', 480, 1020, 30, 480, 'x', 'x')",
+            (month_id,),
+        )
         sql.commit()
         sql.close()
 
         upgraded = SQLiteRepository(legacy_path)
         try:
             self.assertEqual(upgraded.list_work_schedules()[0].special_day_minutes, 0)
+            self.assertEqual(upgraded.load_month(2024, 6).days[0].start_minute, 480)
+            july = upgraded.view_month(2024, 7)
+            closed = upgraded.close_month(
+                2024, 7, expected_revision=july.revision, mark_unresolved_no_data=True,
+            )
+            self.assertEqual(closed.closing_balance_minutes, 0)
+            self.assertEqual(upgraded.load_month(2024, 6).status, "open")
         finally:
             upgraded.close()
         recovery = legacy_path.parent / "recovery"
@@ -726,6 +744,10 @@ class SQLiteRepositoryTest(unittest.TestCase):
         reopened = self.repository.reopen_month(
             2024, 6, expected_revision=closed.revision
         )
+        # Reopening removes the successor's carry, even with complete work still stored.
+        self.assertEqual(self.repository.get_carry_over(2024, 7), 0)
+        self.assertEqual(self.repository.preview_month_close(2024, 7).opening_balance_minutes, 0)
+        self.assertEqual(self.repository.view_month(2024, 7).opening_balance_minutes, 0)
         self.assertEqual(reopened.status, "open")
         self.assertTrue(all(day.daily_overtime_minutes is None for day in reopened.days))
         changed = self.repository.update_day(
@@ -736,7 +758,7 @@ class SQLiteRepositoryTest(unittest.TestCase):
         )
         self.assertEqual(changed.special_day, "Changed")
 
-    def test_invalid_open_breaks_contribute_zero_to_lazy_carry(self):
+    def test_invalid_open_breaks_contribute_zero_to_close_preview(self):
         june = self.repository.get_or_create_month(2024, 6)
         july = self.repository.get_or_create_month(2024, 7)
         open_pause_day = june.days[2]
@@ -767,6 +789,114 @@ class SQLiteRepositoryTest(unittest.TestCase):
             0,
         )
         self.assertEqual(july.opening_balance_minutes, 0)
+
+    def test_carry_requires_the_previous_month_to_be_closed(self):
+        june = self.repository.get_or_create_month(2024, 6)
+        day = june.days[2]
+        self.repository.update_day(
+            day.work_date, expected_revision=day.revision,
+            start_minute=480, end_minute=1020, break_duration_minutes=30,
+            fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
+        )
+        self.assertEqual(self.repository.preview_month_close(2024, 6).closing_balance_minutes, 30)
+        before = self.repository.list_months()
+        self.assertEqual(self.repository.get_carry_over(2024, 7), 0)
+        self.assertEqual(self.repository.preview_month_close(2024, 7).opening_balance_minutes, 0)
+        virtual = self.repository.view_month(2024, 7)
+        self.assertEqual(virtual.opening_balance_minutes, 0)
+        self.assertFalse(virtual.materialized)
+        self.assertEqual(self.repository.list_months(), before)
+        self.assertEqual(self.repository.get_or_create_month(2024, 7).opening_balance_minutes, 0)
+
+        closed = self.repository.close_month(
+            2024, 6, expected_revision=june.revision, mark_unresolved_no_data=True,
+        )
+        self.assertEqual(self.repository.get_carry_over(2024, 7), 30)
+        self.assertEqual(self.repository.preview_month_close(2024, 7).opening_balance_minutes, 30)
+        self.assertEqual(self.repository.view_month(2024, 7).opening_balance_minutes, 30)
+        # A further virtual month does not skip the open July.
+        august = self.repository.view_month(2024, 8)
+        self.assertEqual(august.opening_balance_minutes, 0)
+        self.assertFalse(august.materialized)
+        self.assertEqual(self.repository.load_month(2024, 6), closed)
+
+    def test_carry_does_not_skip_a_missing_or_open_previous_month(self):
+        may = self.repository.get_or_create_month(2024, 5)
+        day = may.days[0]
+        self.repository.update_day(
+            day.work_date, expected_revision=day.revision,
+            start_minute=480, end_minute=1020, break_duration_minutes=30,
+            fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
+        )
+        self.repository.close_month(
+            2024, 5, expected_revision=may.revision, mark_unresolved_no_data=True,
+        )
+        self.assertEqual(self.repository.get_carry_over(2024, 6), 30)
+        for materialized in (False, True):
+            with self.subTest(previous_materialized=materialized):
+                if materialized:
+                    self.repository.get_or_create_month(2024, 6)
+                self.assertEqual(self.repository.get_carry_over(2024, 7), 0)
+                self.assertEqual(self.repository.view_month(2024, 7).opening_balance_minutes, 0)
+
+    def test_carry_across_year_boundary_uses_the_signed_closed_balance(self):
+        december = self.repository.get_or_create_month(2023, 12)
+        day = december.days[0]
+        self.repository.update_day(
+            day.work_date, expected_revision=day.revision,
+            start_minute=480, end_minute=960, break_duration_minutes=30,
+            fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
+        )
+        self.assertEqual(self.repository.view_month(2024, 1).opening_balance_minutes, 0)
+        self.repository.close_month(
+            2023, 12, expected_revision=december.revision, mark_unresolved_no_data=True,
+        )
+        self.assertEqual(self.repository.get_carry_over(2024, 1), -30)
+        january = self.repository.view_month(2024, 1)
+        self.assertEqual(january.opening_balance_minutes, -30)
+        self.assertFalse(january.materialized)
+        self.assertIsNone(self.repository.load_month(2024, 1))
+
+    def test_loading_open_month_clears_old_provisional_carry(self):
+        self.repository.get_or_create_month(2024, 6)
+        july = self.repository.get_or_create_month(2024, 7)
+        self.sql.execute(
+            "UPDATE months SET opening_balance_minutes = 90 WHERE year = 2024 AND month = 7"
+        )
+        self.assertEqual(self.repository.get_carry_over(2024, 7), 0)
+        self.assertEqual(self.repository.preview_month_close(2024, 7).opening_balance_minutes, 0)
+        with self.assertRaisesRegex(StorageConflict, "carry-over changed"):
+            self.repository.close_month(
+                2024, 7, expected_revision=july.revision, mark_unresolved_no_data=True,
+            )
+        refreshed = self.repository.view_month(2024, 7)
+        self.assertEqual(refreshed.opening_balance_minutes, 0)
+        self.assertEqual(refreshed.revision, july.revision + 1)
+        self.assertEqual(refreshed.days, july.days)
+
+    def test_closed_carry_snapshot_survives_reopening_its_previous_month(self):
+        june = self.repository.get_or_create_month(2024, 6)
+        day = june.days[2]
+        self.repository.update_day(
+            day.work_date, expected_revision=day.revision,
+            start_minute=480, end_minute=1020, break_duration_minutes=30,
+            fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
+        )
+        june = self.repository.close_month(
+            2024, 6, expected_revision=june.revision, mark_unresolved_no_data=True,
+        )
+        july = self.repository.view_month(2024, 7)
+        closed = self.repository.close_month(
+            2024, 7, expected_revision=july.revision, mark_unresolved_no_data=True,
+        )
+        self.assertEqual(closed.opening_balance_minutes, 30)
+        self.repository.reopen_month(2024, 6, expected_revision=june.revision)
+        self.assertEqual(self.repository.view_month(2024, 7), closed)
+        self.assertEqual(self.repository.get_carry_over(2024, 7), 30)
+        self.assertTrue(self.repository.month_has_carry_discontinuity(2024, 7))
+        reopened = self.repository.reopen_month(2024, 7, expected_revision=closed.revision)
+        self.assertEqual(reopened.status, "open")
+        self.assertEqual(self.repository.view_month(2024, 7).opening_balance_minutes, 0)
 
     def test_close_requires_blank_normal_days_to_be_explicitly_classified(self):
         month = self.repository.get_or_create_month(2024, 6)
@@ -931,11 +1061,6 @@ class SQLiteRepositoryTest(unittest.TestCase):
     def test_reopened_history_can_be_reclosed_without_rewriting_closed_successor(self):
         january = self.repository.get_or_create_month(2024, 1)
         february = self.repository.get_or_create_month(2024, 2)
-        with self.assertRaisesRegex(StorageValidationError, "earlier month"):
-            self.repository.close_month(
-                2024, 2, expected_revision=february.revision,
-                mark_unresolved_no_data=True,
-            )
         january = self.repository.close_month(
             2024, 1, expected_revision=january.revision,
             mark_unresolved_no_data=True,
@@ -968,6 +1093,98 @@ class SQLiteRepositoryTest(unittest.TestCase):
         self.assertEqual(january.closing_balance_minutes, 30)
         self.assertEqual(preserved_february, february)
         self.assertTrue(self.repository.month_has_carry_discontinuity(2024, 2))
+
+    def test_month_can_close_before_prior_open_month_and_preserves_its_balance_snapshot(self):
+        june = self.repository.get_or_create_month(2024, 6)
+        day = june.days[2]
+        edited = self.repository.update_day(
+            day.work_date, expected_revision=day.revision,
+            start_minute=480, end_minute=1020, break_duration_minutes=30,
+            fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
+        )
+        june_before = self.repository.load_month(2024, 6)
+        july = self.repository.view_month(2024, 7)
+        self.assertEqual(july.opening_balance_minutes, 0)
+        self.assertFalse(july.materialized)
+        closed = self.repository.close_month(
+            2024, 7, expected_revision=july.revision, mark_unresolved_no_data=True,
+        )
+        self.assertEqual(closed.status, "closed")
+        self.assertEqual(closed.opening_balance_minutes, 0)
+        self.assertEqual(closed.closing_balance_minutes, 0)
+        self.assertEqual(self.repository.load_month(2024, 6), june_before)
+        self.assertFalse(self.repository.month_has_carry_discontinuity(2024, 7))
+
+        self.repository.update_day(
+            day.work_date, expected_revision=edited.revision, end_minute=1050,
+            fields=frozenset(("end_minute",)),
+        )
+        self.assertFalse(self.repository.month_has_carry_discontinuity(2024, 7))
+        refreshed_june = self.repository.view_month(2024, 6)
+        self.repository.close_month(
+            2024, 6, expected_revision=refreshed_june.revision, mark_unresolved_no_data=True,
+        )
+        self.assertEqual(self.repository.load_month(2024, 7), closed)
+        self.assertTrue(self.repository.month_has_carry_discontinuity(2024, 7))
+
+    def test_v6_upgrade_preserves_records_and_allows_closing_after_an_open_month(self):
+        may = self.repository.get_or_create_month(2024, 5)
+        self.repository.close_month(
+            2024, 5, expected_revision=may.revision, mark_unresolved_no_data=True,
+        )
+        self.repository.get_or_create_month(2024, 6)
+        self.repository.get_or_create_month(2024, 7)
+        before = self.repository.list_months()
+
+        # Recreate the prior release's trigger and metadata on populated data.
+        canonical = sqlite3.connect(":memory:")
+        try:
+            canonical.executescript(SCHEMA_V6_SQL)
+            old_guard = canonical.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'month_close_guard'"
+            ).fetchone()[0]
+        finally:
+            canonical.close()
+        self.repository.close()
+        self.sql.executescript("DROP TRIGGER month_close_guard;\n" + old_guard + ";")
+        self.sql.execute("DELETE FROM schema_migrations WHERE version > 6")
+        self.sql.execute(
+            "INSERT INTO schema_migrations(version, applied_at, app_version) VALUES(6, 'x', 'x')"
+        )
+        self.sql.execute("PRAGMA user_version = 6")
+        self.repository = SQLiteRepository(self.path)
+        self.assertEqual(self.repository.list_months(), before)
+        self.assertEqual(self.sql.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+        july = self.repository.load_month(2024, 7)
+        closed = self.repository.close_month(
+            2024, 7, expected_revision=july.revision, mark_unresolved_no_data=True,
+        )
+        self.assertEqual(closed.status, "closed")
+        self.assertEqual(self.repository.load_month(2024, 6), before[1])
+        self.assertEqual(self.repository.load_month(2024, 5), before[0])
+
+    def test_direct_sql_can_close_valid_month_with_prior_month_open(self):
+        previous = self.repository.get_or_create_month(2024, 5)
+        self.repository.get_or_create_month(2024, 6)
+        month_id = self.sql.execute(
+            "SELECT id FROM months WHERE year = 2024 AND month = 6"
+        ).fetchone()[0]
+        self.sql.execute(
+            "UPDATE day_entries SET special_day = 'No data', expected_work_minutes = 0 WHERE month_id = ?",
+            (month_id,),
+        )
+        self.sql.execute(
+            "INSERT INTO closed_day_results(day_entry_id, daily_overtime_minutes, running_balance_minutes) "
+            "SELECT id, 0, 0 FROM day_entries WHERE month_id = ?",
+            (month_id,),
+        )
+        self.sql.execute(
+            "UPDATE months SET status = 'closed', closing_balance_minutes = 0, "
+            "closed_at = '2024-07-01T00:00:00Z' WHERE id = ?",
+            (month_id,),
+        )
+        self.assertEqual(self.repository.load_month(2024, 6).status, "closed")
+        self.assertEqual(self.repository.load_month(2024, 5), previous)
 
     def test_direct_sql_close_requires_a_valid_running_balance_chain(self):
         month = self.repository.get_or_create_month(2024, 6)

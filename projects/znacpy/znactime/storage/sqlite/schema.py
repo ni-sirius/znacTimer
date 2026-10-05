@@ -5,7 +5,7 @@ import sqlite3
 from functools import lru_cache
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 SCHEMA_V6_INITIAL_TABLES_SQL = r"""
@@ -622,10 +622,39 @@ SCHEMA_V6_TRIGGERS_SQL = _replace_trigger(
 )
 
 
-SCHEMA_SQL = SCHEMA_TABLES_SQL + SCHEMA_V6_TRIGGERS_SQL
+SCHEMA_V6_SQL = SCHEMA_TABLES_SQL + SCHEMA_V6_TRIGGERS_SQL
 SCHEMA_V6_INITIAL_SQL = (
     SCHEMA_V6_INITIAL_TABLES_SQL + SCHEMA_V6_INITIAL_TRIGGERS_SQL
 )
+
+
+# A closed month is a balance snapshot. Earlier open months can still be edited;
+# any resulting mismatch is reported as a carry-over discontinuity.
+MONTH_CLOSE_GUARD_V7_SQL = _MONTH_CLOSE_GUARD_V6_PLANNED_MINUTES.replace(
+    """    OR EXISTS (
+        SELECT 1 FROM months prior_open
+        WHERE prior_open.dataset_id = OLD.dataset_id
+          AND prior_open.status = 'open'
+          AND prior_open.year * 12 + prior_open.month < OLD.year * 12 + OLD.month
+          AND prior_open.year * 12 + prior_open.month > COALESCE(
+              (
+                  SELECT MAX(prior_closed.year * 12 + prior_closed.month)
+                  FROM months prior_closed
+                  WHERE prior_closed.dataset_id = OLD.dataset_id
+                    AND prior_closed.status = 'closed'
+                    AND prior_closed.year * 12 + prior_closed.month
+                        < OLD.year * 12 + OLD.month
+              ),
+              0
+          )
+    )
+""",
+    "",
+)
+SCHEMA_V7_TRIGGERS_SQL = _replace_trigger(
+    SCHEMA_V6_TRIGGERS_SQL, "month_close_guard", MONTH_CLOSE_GUARD_V7_SQL,
+)
+SCHEMA_SQL = SCHEMA_TABLES_SQL + SCHEMA_V7_TRIGGERS_SQL
 
 
 def _normalized_schema_sql(sql: str) -> str:
@@ -663,6 +692,17 @@ def initial_v6_schema_manifest() -> dict[tuple[str, str], str]:
     canonical = sqlite3.connect(":memory:", isolation_level=None)
     try:
         canonical.executescript(SCHEMA_V6_INITIAL_SQL)
+        return schema_manifest(canonical)
+    finally:
+        canonical.close()
+
+
+@lru_cache(maxsize=1)
+def v6_schema_manifest() -> dict[tuple[str, str], str]:
+    """Recognize the amended v6 definition before migrating its close rule."""
+    canonical = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        canonical.executescript(SCHEMA_V6_SQL)
         return schema_manifest(canonical)
     finally:
         canonical.close()

@@ -516,26 +516,27 @@ publication failure rolls back the database transaction.
 
 ### Closure and carry-over state machine
 
-Runtime closure protects adjacent carry dependencies without imposing a global closure
-order. An open month remains editable when an unrelated later month is closed. It cannot
-be closed when its immediate successor is already closed, because that would invalidate
-the successor's immutable opening snapshot. An absent preceding month contributes zero;
-this is distinct from an existing open month.
+The current runtime contract (updated 2026-10-05) is defined by FR-049 through FR-056
+in [the functional requirements](../../architecture/FUNCTIONAL_REQUIREMENTS.md).
+Past and current months can close independently when their own close conditions pass,
+including when earlier months are open or later months are already closed.
 
-Creating an open month snapshots the preceding closed balance when available. Closing a
-month validates/recalculates from persisted semantic values, stores immutable day results
-and its closing balance, then updates the immediate existing open successor's opening
-balance in the same transaction. Later schedule changes affect only open-day expected
-minutes and never alter a closed result. Legacy import preserves gaps and independent
-open/closed flags. A closed legacy month after an open month is a warning, not a blocker;
-the stored closed results remain authoritative. Missing calendar rows in a partial CSV
-are generated as blank days and reported. The migrator never edits the selected legacy
-source, and every adjacent closed-to-successor carry value is validated before promotion.
+An open month's displayed and calculated carry-over comes only from the immediately
+previous calendar month's frozen closing balance when that month is closed. An open or
+absent predecessor contributes zero. Derivation never skips a calendar gap or includes
+open-month results, and works across year boundaries. Selecting a materialized open
+month refreshes only its opening balance; virtual month views do not write rows.
 
-Closure preconditions are explicit: no active workday, no incomplete/overlapping/outside-
-workday interruption, no invalid start/end pair, no unresolved migration ambiguity, and
-no already-closed immediate successor. The initial release has no reopen command. A future correction
-feature requires an auditable amendment design and server permission policy.
+Closing validates inputs, persists immutable day results and a closing balance, and
+does not write a successor. Closed snapshots remain unchanged when earlier months are
+reopened or corrected. A closed month whose opening no longer matches the currently
+allowed carry-over displays a discontinuity marker. Explicit reopening deletes its
+result snapshots and permits its opening and results to be refreshed.
+
+Closure requires a non-future month, valid work intervals and interruptions, resolved
+planned work, and complete, consistent result snapshots. Legacy imports never rewrite
+their source and retain their separate normalization and recovery checks described in
+[the database dictionary](../../DATABASE_SCHEMA.md).
 
 ## Future cloud-sync enablement gate
 

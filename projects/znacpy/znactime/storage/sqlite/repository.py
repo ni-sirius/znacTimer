@@ -57,6 +57,7 @@ from znactime.storage.sqlite.schema import (
     SCHEMA_SQL,
     SCHEMA_VERSION,
     initial_v6_schema_manifest,
+    v6_schema_manifest,
     schema_manifest,
     schema_definition_mismatches,
 )
@@ -168,10 +169,6 @@ def _validate_break_layout(breaks: tuple[BreakRecord, ...]) -> None:
     for previous, current in zip(ordered, ordered[1:]):
         if previous.end_minute is None or current.start_minute < previous.end_minute:
             raise StorageValidationError("Break periods cannot overlap.")
-
-
-def _month_index(year: int, month: int) -> int:
-    return year * 12 + month
 
 
 def _unresolved_planned_day(row) -> bool:
@@ -339,23 +336,7 @@ class SQLiteRepository:
             raise translate_error(error) from error
 
         if version == SCHEMA_VERSION and migration == SCHEMA_VERSION:
-            if schema_manifest(self._connection) != initial_v6_schema_manifest():
-                return None
-            backup_path = self._create_migration_backup(version, migration)
-            try:
-                with transaction(self._connection) as db:
-                    for statement in _migration_statements(MIGRATION_V6_AMENDMENT):
-                        db.execute(statement)
-                    db.execute(
-                        "UPDATE schema_migrations SET applied_at = ?, app_version = ? "
-                        "WHERE version = ?",
-                        (_utc_text(), VERSION, SCHEMA_VERSION),
-                    )
-                    self._verify_version()
-            except Exception as error:
-                self._add_recovery_location(error, backup_path)
-                raise
-            return backup_path
+            return None
         if version != migration or version not in MIGRATIONS:
             return None
 
@@ -377,6 +358,11 @@ class SQLiteRepository:
                             f"No migration is available from database schema {version}."
                         )
                     self._validate_migration_source(version)
+                    if version == 6 and schema_manifest(db) == initial_v6_schema_manifest():
+                        # Early v6 databases need the planned-minute amendment
+                        # before the ordinary v6-to-v7 trigger migration.
+                        for statement in _migration_statements(MIGRATION_V6_AMENDMENT):
+                            db.execute(statement)
                     for statement in _migration_statements(migration_sql):
                         if (
                             version == 3
@@ -500,6 +486,10 @@ class SQLiteRepository:
             )
 
     def _validate_migration_source(self, version: int) -> None:
+        if version == 6:
+            actual = schema_manifest(self._connection)
+            if actual not in (v6_schema_manifest(), initial_v6_schema_manifest()):
+                raise StorageCorrupt("The database schema v6 definitions are incomplete or altered.")
         if version != 2:
             return
         invalid_schedule = self._connection.execute(
@@ -758,44 +748,20 @@ class SQLiteRepository:
         ).fetchall()
 
     def _derived_opening_balance(self, db, year: int, month: int) -> int:
-        target = _month_index(year, month)
-        checkpoint = db.execute(
+        """Carry only the immediately preceding calendar month's closed balance."""
+        previous_year, previous_month = (
+            (year, month - 1) if month > 1 else (year - 1, 12)
+        )
+        previous = db.execute(
             """
-            SELECT year, month, closing_balance_minutes
+            SELECT closing_balance_minutes
             FROM months
             WHERE dataset_id = ? AND status = 'closed'
-              AND year * 12 + month < ?
-            ORDER BY year DESC, month DESC LIMIT 1
+              AND year = ? AND month = ?
             """,
-            (self._dataset_id(db), target),
+            (self._dataset_id(db), previous_year, previous_month),
         ).fetchone()
-        if checkpoint is None:
-            anchor = db.execute(
-                """
-                SELECT year, month, opening_balance_minutes
-                FROM months
-                WHERE dataset_id = ? AND year * 12 + month <= ?
-                ORDER BY year, month LIMIT 1
-                """,
-                (self._dataset_id(db), target),
-            ).fetchone()
-            if anchor is None:
-                return 0
-            checkpoint_index = _month_index(anchor["year"], anchor["month"]) - 1
-            running = anchor["opening_balance_minutes"]
-        else:
-            checkpoint_index = _month_index(checkpoint["year"], checkpoint["month"])
-            running = checkpoint["closing_balance_minutes"]
-        rows = self._calculation_rows(
-            db,
-            where=(
-                "month.dataset_id = ? AND month.status = 'open' "
-                "AND month.year * 12 + month.month > ? "
-                "AND month.year * 12 + month.month < ?"
-            ),
-            parameters=(self._dataset_id(db), checkpoint_index, target),
-        )
-        return running + sum(self._day_overtime_minutes(row) for row in rows)
+        return previous["closing_balance_minutes"] if previous is not None else 0
 
     def _refresh_open_month_carry(self, year: int, month: int) -> None:
         with transaction(self._connection) as db:
@@ -1302,30 +1268,9 @@ class SQLiteRepository:
             if _unresolved_planned_day(row)
         )
 
-    def _earlier_open_chain_exists(self, db, year: int, month: int) -> bool:
-        target = _month_index(year, month)
-        return db.execute(
-            """
-            SELECT 1 FROM months prior_open
-            WHERE prior_open.dataset_id = ? AND prior_open.status = 'open'
-              AND prior_open.year * 12 + prior_open.month < ?
-              AND prior_open.year * 12 + prior_open.month > COALESCE(
-                  (
-                      SELECT MAX(prior_closed.year * 12 + prior_closed.month)
-                      FROM months prior_closed
-                      WHERE prior_closed.dataset_id = prior_open.dataset_id
-                        AND prior_closed.status = 'closed'
-                        AND prior_closed.year * 12 + prior_closed.month < ?
-                  ),
-                  0
-              )
-            LIMIT 1
-            """,
-            (self._dataset_id(db), target, target),
-        ).fetchone() is not None
-
     def _preview_in_transaction(self, db, month_row) -> MonthClosePreview:
-        running = month_row["opening_balance_minutes"]
+        opening = self._derived_opening_balance(db, month_row["year"], month_row["month"])
+        running = opening
         calculation_rows = self._calculation_rows(db, month_id=month_row["id"])
         running += sum(self._day_overtime_minutes(row) for row in calculation_rows)
         unresolved = tuple(
@@ -1335,7 +1280,7 @@ class SQLiteRepository:
         return MonthClosePreview(
             year=month_row["year"],
             month=month_row["month"],
-            opening_balance_minutes=month_row["opening_balance_minutes"],
+            opening_balance_minutes=opening,
             closing_balance_minutes=running,
             unresolved_days=unresolved,
         )
@@ -1392,27 +1337,7 @@ class SQLiteRepository:
             ).fetchone()
             if current is None or current["status"] != "closed":
                 return False
-            previous_year, previous_month = (
-                (year, month - 1) if month > 1 else (year - 1, 12)
-            )
-            previous = db.execute(
-                """
-                SELECT id, status, closing_balance_minutes
-                FROM months WHERE dataset_id = ? AND year = ? AND month = ?
-                """,
-                (self._dataset_id(db), previous_year, previous_month),
-            ).fetchone()
-            if previous is None:
-                return False
-            if previous["status"] == "closed":
-                expected = previous["closing_balance_minutes"]
-            else:
-                expected = self._derived_opening_balance(
-                    db, previous_year, previous_month
-                ) + sum(
-                    self._day_overtime_minutes(row)
-                    for row in self._calculation_rows(db, month_id=previous["id"])
-                )
+            expected = self._derived_opening_balance(db, year, month)
             return current["opening_balance_minutes"] != expected
 
     @_repository_operation
@@ -1491,10 +1416,6 @@ class SQLiteRepository:
             if derived_opening != month_row["opening_balance_minutes"]:
                 raise StorageConflict(
                     "The carry-over changed. Reload the month and review it before closing."
-                )
-            if self._earlier_open_chain_exists(db, year, month):
-                raise StorageValidationError(
-                    "An earlier month after the latest closed checkpoint is still open."
                 )
             unresolved = self._unresolved_close_days(db, month_row["id"])
             if unresolved and not mark_unresolved_no_data:

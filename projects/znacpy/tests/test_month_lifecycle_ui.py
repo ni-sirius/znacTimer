@@ -1,13 +1,17 @@
 import os
+import tempfile
 import unittest
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from znactime.core.models import MonthClosePreview
-from znactime.ui.qt import QApplication, QMessageBox
+from znactime.storage.csv_export import month_rows
+from znactime.storage.sqlite.repository import SQLiteRepository
+from znactime.ui.qt import QApplication, QMessageBox, QPalette, QSettings
 from znactime.ui.qt.app import TimeTrackerApp
 
 
@@ -70,6 +74,47 @@ class MonthLifecycleUiTest(unittest.TestCase):
             expected_revision=7,
         )
         window.load_month.assert_called_once_with()
+
+    def test_month_navigation_displays_and_exports_carry_only_after_previous_closes(self):
+        palette = QPalette(self.app.palette())
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteRepository.create(Path(directory) / "app.db")
+            window = None
+            try:
+                june = repository.get_or_create_month(2024, 6)
+                day = june.days[2]
+                repository.update_day(
+                    day.work_date, expected_revision=day.revision,
+                    start_minute=480, end_minute=1020, break_duration_minutes=30,
+                    fields=frozenset(("start_minute", "end_minute", "break_duration_minutes")),
+                )
+                settings = QSettings(str(Path(directory) / "settings.ini"), QSettings.Format.IniFormat)
+                window = TimeTrackerApp(repository=repository, settings=settings)
+                window.header.set_period(2024, 7)
+                window.load_month()
+                self.assertEqual(window.header.carry_over_label.text(), "Carry over: 00:00")
+                self.assertEqual(window.table.model.carry_over, 0)
+                self.assertEqual(list(month_rows(window._month_record))[1][-1], "00:00")
+                self.assertIsNone(repository.load_month(2024, 7))
+
+                closed = repository.close_month(
+                    2024, 6, expected_revision=june.revision, mark_unresolved_no_data=True,
+                )
+                window.load_month()
+                self.assertEqual(window.header.carry_over_label.text(), "Carry over: 00:30")
+                self.assertEqual(window.table.model.carry_over, 0.5)
+                self.assertEqual(list(month_rows(window._month_record))[1][-1], "00:30")
+                self.assertIsNone(repository.load_month(2024, 7))
+
+                repository.reopen_month(2024, 6, expected_revision=closed.revision)
+                window.load_month()
+                self.assertEqual(window.header.carry_over_label.text(), "Carry over: 00:00")
+                self.assertEqual(window.table.model.carry_over, 0)
+            finally:
+                if window is not None:
+                    window.close()
+                repository.close()
+                self.app.setPalette(palette)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 from znactime.storage.sqlite.schema import (
+    MONTH_CLOSE_GUARD_V7_SQL,
     SCHEMA_SQL,
     SCHEMA_TABLES_SQL,
     SCHEMA_VERSION,
@@ -292,6 +293,10 @@ DROP TABLE work_schedule_periods_v6_initial;
 
 MIGRATION_5_TO_6 = MIGRATION_V6_AMENDMENT
 
+# Version 7 allows independent closure while retaining all per-month validation
+# and the immutable results of previously closed months.
+MIGRATION_6_TO_7 = "DROP TRIGGER month_close_guard;\n" + MONTH_CLOSE_GUARD_V7_SQL
+
 
 MIGRATIONS = {
     1: MIGRATION_1_TO_2,
@@ -299,6 +304,7 @@ MIGRATIONS = {
     3: MIGRATION_3_TO_4,
     4: MIGRATION_4_TO_5,
     5: MIGRATION_5_TO_6,
+    6: MIGRATION_6_TO_7,
 }
 
 

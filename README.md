@@ -38,7 +38,8 @@ overtime, running balance, calendar weeks, and carry-over automatically.
 - **Clear status at a glance:** weekends, special days, missing entries, today,
   and future workdays have distinct visual states.
 - **Overtime that carries forward:** daily overtime rolls into the monthly
-  balance and can carry over from a closed previous month.
+  balance. Carry-over comes only from the immediately previous calendar month when it
+  is closed; an open or missing previous month contributes zero.
 - **Safe monthly close:** archive a month as read-only, add a visible closed
   state, and generate a PDF summary.
 - **Comfortable UI:** system, light, and dark themes; adjustable startup sizing;

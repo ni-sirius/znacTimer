@@ -39,7 +39,8 @@ overtime, running balance, calendar weeks, and carry-over automatically.
 - **Clear status at a glance:** weekends, special days, missing entries, today,
   and future workdays have distinct visual states.
 - **Overtime that carries forward:** daily overtime rolls into the monthly
-  balance and can carry over from a closed previous month.
+  balance. Carry-over comes only from the immediately previous calendar month when it
+  is closed; an open or missing previous month contributes zero.
 - **Safe monthly close:** archive a month as read-only, add a visible closed
   state, and generate a PDF summary.
 - **Comfortable UI:** system, light, and dark themes; adjustable startup sizing;
@@ -169,6 +170,15 @@ limits, clocks, and breaks are stored transactionally in the same database. The 
 pane has no independent state: it derives its state from today's table row and writes
 back to that row. Use **Month > Export Month CSV** or **Export PDF** for portable
 outputs; exports are not read back as live application state.
+
+Past and current months can be closed independently, even when earlier months are
+still open. Carry-over is taken only from the immediately previous calendar month when
+it is closed; an open or missing previous month contributes zero. Closing freezes that
+month's calculated balances. If the allowed carry-over later changes, an affected closed
+successor shows a carry-over discontinuity; its saved results are preserved until
+explicitly reopened. Future months and incomplete or
+invalid work entries still cannot be closed. Existing databases upgrade automatically
+to schema v7 with a verified recovery backup before replacing the month-close trigger.
 
 New CSV exports use schema v3. Free-text special-day values that could be interpreted as
 spreadsheet formulas are prefixed with a reversible apostrophe escape. znacTime removes

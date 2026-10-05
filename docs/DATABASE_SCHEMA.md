@@ -42,14 +42,17 @@ legacy_imports                   completed CSV-source snapshots
 
 Records which forward-only database schema versions were applied.
 
-The current schema version is **6**. Version 5 replaces human-language trigger
+The current schema version is **7**. Version 5 replaces human-language trigger
 `RAISE()` text with stable `ZT:*` machine codes. It also canonicalizes the stored
 definitions of `work_schedule_periods` and `day_entries` for databases that reached v4
 through historical migrations and removes the obsolete `month_no_insert_before_closed`
 trigger. Version 6 adds the controlled month-reopen transition, guarded completeness and
 chronological-close rules, lazy carry-over semantics, and the shared special-day schedule
-value. An earlier v6 definition is upgraded through a backup-first, in-version amendment;
-the schema number remains 6 and the verified temporary backup is removed after success.
+value. Version 7 removes the earlier-open-month close restriction while preserving the
+other close guards and frozen results. An initial v6 definition is amended before the
+v7 migration. Upgrades use a verified recovery backup, removed after success. The runtime
+carry-over policy uses only the immediately preceding closed month; changing that policy
+does not rewrite previously closed snapshots or require another schema version.
 
 | Column | Description |
 |---|---|
@@ -174,12 +177,15 @@ updated or deleted, but it has one controlled transition back to `open`: closing
 are cleared, the revision advances, and all `closed_day_results` for the month are deleted
 atomically. Its day inputs then become editable again.
 
-Closing does not write a successor. When an open month is selected, its opening balance is
-derived lazily from the nearest earlier closed checkpoint through intervening open months;
-only that selected month is updated. Derivation never crosses or changes a closed month.
-If reopening or correcting an earlier month makes a later closed month's frozen opening
-differ from its predecessor's current ending, the closed month remains unchanged and is
-reported as a carry-over discontinuity.
+Closing does not write a successor. When an open month is selected, its opening balance
+is the immediately previous calendar month's frozen closing balance if that month is
+closed, and zero if it is open or absent. This applies across year boundaries and never
+skips a calendar gap or includes open-month results. Only the selected materialized open
+month is updated; virtual views remain in memory. Previously stored provisional opening
+balances are corrected when their open month is loaded. Months can close independently.
+If a closed month's frozen opening differs from this currently allowed carry-over, the
+closed month remains unchanged and is reported as a carry-over discontinuity. Reopening
+it permits its opening balance and results to be refreshed under the current rules.
 
 ## `day_entries`
 
@@ -230,7 +236,7 @@ rows. At that point Saturdays and Sundays are stored with the `Weekend` label an
 shared special-day planned minutes; viewing alone never persists them.
 
 An incomplete or invalid open-day interval remains visible for correction but contributes
-zero to daily overtime, running balance, lazy carry-over, and open-month CSV export. This
+zero to daily overtime, running balance, close preview, and open-month CSV export. This
 includes non-positive work ranges, unfinished or reversed interruptions, interruptions
 outside the work window, overlapping interruptions, and an interruption longer than the
 work interval. Month closure continues to reject such a row.
@@ -361,9 +367,9 @@ data differences and should therefore be protected like the database itself.
 - Month/day calendar identities and UUID public identities are immutable.
 - Work-schedule periods cannot overlap.
 - Exact breaks cannot overlap and cannot coexist with a duration representation.
-- Closing requires a non-future month, chronological continuity after the latest closed
-  checkpoint, valid inputs for every blank row whose persisted planned time is positive,
-  one result per day, a valid running-balance chain, and no open pause. Confirmed
+- Closing requires a non-future month, valid inputs for every blank row whose persisted
+  planned time is positive, one result per day, a valid running-balance chain, and no open
+  pause. Confirmed
   unresolved rows are first persisted as `No data` with the current special-day planned
   value in the same transaction; if that value remains positive, valid work times are
   still required.
