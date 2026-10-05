@@ -80,6 +80,8 @@ BADGE_CORNER_RADIUS = 6
 EDIT_BADGE_BORDER_WIDTH = 2
 ROW_STRIPE_WIDTH = 12
 ROW_STRIPE_SPACING = round(ROW_STRIPE_WIDTH * 2 * 1.41421356237)
+# Cell background styling is not needed for now; enable to restore the stripes.
+ENABLE_CELL_BACKGROUND_STYLING = False
 
 
 def _is_dark_theme():
@@ -583,8 +585,13 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             expanded_rect.width(),
             max(0.0, expanded_rect.height() - separator_height),
         )
-        painter.fillRect(body_rect, _row_texture_base_color())
-        if row_texture_state:
+        background = (
+            _row_texture_base_color()
+            if ENABLE_CELL_BACKGROUND_STYLING
+            else QColor(theme_color("table.background", dark))
+        )
+        painter.fillRect(body_rect, background)
+        if ENABLE_CELL_BACKGROUND_STYLING and row_texture_state:
             self._paint_row_texture(
                 painter,
                 body_rect,
@@ -1090,6 +1097,12 @@ class MonthTableView(QTableView):
             QAbstractItemView.ScrollMode.ScrollPerPixel
         )
         self.verticalScrollBar().setSingleStep(4)
+        self._header_extension = QWidget(self)
+        self._header_extension.setObjectName("tableHeaderExtension")
+        self._header_extension.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self.verticalScrollBar().parentWidget().installEventFilter(self)
         self._scroll_target = 0
         self._scroll_animation = QPropertyAnimation(
             self.verticalScrollBar(),
@@ -1114,7 +1127,7 @@ class MonthTableView(QTableView):
         border = theme_color("table.border", dark)
         header_background = theme_color("table.header_background", dark)
         header_text = theme_color("table.header_text", dark)
-        scrollbar_track = theme_color("table.scrollbar_track", dark)
+        scrollbar_track = table_background
         scrollbar_handle = theme_color("table.scrollbar_handle", dark)
         scrollbar_hover = theme_color("table.scrollbar_hover", dark)
 
@@ -1136,8 +1149,10 @@ class MonthTableView(QTableView):
             "QHeaderView::section:first {"
             "border-top-left-radius: 9px;"
             "}"
-            "QHeaderView::section:last {"
-            "border-top-right-radius: 9px;"
+            "QWidget#tableHeaderExtension {"
+            f"background-color: {header_background};"
+            "border: none;"
+            f"border-bottom: 1px solid {border};"
             "}"
             "QScrollBar:vertical {"
             f"background-color: {scrollbar_track};"
@@ -1148,7 +1163,7 @@ class MonthTableView(QTableView):
             "QScrollBar::handle:vertical {"
             f"background-color: {scrollbar_handle};"
             "border: none;"
-            "border-radius: 5px;"
+            "border-radius: 3px;"
             "min-height: 28px;"
             "margin: 2px;"
             "}"
@@ -1171,6 +1186,43 @@ class MonthTableView(QTableView):
             "}"
         )
         self._apply_rounded_mask()
+
+    def updateGeometries(self):
+        super().updateGeometries()
+        self._align_scrollbar_to_viewport()
+
+    def eventFilter(self, watched, event):
+        if (
+            watched is self.verticalScrollBar().parentWidget()
+            and event.type() in (QEvent.Type.Move, QEvent.Type.Resize)
+        ):
+            self._align_scrollbar_to_viewport()
+        return super().eventFilter(watched, event)
+
+    def _align_scrollbar_to_viewport(self):
+        # Qt normally lets the scrollbar container extend beside the header.
+        # Keep the entire track within the data viewport instead.
+        scrollbar_container = self.verticalScrollBar().parentWidget()
+        if scrollbar_container is not None:
+            geometry = scrollbar_container.geometry()
+            viewport_top = self.viewport().mapTo(
+                scrollbar_container.parentWidget(),
+                self.viewport().rect().topLeft(),
+            ).y()
+            if geometry.top() != viewport_top:
+                geometry.setTop(viewport_top)
+                scrollbar_container.setGeometry(geometry)
+
+        # Fill the space above the scrollbar with the header's background.
+        # The table mask supplies the outer rounded corner, so the last section
+        # stays square where it meets this extension.
+        extension = getattr(self, "_header_extension", None)
+        if extension is not None:
+            header = self.horizontalHeader()
+            left = header.geometry().right() + 1
+            width = max(0, self.contentsRect().right() - left + 1)
+            extension.setGeometry(left, header.y(), width, header.height())
+            extension.setVisible(width > 0 and not header.isHidden())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1514,7 +1566,7 @@ class TableWidget(QWidget):
         header.setStretchLastSection(False)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 12)
+        layout.setContentsMargins(0, 6, 0, 12)
         layout.addWidget(self.view)
 
     def _apply_shadow_theme(self):
