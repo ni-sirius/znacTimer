@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from znactime.core.constants import TIME_FORMAT
+from znactime.core.constants import TIME_FORMAT, ZERO_DURATION
+from znactime.core.time_utils import parse_interruption_input
 from znactime.ui.qt import (
     QHBoxLayout,
     QLabel,
@@ -23,7 +24,7 @@ class WorkdayState:
     COMPLETE = "complete"
 
 
-def _elapsed_text(start_text, now=None):
+def _elapsed_text(start_text, now=None, interruption=ZERO_DURATION):
     if now is None:
         now = datetime.now()
     start = datetime.strptime(start_text, TIME_FORMAT).replace(
@@ -31,7 +32,11 @@ def _elapsed_text(start_text, now=None):
         month=now.month,
         day=now.day,
     )
-    elapsed_minutes = max(0, int((now - start).total_seconds() // 60))
+    parsed = parse_interruption_input(interruption)
+    pause_minutes = 0 if parsed is None else round(parsed.hours * 60)
+    elapsed_minutes = max(
+        0, int((now - start).total_seconds() // 60) - pause_minutes
+    )
     hours, minutes = divmod(elapsed_minutes, 60)
     return f"{hours:02d}:{minutes:02d}"
 
@@ -48,6 +53,7 @@ class WorkdayBar(QWidget):
         self._start = None
         self._end = None
         self._pause_start = None
+        self._interruption = ZERO_DURATION
 
         self.status_label = QLabel("Workday controls unavailable", self)
         self.status_label.setObjectName("workdayStatus")
@@ -80,11 +86,13 @@ class WorkdayBar(QWidget):
         end=None,
         pause_start=None,
         message=None,
+        interruption=ZERO_DURATION,
     ):
         self._state = state
         self._start = start
         self._end = end
         self._pause_start = pause_start
+        self._interruption = interruption
 
         if state == WorkdayState.IDLE:
             self.primary_button.setText("Start day")
@@ -113,7 +121,8 @@ class WorkdayBar(QWidget):
             self.status_label.setText("Ready to start today's workday")
         elif self._state == WorkdayState.WORKING and self._start:
             self.status_label.setText(
-                f"Working since {self._start} · {_elapsed_text(self._start)}"
+                f"Working since {self._start} · "
+                f"{_elapsed_text(self._start, interruption=self._interruption)}"
             )
         elif self._state == WorkdayState.PAUSED and self._pause_start:
             self.status_label.setText(

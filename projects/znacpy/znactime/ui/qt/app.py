@@ -508,6 +508,7 @@ class TimeTrackerApp(QMainWindow):
             self.workday_bar.set_state(
                 WorkdayState.WORKING,
                 start=entry.start,
+                interruption=entry.interruption,
             )
 
     def on_workday_primary(self):

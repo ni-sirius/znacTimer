@@ -10,7 +10,7 @@ from znactime.core.models import DayEntry
 from znactime.storage.atomic_file import sqlite_protected_paths
 from znactime.ui.qt import QApplication, QMessageBox, Qt
 from znactime.ui.qt.app import TimeTrackerApp
-from znactime.ui.qt.player import WorkdayBar
+from znactime.ui.qt.player import WorkdayBar, _elapsed_text
 from znactime.ui.qt.table import TableWidget
 
 
@@ -41,6 +41,38 @@ class WorkdayBarTest(unittest.TestCase):
         bar.set_state("unavailable", message="Time data already filled")
         self.assertFalse(bar.primary_button.isEnabled())
         self.assertFalse(bar.stop_button.isEnabled())
+
+    def test_working_timer_subtracts_duration_and_multiple_pause_periods(self):
+        now = datetime(2024, 6, 17, 15, 0)
+        for interruption, expected in (
+            ("00:00", "07:00"),
+            ("01:15", "05:45"),
+            ("12:00-12:45;14:00-14:30", "05:45"),
+            ("08:00", "00:00"),
+        ):
+            with self.subTest(interruption=interruption):
+                self.assertEqual(
+                    _elapsed_text("08:00", now, interruption), expected
+                )
+
+    def test_working_timer_refresh_preserves_pauses_and_updates_after_edit(self):
+        bar = WorkdayBar()
+        with patch("znactime.ui.qt.player.datetime") as clock:
+            clock.strptime.side_effect = datetime.strptime
+            clock.now.return_value = datetime(2024, 6, 17, 15, 0)
+            bar.set_state("working", start="08:00", interruption="01:15")
+            self.assertTrue(bar.status_label.text().endswith("05:45"))
+
+            clock.now.return_value = datetime(2024, 6, 17, 15, 1)
+            bar._refresh_status()
+            self.assertTrue(bar.status_label.text().endswith("05:46"))
+
+            bar.set_state("working", start="08:00", interruption="00:30")
+            self.assertTrue(bar.status_label.text().endswith("06:31"))
+
+            bar.set_state("paused", start="08:00", pause_start="15:00")
+            self.assertTrue(bar.status_label.text().endswith("00:01"))
+        bar.close()
 
     def test_sub_minute_pause_resumes_without_recording(self):
         fake_app = SimpleNamespace(
@@ -473,6 +505,7 @@ class WorkdayBarTest(unittest.TestCase):
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="08:00",
+            interruption="00:00",
         )
 
     def test_table_end_automatically_finishes_player(self):
@@ -508,6 +541,7 @@ class WorkdayBarTest(unittest.TestCase):
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="08:00",
+            interruption="00:00",
         )
 
     def test_open_pause_in_table_puts_player_in_paused_state(self):
@@ -543,6 +577,7 @@ class WorkdayBarTest(unittest.TestCase):
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="08:00",
+            interruption="12:30-13:00",
         )
 
     def test_editing_active_pause_start_in_table_updates_player(self):
@@ -592,6 +627,7 @@ class WorkdayBarTest(unittest.TestCase):
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="00:00",
+            interruption="00:00",
         )
 
     def _size_table_for_two_interruption_badges(self, table):
