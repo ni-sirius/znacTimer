@@ -39,7 +39,7 @@ class MenuBarTest(unittest.TestCase):
         )
         top_level = [action.text() for action in menu.actions()]
 
-        self.assertEqual(top_level, ["&Data", "&Month", "&Settings", "&Help"])
+        self.assertEqual(top_level, ["&Data", "&Approvals", "&Settings", "&Help"])
         self.assertEqual(
             self._action_texts(menu.month_menu),
             ["&Close Month"],
@@ -82,7 +82,7 @@ class MenuBarTest(unittest.TestCase):
 
         self.assertEqual(
             [action.text() for action in menu.actions()],
-            ["&Data", "&Month", "&Settings", "&Help"],
+            ["&Data", "&Approvals", "&Settings", "&Help"],
         )
         self.assertEqual(
             self._action_texts(menu.data_menu),

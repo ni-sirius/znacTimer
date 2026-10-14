@@ -999,10 +999,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             }
 
         if state == BadgeState.EXPECTED:
-            background = theme_color("table.expected_background", dark)
             expected = theme_color("table.expected_text", dark)
             return {
-                "fill": QColor(background),
+                "fill": QColor(theme_color("table.expected_background", dark)),
                 "text": QColor(expected),
                 "border": QColor(expected),
             }

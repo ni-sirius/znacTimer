@@ -48,7 +48,7 @@ class MenuBar(QMenuBar):
         self.exit_action.triggered.connect(exit_command)
         self.data_menu.addAction(self.exit_action)
 
-        self.month_menu = self.addMenu("&Month")
+        self.month_menu = self.addMenu("&Approvals")
 
         self.close_month_action = QAction("&Close Month", self)
         self.close_month_action.triggered.connect(close_month_command)

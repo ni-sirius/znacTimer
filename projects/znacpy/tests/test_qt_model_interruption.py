@@ -599,17 +599,19 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         self.assertEqual(badge["texts"], ["--:--"])
         self.assertEqual(badge["state"], "action")
-        self.assertTrue(badge["outline"])
+        self.assertFalse(badge["outline"])
 
     def test_expected_badge_uses_purple_outline_colors(self):
         delegate = CurrentTimeDelegate()
 
-        with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
-            colors = delegate._badge_colors("expected")
+        for dark in (False, True):
+            with self.subTest(dark=dark):
+                with patch("znactime.ui.qt.table._is_dark_theme", return_value=dark):
+                    colors = delegate._badge_colors("expected")
+                    accent_colors = delegate._badge_colors("action", hovered=True)
 
-        self.assertEqual(colors["fill"].name(), "#ffffff")
-        self.assertEqual(colors["text"].name(), "#6941c6")
-        self.assertEqual(colors["border"].name(), "#6941c6")
+                self.assertEqual(colors["text"], accent_colors["fill"])
+                self.assertEqual(colors["border"], colors["text"])
 
     def test_expected_badge_has_smooth_corners_and_stable_scroll_rendering(self):
         model = self.make_model()
@@ -648,7 +650,7 @@ class QtModelInterruptionTest(unittest.TestCase):
                         int((rect.y() - option.rect.y()) * ratio),
                         6 * ratio, 6 * ratio,
                     )
-                    # Curved border pixels need blended coverage, not hard steps.
+                    # Curved corners need blended coverage, not hard steps.
                     self.assertTrue(any(
                         0 < corner.pixelColor(x, y).alpha() < 255
                         for y in range(corner.height())
@@ -791,7 +793,7 @@ class QtModelInterruptionTest(unittest.TestCase):
             for column in (Column.START, Column.END):
                 badge = model.index(row, column).data(BADGE_ROLE)
                 self.assertEqual(badge["state"], "action")
-                self.assertTrue(badge["outline"])
+                self.assertFalse(badge["outline"])
             pause = model.index(row, Column.INTERRUPTION).data(BADGE_ROLE)["items"][-1]
             self.assertEqual(pause["state"], "action")
             self.assertFalse(pause.get("outline", False))

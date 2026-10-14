@@ -480,7 +480,7 @@ class MonthTableModel(QAbstractTableModel):
             "state": (
                 BadgeState.SUCCESS if value != UNSET_TIME else empty_state
             ),
-            "outline": value == UNSET_TIME and empty_state == BadgeState.ACTION,
+            "outline": False,
             "plain": self.month_closed,
         }
 

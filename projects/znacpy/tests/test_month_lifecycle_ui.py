@@ -92,7 +92,11 @@ class MonthLifecycleUiTest(unittest.TestCase):
                 window = TimeTrackerApp(repository=repository, settings=settings)
                 window.header.set_period(2024, 7)
                 window.load_month()
-                self.assertEqual(window.header.carry_over_label.text(), "Carry over: 00:00")
+                self.assertEqual(window.header.carry_over_label.text(), "Last month is not closed")
+                self.assertTrue(window.header.carry_over_label.property("unclosed"))
+                self.assertEqual(window.header.carry_over_label.toolTip(), "")
+                self.assertIn("Close last month", window.header.carry_over_info.toolTip())
+                self.assertFalse(window.header.carry_over_info.isHidden())
                 self.assertEqual(window.table.model.carry_over, 0)
                 self.assertEqual(list(month_rows(window._month_record))[1][-1], "00:00")
                 self.assertIsNone(repository.load_month(2024, 7))
@@ -101,20 +105,51 @@ class MonthLifecycleUiTest(unittest.TestCase):
                     2024, 6, expected_revision=june.revision, mark_unresolved_no_data=True,
                 )
                 window.load_month()
-                self.assertEqual(window.header.carry_over_label.text(), "Carry over: 00:30")
+                self.assertEqual(window.header.carry_over_label.text(), "Last Month: 00:30")
+                self.assertFalse(window.header.carry_over_label.property("unclosed"))
+                self.assertEqual(window.header.carry_over_label.toolTip(), "")
+                self.assertTrue(window.header.carry_over_info.isHidden())
                 self.assertEqual(window.table.model.carry_over, 0.5)
                 self.assertEqual(list(month_rows(window._month_record))[1][-1], "00:30")
                 self.assertIsNone(repository.load_month(2024, 7))
 
                 repository.reopen_month(2024, 6, expected_revision=closed.revision)
                 window.load_month()
-                self.assertEqual(window.header.carry_over_label.text(), "Carry over: 00:00")
+                self.assertEqual(window.header.carry_over_label.text(), "Last month is not closed")
+                window.header.set_carry_over_text("Last Month: 00:00")
+                window._apply_reloaded_month(window._month_record)
+                self.assertEqual(window.header.carry_over_label.text(), "Last month is not closed")
                 self.assertEqual(window.table.model.carry_over, 0)
             finally:
                 if window is not None:
                     window.close()
                 repository.close()
                 self.app.setPalette(palette)
+
+    def test_last_month_warning_requires_time_in_the_immediately_previous_open_month(self):
+        empty_day = dict(
+            start_minute=None, end_minute=None, break_duration_minutes=0, breaks=(),
+        )
+        cases = (
+            (None, False),
+            (SimpleNamespace(status="open", days=()), False),
+            (SimpleNamespace(status="open", days=(SimpleNamespace(**empty_day),)), False),
+            (SimpleNamespace(status="closed", days=(SimpleNamespace(**{**empty_day, "start_minute": 480}),)), False),
+            (SimpleNamespace(status="open", days=(SimpleNamespace(**{**empty_day, "start_minute": 0}),)), True),
+            (SimpleNamespace(status="open", days=(SimpleNamespace(**{**empty_day, "end_minute": 1020}),)), True),
+            (SimpleNamespace(status="open", days=(SimpleNamespace(**{**empty_day, "break_duration_minutes": 30}),)), True),
+            (SimpleNamespace(status="open", days=(SimpleNamespace(**{**empty_day, "breaks": (object(),)}),)), True),
+        )
+        for previous, expected in cases:
+            with self.subTest(previous=previous):
+                repository = Mock()
+                repository.load_month.return_value = previous
+                window = SimpleNamespace(repository=repository)
+
+                result = TimeTrackerApp._previous_month_has_unclosed_time(window, 2025, 1)
+
+                self.assertEqual(result, expected)
+                repository.load_month.assert_called_once_with(2024, 12)
 
 
 if __name__ == "__main__":

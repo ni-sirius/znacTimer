@@ -62,7 +62,7 @@ def _configure_demo(window, closed=False):
     window.month_closed = closed
     window.carry_over = 2.25
     window.header.set_period(DEMO_YEAR, DEMO_MONTH)
-    window.header.set_carry_over_text("Carry over: 02:15")
+    window.header.set_carry_over_text("Last Month: 02:15")
     window.header.set_calendar_week_text(
         build_calendar_week_text(DEMO_YEAR, DEMO_MONTH, today=DEMO_TODAY)
     )

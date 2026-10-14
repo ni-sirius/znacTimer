@@ -4,6 +4,7 @@ from pathlib import Path
 
 from znactime.ui.qt import (
     QColor,
+    QIcon,
     QPainter,
     QPainterPath,
     QPen,
@@ -14,6 +15,27 @@ from znactime.ui.qt.color_scheme import theme_color
 
 
 _asset_directory = None
+
+
+@lru_cache(maxsize=2)
+def themed_information_icon(dark: bool):
+    pixmap = QPixmap(40, 40)
+    pixmap.setDevicePixelRatio(2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = QColor(theme_color("tokens.danger_text", dark=dark))
+    pen = QPen(color)
+    pen.setWidthF(1.5)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.drawEllipse(2, 2, 16, 16)
+    painter.drawLine(10, 9, 10, 14)
+    painter.setBrush(color)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(9, 5, 2, 2)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _temporary_asset_directory() -> Path:

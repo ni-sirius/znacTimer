@@ -168,6 +168,7 @@ class TimeTrackerApp(QMainWindow):
         self.header.set_year(now.year)
         self.header.set_month(now.month)
         self.header.selectionChanged.connect(self.load_month)
+        self.header.todayClicked.connect(self.show_today)
 
         self.table = TableWidget(self, repository=repository)
         self.table.overtimeChanged.connect(self.set_current_overtime)
@@ -379,7 +380,7 @@ class TimeTrackerApp(QMainWindow):
     def set_current_overtime(self, overtime):
         self.current_overtime = overtime
         self.header.set_overtime_text(
-            f"Overtime: {hours_to_hhmm(overtime)}",
+            f"This Month: {hours_to_hhmm(overtime)}",
             closed=self.month_closed,
             carry_discontinuity=getattr(self, "month_carry_discontinuity", False),
         )
@@ -405,6 +406,27 @@ class TimeTrackerApp(QMainWindow):
         self.table.recalculate(today=today, autosave=False)
         self.refresh_workday_bar(now)
 
+    def show_today(self):
+        today = datetime.now().date()
+        self.header.set_period(today.year, today.month)
+        self.load_month()
+        self.table.view.ensure_today_visible()
+
+    def _previous_month_has_unclosed_time(self, year, month):
+        if self.repository is None:
+            return False
+        previous_year, previous_month = (
+            (year, month - 1) if month > 1 else (year - 1, 12)
+        )
+        previous = self.repository.load_month(previous_year, previous_month)
+        return previous is not None and previous.status == "open" and any(
+            day.start_minute is not None
+            or day.end_minute is not None
+            or bool(day.break_duration_minutes)
+            or bool(day.breaks)
+            for day in previous.days
+        )
+
     def load_month(self):
         year = self.header.year()
         month = self.header.month()
@@ -415,6 +437,7 @@ class TimeTrackerApp(QMainWindow):
             carry_discontinuity = self.repository.month_has_carry_discontinuity(
                 year, month
             )
+            previous_month_unclosed = self._previous_month_has_unclosed_time(year, month)
         except StorageError as error:
             QMessageBox.critical(self, "Database error", str(error))
             return
@@ -423,7 +446,8 @@ class TimeTrackerApp(QMainWindow):
         self.month_carry_discontinuity = carry_discontinuity
         self.carry_over = record.opening_balance_minutes / 60
         self.header.set_carry_over_text(
-            f"Carry over: {hours_to_hhmm(self.carry_over)}"
+            f"Last Month: {hours_to_hhmm(self.carry_over)}",
+            previous_month_unclosed=previous_month_unclosed,
         )
         self.header.set_calendar_week_text(
             build_calendar_week_text(year, month, today=datetime.today().date())
@@ -455,11 +479,16 @@ class TimeTrackerApp(QMainWindow):
                 if self.repository is not None
                 else False
             )
+            previous_month_unclosed = self._previous_month_has_unclosed_time(
+                record.year, record.month
+            )
         except StorageError:
             self.month_carry_discontinuity = False
+            previous_month_unclosed = False
         self.carry_over = record.opening_balance_minutes / 60
         self.header.set_carry_over_text(
-            f"Carry over: {hours_to_hhmm(self.carry_over)}"
+            f"Last Month: {hours_to_hhmm(self.carry_over)}",
+            previous_month_unclosed=previous_month_unclosed,
         )
         self.menu.set_month_closed(self.month_closed)
         self.refresh_workday_bar()

@@ -52,7 +52,7 @@ overtime, running balance, calendar weeks, and carry-over automatically.
 
 The bottom workday bar reflects the current session. A running interruption is
 written to the table immediately, so the UI and stored record stay aligned.
-The End column can show an outlined expected finish time until the real end is
+The End column can show a purple outlined expected finish time until the real end is
 entered.
 
 ### Edit interruptions inline
@@ -177,7 +177,7 @@ crashes.
 Month status, immutable closed-month results, work schedules, per-day work
 limits, clocks, and breaks are stored transactionally in the same database. The timer
 pane has no independent state: it derives its state from today's table row and writes
-back to that row. Use **Month > Export Month CSV** or **Export PDF** for portable
+back to that row. Use **Data > Export Month CSV** or **Export PDF** for portable
 outputs; exports are not read back as live application state.
 
 Past and current months can be closed independently, even when earlier months are
@@ -206,7 +206,7 @@ private UTF-8 report under `import-logs/` beside the database. The completion di
 to this report, which lists the source fingerprint, outcome, warnings, and every applied
 normalization. If the report cannot be created, the database import is rolled back.
 
-Use **Month > Back Up Database** to create a verified SQLite backup of the full
+Use **Data > Back Up Database** to create a verified SQLite backup of the full
 working history. A normal filesystem copy of `znactime.db` should only be made
 while znacTime is closed. Keep the original legacy `data/` directory until the
 imported records have been reviewed.
