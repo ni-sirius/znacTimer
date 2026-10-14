@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime
 from enum import Enum
 from html import escape
 from pathlib import Path
@@ -7,7 +9,8 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths, Qt, QUrl
 from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QPushButton
 
-from znactime.storage.errors import StorageError
+from znactime.storage.atomic_file import reject_protected_destination, sqlite_protected_paths
+from znactime.storage.errors import DatabaseVersionTooNew, StorageError
 from znactime.storage.legacy_csv_import import (
     LegacyImportCancelled,
     preflight_legacy_data,
@@ -23,6 +26,7 @@ from znactime.storage.sqlite.bootstrap import (
     migrate_legacy_database,
     recover_failed_schema_migration,
     recover_interrupted_setup,
+    replace_newer_database,
     startup_lock,
 )
 from znactime.storage.sqlite.repository import SQLiteRepository
@@ -43,6 +47,11 @@ class InterruptedSetupResult(Enum):
 
 class FailedMigrationChoice(Enum):
     RECOVER = "recover"
+    EXIT = "exit"
+
+
+class NewerDatabaseChoice(Enum):
+    CREATE = "create"
     EXIT = "exit"
 
 
@@ -152,6 +161,108 @@ def _show_failed_migration_dialog(parent, target: Path, error) -> FailedMigratio
         if dialog.clickedButton() is recover_button
         else FailedMigrationChoice.EXIT
     )
+
+
+def _show_newer_database_dialog(parent, target: Path, error: DatabaseVersionTooNew):
+    dialog = QMessageBox(parent)
+    dialog.setWindowTitle("Database needs a newer app")
+    dialog.setIcon(QMessageBox.Icon.Warning)
+    dialog.setText("Your database was created by a newer version of znacTime.")
+    dialog.setInformativeText(
+        f"Your database uses version {error.database_version}; this app supports "
+        f"database version {error.supported_version}.\n\n"
+        "Update znacTime to a version that supports your database to keep using "
+        "your existing records.\n\n"
+        "To start fresh with this app, choose where to save a backup of your "
+        "existing database. After verifying the backup, znacTime will replace "
+        "the active database with an empty one. Your existing records will be "
+        "in the backup only."
+    )
+    dialog.setDetailedText(f"Database: {target}\n\n{error}")
+    create_button = QPushButton("Back up and create new database...", dialog)
+    exit_button = QPushButton("Exit to update app", dialog)
+    dialog.addButton(create_button, QMessageBox.ButtonRole.ActionRole)
+    dialog.addButton(exit_button, QMessageBox.ButtonRole.RejectRole)
+    dialog.setDefaultButton(exit_button)
+    dialog.setEscapeButton(exit_button)
+    dialog.exec()
+    return (
+        NewerDatabaseChoice.CREATE
+        if dialog.clickedButton() is create_button
+        else NewerDatabaseChoice.EXIT
+    )
+
+
+def _resolve_newer_database(parent, target, error, *, default_workday_minutes):
+    while _show_newer_database_dialog(parent, target, error) is NewerDatabaseChoice.CREATE:
+        suggested = datetime.now().strftime("znactime-backup-%Y%m%d-%H%M%S.db")
+        backup_path, _selected_filter = QFileDialog.getSaveFileName(
+            parent, "Save existing database backup", suggested, "SQLite databases (*.db)"
+        )
+        if not backup_path:
+            continue
+        try:
+            reject_protected_destination(backup_path, sqlite_protected_paths(target))
+        except StorageError as destination_error:
+            QMessageBox.warning(parent, "Choose another backup location", str(destination_error))
+            continue
+        overwrite = os.path.lexists(backup_path)
+        if overwrite:
+            answer = QMessageBox.question(
+                parent, "Replace existing backup?",
+                f"{backup_path} already exists. Replace it with a backup of your current database?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                continue
+        answer = QMessageBox.question(
+            parent, "Create an empty database?",
+            f"Your existing database will be backed up to:\n{backup_path}\n\n"
+            "Then znacTime will start with an empty database. Your existing "
+            "records will be available only in the backup, which needs a newer "
+            "app to open.\n\nBack up and start fresh?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            continue
+        try:
+            def replace(*, progress, cancelled):
+                replace_newer_database(
+                    target, backup_path, expected_version=error.database_version,
+                    overwrite_backup=overwrite,
+                    default_workday_minutes=default_workday_minutes,
+                    progress=progress, cancelled=cancelled,
+                )
+
+            run_background_task(parent, "Backing up and creating a new database", replace)
+        except LegacyImportCancelled:
+            continue
+        except (StorageError, OSError, ValueError, RuntimeError) as replacement_error:
+            QMessageBox.critical(
+                parent, "Could not create a new database",
+                "Your existing database has not been replaced. You can try another "
+                "backup location or exit and update znacTime.\n\n"
+                f"Any completed backup is saved at:\n{backup_path}\n\n{replacement_error}",
+            )
+            continue
+        try:
+            repository = SQLiteRepository(target)
+        except StorageError as open_error:
+            QMessageBox.critical(
+                parent, "Could not open the new database",
+                f"Your existing records are backed up at:\n{backup_path}\n\n"
+                f"Restart znacTime to try opening the new database again.\n\n{open_error}",
+            )
+            return None
+        QMessageBox.information(
+            parent, "New database ready",
+            f"Your existing database was backed up to:\n{backup_path}\n\n"
+            "znacTime will now open with an empty database.",
+        )
+        return repository
+    return None
 
 
 def _show_interrupted_setup_dialog(parent, assessment: InterruptedSetupAssessment):
@@ -267,6 +378,10 @@ def open_or_initialize_repository(
                 return None
             try:
                 repository = SQLiteRepository(target)
+            except DatabaseVersionTooNew as error:
+                return _resolve_newer_database(
+                    parent, target, error, default_workday_minutes=default_workday_minutes
+                )
             except StorageError as error:
                 backup_path = getattr(error, "recovery_backup_path", None)
                 if backup_path is not None:

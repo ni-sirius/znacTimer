@@ -28,9 +28,12 @@ from znactime.storage.legacy_csv_import import (
     CancellationCallback,
     LegacyImportCancelled,
     ProgressCallback,
+    _cancel_if_requested,
+    _report_progress,
 )
 from znactime.storage.sqlite.legacy_import import import_preflight
-from znactime.storage.sqlite.connection import translate_error
+from znactime.storage.sqlite.backup import backup_connection
+from znactime.storage.sqlite.connection import connect_database, translate_error
 from znactime.storage.sqlite.migrations import MIGRATIONS, migration_signature
 from znactime.storage.sqlite.repository import SQLiteRepository
 from znactime.storage.sqlite.schema import (
@@ -602,6 +605,82 @@ def create_new_database(
         )
         repository.close()
         return _promote(staging, target)
+
+
+def replace_newer_database(
+    database_path: str | Path,
+    backup_path: str | Path,
+    *,
+    expected_version: int,
+    overwrite_backup: bool = False,
+    default_workday_minutes: int = 480,
+    progress=None,
+    cancelled=None,
+) -> None:
+    """Back up a newer database before atomically replacing it with an empty one.
+
+    The caller holds the application lock. No replacement happens until both the
+    user-selected backup and the new database have passed validation.
+    """
+    target = Path(database_path).resolve()
+    with startup_lock(target):
+        _cancel_if_requested(cancelled)
+        source = connect_database(target)
+        staged = None
+        try:
+            version = source.execute("PRAGMA user_version").fetchone()[0]
+            migration = source.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+            if version != migration or version != expected_version or version <= SCHEMA_VERSION:
+                raise StorageConflict(
+                    "The database version changed. Restart znacTime before creating a new database."
+                )
+            data_version = source.execute("PRAGMA data_version").fetchone()[0]
+            backup_connection(
+                source, target, backup_path, overwrite=overwrite_backup,
+                progress=progress, cancelled=cancelled,
+            )
+            _cancel_if_requested(cancelled)
+            _report_progress(progress, "Creating empty database", 0, 0)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.replacement.", suffix=".tmp", dir=target.parent
+            )
+            os.close(descriptor)
+            staged = Path(temporary_name)
+            staged.unlink()
+            repository = SQLiteRepository.create(
+                staged, default_workday_minutes=default_workday_minutes
+            )
+            repository.close()
+            # Catch writes by a connection that does not honor the application's
+            # process lock. DELETE journaling drains WAL before the backup and
+            # ensures old WAL pages cannot be replayed into the replacement.
+            source.execute("BEGIN EXCLUSIVE")
+            if source.execute("PRAGMA data_version").fetchone()[0] != data_version:
+                raise StorageConflict(
+                    "The database changed while it was being backed up. Please try again."
+                )
+            _cancel_if_requested(cancelled)
+            source.execute("COMMIT")
+            source.close()
+            source = None
+            if any(path.exists() for path in _staging_files(target)[1:]):
+                raise StorageConflict(
+                    "The database is still in use. Close other applications and try again."
+                )
+            publish_staged_file(staged, target, overwrite=True)
+        except sqlite3.Error as error:
+            raise translate_error(error) from error
+        finally:
+            if source is not None:
+                source.close()
+            if staged is not None:
+                for path in _staging_files(staged):
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        # Cleanup cannot turn a successful replacement into a
+                        # reported failure, or hide the original failure.
+                        pass
 
 
 def migrate_legacy_database(

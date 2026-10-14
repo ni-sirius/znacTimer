@@ -158,6 +158,14 @@ and then continues application startup. A recovery marker lets an interrupted re
 resume automatically on the next launch. The recovery copy and marker are removed only
 after the current-schema database validates successfully.
 
+If the database was created by a newer app, startup shows **Database needs a newer
+app** with the database version and the version this app supports. Exit and update
+znacTime to keep using the existing records, or choose **Back up and create new
+database...** to start fresh. Choose a backup destination and confirm the reset;
+znacTime verifies the full SQLite backup before replacing the active database with
+an empty one. Existing records remain in the backup, which still needs a compatible
+newer app to open. Cancelling or a backup failure leaves the existing database in place.
+
 Only one znacTime process may use a database at a time. A second launch shows a
 standalone **znacTime is already running** dialog with one **Exit application** action;
 it does not open the database, table, header, or main window. Closing that dialog by its

@@ -3,7 +3,6 @@ from __future__ import annotations
 import calendar
 import os
 import sqlite3
-import tempfile
 import uuid
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -27,6 +26,7 @@ from znactime.core.models import (
 from znactime.core.validation import special_day_text_problem
 from znactime.storage.errors import (
     ClosedPeriodError,
+    DatabaseVersionTooNew,
     StorageConflict,
     StorageCorrupt,
     StorageError,
@@ -34,12 +34,8 @@ from znactime.storage.errors import (
     StorageValidationError,
     StorageVersionUnsupported,
 )
-from znactime.storage.atomic_file import (
-    _sync_parent_directory,
-    publish_staged_file,
-    reject_protected_destination,
-    sqlite_protected_paths,
-)
+from znactime.storage.atomic_file import _sync_parent_directory
+from znactime.storage.sqlite.backup import backup_connection
 from znactime.storage.sqlite.connection import (
     connect_database,
     create_database,
@@ -298,6 +294,8 @@ class SQLiteRepository:
                     f"The time database schema definitions are incomplete: {names}."
                 ) from error
             raise translate_error(error) from error
+        if version == migration and version > SCHEMA_VERSION:
+            raise DatabaseVersionTooNew(version, SCHEMA_VERSION)
         if version != SCHEMA_VERSION or migration != SCHEMA_VERSION:
             raise StorageVersionUnsupported(
                 f"Database schema {version!r}/{migration!r} is not supported."
@@ -1974,79 +1972,14 @@ class SQLiteRepository:
         progress=None,
         cancelled=None,
     ) -> None:
-        from znactime.storage.legacy_csv_import import (
-            _cancel_if_requested,
-            _report_progress,
+        backup_connection(
+            self._connection,
+            self.path,
+            destination,
+            overwrite=overwrite,
+            progress=progress,
+            cancelled=cancelled,
         )
-
-        _cancel_if_requested(cancelled)
-        target = Path(destination)
-        protected_paths = sqlite_protected_paths(self.path)
-        reject_protected_destination(target, protected_paths)
-        if target.exists() and not overwrite:
-            raise StorageConflict("The backup destination already exists.")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-        )
-        os.close(descriptor)
-        Path(temporary_name).unlink()
-        backup = None
-        succeeded = False
-
-        def report_backup(_status, remaining, total):
-            _cancel_if_requested(cancelled)
-            _report_progress(
-                progress,
-                "Backing up database",
-                total - remaining,
-                total,
-            )
-
-        try:
-            backup = create_database(temporary_name)
-            self._connection.backup(
-                backup,
-                pages=128,
-                progress=report_backup,
-                sleep=0.05,
-            )
-            _cancel_if_requested(cancelled)
-            _report_progress(progress, "Validating database backup", 0, 0)
-            backup.set_progress_handler(
-                lambda: int(bool(cancelled and cancelled())),
-                1_000,
-            )
-            if backup.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                raise StorageValidationError("The database backup failed integrity validation.")
-            if backup.execute("PRAGMA foreign_key_check").fetchone() is not None:
-                raise StorageValidationError("The database backup has invalid relationships.")
-            backup.set_progress_handler(None, 0)
-            backup.close()
-            backup = None
-            try:
-                publish_staged_file(
-                    temporary_name,
-                    target,
-                    overwrite=overwrite,
-                    protected_paths=protected_paths,
-                )
-            except FileExistsError as error:
-                raise StorageConflict(
-                    "The backup destination appeared before backup completed."
-                ) from error
-            succeeded = True
-        except sqlite3.Error as error:
-            _cancel_if_requested(cancelled)
-            raise translate_error(error) from error
-        finally:
-            if backup is not None:
-                backup.close()
-            if not succeeded:
-                try:
-                    Path(temporary_name).unlink()
-                except OSError:
-                    pass
 
     @_repository_operation
     def merge_legacy(
