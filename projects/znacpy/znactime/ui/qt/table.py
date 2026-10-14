@@ -2,6 +2,10 @@ from datetime import date, datetime
 from html import escape
 from math import ceil
 
+from PySide6.QtCore import QRegularExpression
+from PySide6.QtGui import QRegularExpressionValidator, QTextLayout
+from PySide6.QtWidgets import QStyleOptionFrame
+
 from znactime.config import DEFAULT_SHOW_EXPECTED_END
 from znactime.core.constants import (
     DATE_FORMAT,
@@ -157,16 +161,25 @@ def _period_parts(value):
     ]
 
 
-def _draw_badge_text(painter, rect, text):
-    metrics = painter.fontMetrics()
+def _badge_text_baseline(rect, metrics, text):
     bounds = metrics.tightBoundingRect(text)
     # Center the visible glyphs rather than the font's ascent/descent box.
     # Round within the badge so a scroll step only translates the baseline.
-    baseline = rect.y() + round((rect.height() - bounds.height()) / 2) - bounds.top()
+    return rect.y() + round((rect.height() - bounds.height()) / 2) - bounds.top()
+
+
+def _badge_text_left(rect, metrics, text):
+    # Use one pixel for the caret and the same integer centering in both views.
+    return rect.x() + (rect.width() - metrics.horizontalAdvance(text) - 1) // 2
+
+
+def _draw_badge_text(painter, rect, text):
+    metrics = painter.fontMetrics()
+    baseline = _badge_text_baseline(rect, metrics, text)
     painter.save()
     painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
     painter.drawText(
-        QPointF(rect.x() + (rect.width() - metrics.horizontalAdvance(text)) / 2, baseline),
+        QPointF(_badge_text_left(rect, metrics, text), baseline),
         text,
     )
     painter.restore()
@@ -322,11 +335,14 @@ def _badge_rects(cell_rect, font, badge):
     # at a half-pixel center or leave the outline and text between pixels.
     y = cell_rect.y() + round((cell_rect.height() - total_height) / 2)
     max_width = max(12, cell_rect.width() - 10)
+    time_text_width = None
+    if badge.get("fixed_time_width"):
+        time_text_width = metrics.horizontalAdvance(ZERO_DURATION)
 
     rects = []
     for position, text in enumerate(texts):
         text = str(text)
-        text_width = metrics.horizontalAdvance(text)
+        text_width = time_text_width if time_text_width is not None else metrics.horizontalAdvance(text)
         if full_width:
             width = max_width
         else:
@@ -336,6 +352,42 @@ def _badge_rects(cell_rect, font, badge):
         rects.append((QRectF(x, y, width, badge_height), position, text))
         y += badge_height + BADGE_GAP
     return rects
+
+
+class BadgeLineEdit(QLineEdit):
+    def __init__(self, parent=None, *, time_only=False):
+        super().__init__(parent)
+        if time_only:
+            self.setValidator(QRegularExpressionValidator(QRegularExpression("[0-9:]*"), self))
+
+    def paintEvent(self, event):
+        panel = QStyleOptionFrame()
+        self.initStyleOption(panel)
+        content = self.style().subElementRect(QStyle.SubElement.SE_LineEditContents, panel, self)
+        text = self.displayText() or self.placeholderText() or ZERO_DURATION
+        metrics = self.fontMetrics()
+        line_height = max(metrics.height(), metrics.boundingRect(text).height())
+        native_baseline = content.y() + int((content.height() - line_height + 1) / 2) + metrics.ascent()
+        offset = _badge_text_baseline(self.rect(), metrics, text) - native_baseline
+        # Native text layout also includes glyph overhang, which can move a
+        # centered name by a pixel even when the font and control sizes match.
+        layout = QTextLayout(text, self.font())
+        layout.beginLayout()
+        line = layout.createLine()
+        layout.endLayout()
+        text_width = int(line.naturalTextWidth() + 0.5) + 1
+        line_width = content.width() - 4
+        horizontal_offset = 0
+        if text_width <= line_width:
+            native_left = content.x() + 2 - int((text_width - line_width) / 2)
+            horizontal_offset = int(_badge_text_left(self.rect(), metrics, text) - native_left)
+        top, bottom = offset, -offset
+        margins = self.textMargins()
+        if (margins.left(), margins.top(), margins.right(), margins.bottom()) != (
+            horizontal_offset, top, -horizontal_offset, bottom,
+        ):
+            self.setTextMargins(horizontal_offset, top, -horizontal_offset, bottom)
+        super().paintEvent(event)
 
 
 class IntervalEditor(QWidget):
@@ -354,9 +406,9 @@ class IntervalEditor(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.destroyed.connect(self._mark_destroyed)
 
-        self.start_edit = QLineEdit(self)
+        self.start_edit = BadgeLineEdit(self, time_only=True)
         self.start_edit.setPlaceholderText("Start")
-        self.end_edit = QLineEdit(self)
+        self.end_edit = BadgeLineEdit(self, time_only=True)
         self.end_edit.setPlaceholderText("End")
         for editor in (self.start_edit, self.end_edit):
             editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -419,7 +471,7 @@ class IntervalEditor(QWidget):
             f"border-radius: {BADGE_CORNER_RADIUS}px;"
             f"selection-background-color: {border};"
             f"selection-color: {on_primary};"
-            "font-weight: 600;"
+            "font-weight: 700;"
             "padding: 0 6px;"
             "}"
             "QLabel {"
@@ -1169,7 +1221,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             )
             return editor
 
-        editor = super().createEditor(parent, option, index)
+        editor = BadgeLineEdit(parent, time_only=index.column() in (Column.START, Column.END))
         if isinstance(editor, QLineEdit):
             index.model().set_cell_editing(index, True)
             editor.destroyed.connect(
@@ -1189,6 +1241,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             editor.setAutoFillBackground(False)
             editor.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             editor.setFrame(False)
+            horizontal_padding = 4 if index.column() in (Column.START, Column.END) else 8
             if index.column() in EDITABLE_COLUMNS:
                 editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
             editor.setStyleSheet(
@@ -1199,8 +1252,8 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 f"border-radius: {BADGE_CORNER_RADIUS}px;"
                 f"selection-background-color: {accent};"
                 f"selection-color: {on_primary};"
-                "font-weight: 600;"
-                "padding: 0 8px;"
+                "font-weight: 700;"
+                f"padding: 0 {horizontal_padding}px;"
                 "}"
             )
         return editor
@@ -1233,6 +1286,13 @@ class CurrentTimeDelegate(QStyledItemDelegate):
 
         if not isinstance(editor, QLineEdit):
             super().updateEditorGeometry(editor, option, index)
+            return
+
+        if index.column() in EDITABLE_COLUMNS:
+            font = QFont(option.font)
+            font.setBold(True)
+            badge_rect = _badge_rects(option.rect, font, index.data(BADGE_ROLE))[0][0]
+            editor.setGeometry(badge_rect.toRect())
             return
 
         horizontal_margin = 5

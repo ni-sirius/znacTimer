@@ -470,11 +470,13 @@ class MonthTableModel(QAbstractTableModel):
             if expected is not None:
                 return {
                     "texts": [expected],
+                    "fixed_time_width": True,
                     "state": BadgeState.EXPECTED,
                     "outline": True,
                 }
         return {
             "texts": [value],
+            "fixed_time_width": True,
             "state": (
                 BadgeState.SUCCESS if value != UNSET_TIME else empty_state
             ),

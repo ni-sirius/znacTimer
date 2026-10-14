@@ -23,6 +23,7 @@ from znactime.ui.qt.table_contract import (
 )
 from znactime.ui.qt.table import (
     CurrentTimeDelegate,
+    BadgeLineEdit,
     DATE_LINE_GAP,
     DATE_VERTICAL_PADDING,
     IntervalEditor,
@@ -30,6 +31,7 @@ from znactime.ui.qt.table import (
     ROW_STRIPE_SPACING,
     ROW_STRIPE_WIDTH,
     _badge_rects,
+    _draw_badge_text,
     _date_fonts,
     _interruption_badge_rects,
     _interruption_badge_rows,
@@ -494,6 +496,51 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(model.entries()[0].start, "--:--")
         self.assertEqual(model.entries()[0].end, "--:--")
 
+    def test_all_time_editors_accept_only_digits_and_colons(self):
+        parent = QDialog()
+        self.addCleanup(parent.deleteLater)
+        model = self.make_model()
+        delegate = CurrentTimeDelegate(parent)
+        interval = IntervalEditor(parent)
+        editors = [
+            delegate.createEditor(parent, QStyleOptionViewItem(), model.index(0, column))
+            for column in (Column.START, Column.END)
+        ] + [interval.start_edit, interval.end_edit]
+        for editor in editors:
+            with self.subTest(editor=editor):
+                editor.clear()
+                QTest.keyClicks(editor, "ab08:3x0 -.;/+")
+                self.assertEqual(editor.text(), "08:30")
+                editor.selectAll()
+                QTest.keyClick(editor, Qt.Key.Key_Backspace)
+                self.assertEqual(editor.text(), "")
+                self.assertTrue(editor.hasAcceptableInput())
+                QTest.keyClicks(editor, "0830")
+                self.assertEqual(editor.text(), "0830")
+
+    def test_time_editor_paste_rejects_other_characters_and_day_editor_keeps_text(self):
+        parent = QDialog()
+        self.addCleanup(parent.deleteLater)
+        model = self.make_model()
+        delegate = CurrentTimeDelegate(parent)
+        editor = delegate.createEditor(parent, QStyleOptionViewItem(), model.index(0, Column.START))
+        clipboard = QApplication.clipboard()
+        original = clipboard.text()
+        self.addCleanup(clipboard.setText, original)
+        editor.setText("08:30")
+        editor.selectAll()
+        clipboard.setText("09:45am")
+        editor.paste()
+        self.assertEqual(editor.text(), "08:30")
+        clipboard.setText("09:45")
+        editor.paste()
+        self.assertEqual(editor.text(), "09:45")
+        day_editor = delegate.createEditor(
+            parent, QStyleOptionViewItem(), model.index(0, Column.SPECIAL_DAY)
+        )
+        QTest.keyClicks(day_editor, "Off-site (PM)")
+        self.assertEqual(day_editor.text(), "Off-site (PM)")
+
     def test_missing_end_shows_non_persisted_expected_badge(self):
         model = MonthTableModel()
         model.set_context(
@@ -607,6 +654,68 @@ class QtModelInterruptionTest(unittest.TestCase):
                         for y in range(corner.height())
                         for x in range(corner.width())
                     ))
+
+    def test_badge_editor_text_keeps_the_same_visible_position(self):
+        if not QFontDatabase.families():
+            for path in (
+                "C:/Windows/Fonts/segoeui.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ):
+                if os.path.isfile(path):
+                    font_id = QFontDatabase.addApplicationFont(path)
+                    if font_id >= 0:
+                        self.addCleanup(QFontDatabase.removeApplicationFont, font_id)
+                        break
+            if not QFontDatabase.families():
+                self.skipTest("A real font is required to measure visible text")
+
+        def ink_bounds(image):
+            pixels = [
+                (x, y) for y in range(image.height()) for x in range(image.width())
+                if max(image.pixelColor(x, y).getRgb()[:3]) < 100
+            ]
+            self.assertTrue(pixels)
+            return (
+                min(x for x, y in pixels), min(y for x, y in pixels),
+                max(x for x, y in pixels), max(y for x, y in pixels),
+            )
+
+        editor = BadgeLineEdit()
+        self.addCleanup(editor.deleteLater)
+        self.addCleanup(editor.close)
+        editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Hide the caret so only the glyphs enter the image comparison.
+        editor.setReadOnly(True)
+        editor.setStyleSheet(
+            "QLineEdit { color: black; background: white; border: 2px solid #bb66ff; "
+            "border-radius: 6px; padding: 0 4px; font-weight: 700; }"
+        )
+        for point_size in (10, 14):
+            font = QApplication.font()
+            font.setFamily(QFontDatabase.families()[0])
+            font.setPointSize(point_size)
+            font.setBold(True)
+            editor.setFont(font)
+            for width in (180, 181):
+                height = QFontMetrics(font).height() + 8
+                editor.resize(width, height)
+                for text in ("08:00", "16:45", "--:--", "Normal day", "Vacation"):
+                    with self.subTest(point_size=point_size, width=width, text=text):
+                        editor.setText(text)
+                        editor.show()
+                        self.app.processEvents()
+                        actual = editor.grab().toImage()
+                        reference = QPixmap(width, height)
+                        reference.fill(Qt.GlobalColor.white)
+                        painter = QPainter(reference)
+                        try:
+                            painter.setFont(font)
+                            painter.setPen(Qt.GlobalColor.black)
+                            _draw_badge_text(painter, QRectF(0, 0, width, height), text)
+                        finally:
+                            painter.end()
+                        self.assertEqual(ink_bounds(actual), ink_bounds(reference.toImage()))
 
     def test_time_badges_center_visible_text_vertically(self):
         if not QFontDatabase.families():
