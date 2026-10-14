@@ -56,7 +56,8 @@ entered.
 
 ### Edit interruptions inline
 
-Double-click an interruption to edit its start and end directly. Multiple
+Click an interruption to edit its start and end directly. Clicking another badge
+finishes the current edit; click that badge again to edit it. Multiple
 intervals remain separate, their durations are totaled automatically, and
 incomplete pauses are clearly represented.
 

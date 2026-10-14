@@ -6,9 +6,10 @@ from PySide6.QtCore import QPersistentModelIndex, QSortFilterProxyModel
 
 from znactime.core.constants import DATE_FORMAT
 from znactime.ui.qt import (
-    QAbstractItemView, QFrame, QHeaderView, QStyleOptionViewItem, QTableView, Qt,
+    QAbstractItemView, QFrame, QHeaderView, QStyleOptionViewItem, Qt,
 )
 from znactime.ui.qt.table import BADGE_VERTICAL_PADDING, CurrentTimeDelegate
+from znactime.ui.qt.badge_edit import BadgeTableView
 from znactime.ui.qt.table_contract import CELL_EDITING_ROLE
 from znactime.ui.table_schema import Column
 
@@ -57,12 +58,12 @@ class _DayBadgeDelegate(CurrentTimeDelegate):
         editor.setGeometry(option.rect.adjusted(5, 0, -5, 0))
 
 
-class TodayBadgeView(QTableView):
+class TodayBadgeView(BadgeTableView):
     def __init__(self, parent=None, model=None):
         super().__init__(parent)
         self.setObjectName("todayBadge")
         self.setAccessibleName("Today's day badge")
-        self.setToolTip("Today's day badge · Double-click to edit")
+        self.setToolTip("Today's day badge · Click to edit")
         self._date = None
         self.today_model = _TodayModel(self)
         self.today_model.setFilterKeyColumn(Column.DATE)
@@ -79,11 +80,6 @@ class TodayBadgeView(QTableView):
         self.verticalHeader().hide()
         self.verticalHeader().setMinimumSectionSize(1)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked
-            | QAbstractItemView.EditTrigger.EditKeyPressed
-            | QAbstractItemView.EditTrigger.AnyKeyPressed
-        )
         self.setMouseTracking(True)
         self.setStyleSheet(
             "QTableView#todayBadge { background: transparent; border: none; outline: 0; }"

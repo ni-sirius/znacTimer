@@ -50,7 +50,6 @@ from znactime.ui.qt import (
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
-    QTableView,
     QTimer,
     QToolTip,
     QVBoxLayout,
@@ -59,6 +58,7 @@ from znactime.ui.qt import (
     Qt,
 )
 from znactime.ui.qt.model import MonthTableModel
+from znactime.ui.qt.badge_edit import BadgeTableView
 from znactime.ui.qt.table_contract import (
     BADGE_ROLE,
     CALENDAR_WEEK_ROLE,
@@ -1211,6 +1211,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         if index.column() == Column.INTERRUPTION:
             editor = IntervalEditor(parent)
+            view = parent.parentWidget()
+            if hasattr(view, "register_badge_editor"):
+                view.register_badge_editor(editor)
             index.model().set_cell_editing(index, True)
             editor.destroyed.connect(
                 lambda _object=None, model=index.model(), row=index.row(),
@@ -1222,6 +1225,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             return editor
 
         editor = BadgeLineEdit(parent, time_only=index.column() in (Column.START, Column.END))
+        view = parent.parentWidget()
+        if hasattr(view, "register_badge_editor"):
+            view.register_badge_editor(editor)
         if isinstance(editor, QLineEdit):
             index.model().set_cell_editing(index, True)
             editor.destroyed.connect(
@@ -1369,7 +1375,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             pass
 
 
-class MonthTableView(QTableView):
+class MonthTableView(BadgeTableView):
     contentHeightChanged = Signal(int)
 
     def __init__(self, parent=None):
@@ -1751,13 +1757,12 @@ class MonthTableView(QTableView):
             position, self, self.viewport().mapToGlobal(position),
         )
 
-    def mouseDoubleClickEvent(self, event):
-        index = self.indexAt(event.pos())
-        if self._start_interruption_edit(index, event.pos()):
-            event.accept()
-            return
+    def _start_badge_edit(self, index, position):
+        if not self._start_interruption_edit(index, position):
+            super()._start_badge_edit(index, position)
 
-        super().mouseDoubleClickEvent(event)
+    def _badge_cell_rect(self, index):
+        return _cell_content_rect(index, self.visualRect(index), self.devicePixelRatioF())
 
     def indexAt(self, position):
         index = super().indexAt(position)

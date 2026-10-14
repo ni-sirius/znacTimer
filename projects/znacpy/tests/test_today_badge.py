@@ -53,10 +53,6 @@ class TodayBadgeTest(unittest.TestCase):
             view.viewport(), Qt.MouseButton.LeftButton,
             pos=view.visualRect(index).center(),
         )
-        QTest.mouseDClick(
-            view.viewport(), Qt.MouseButton.LeftButton,
-            pos=view.visualRect(index).center(),
-        )
         self.app.processEvents()
         editor = view.findChild(QLineEdit)
         self.assertIsNotNone(editor)
