@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from znactime.ui.table_schema import Column
 from znactime.core.models import DayEntry
 from znactime.ui.qt import QApplication, QDialog, QEvent, QFontMetrics, QPainter, QPixmap, QRectF, QStyleOptionViewItem, QToolTip, Qt
-from PySide6.QtGui import QHelpEvent
+from PySide6.QtGui import QFontDatabase, QHelpEvent
 from PySide6.QtTest import QTest
 from znactime.ui.qt.model import (
     BADGE_ROLE,
@@ -31,6 +31,7 @@ from znactime.ui.qt.table import (
     ROW_STRIPE_WIDTH,
     _badge_rects,
     _date_fonts,
+    _interruption_badge_rects,
     _interruption_badge_rows,
     _row_texture_color,
 )
@@ -464,7 +465,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         ]
         badge = model.index(0, Column.INTERRUPTION).data(BADGE_ROLE)
 
-        self.assertIn("Daily OT", headers)
+        self.assertIn("Daily", headers)
         self.assertEqual(headers[-1], "Monthly")
         self.assertEqual(
             badge["texts"],
@@ -563,7 +564,109 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(colors["text"].name(), "#6941c6")
         self.assertEqual(colors["border"].name(), "#6941c6")
 
-    def test_input_prompts_only_highlight_due_workdays_in_open_month(self):
+    def test_expected_badge_has_smooth_corners_and_stable_scroll_rendering(self):
+        model = self.make_model()
+        index = model.index(0, Column.END)
+        delegate = CurrentTimeDelegate()
+        option = QStyleOptionViewItem()
+        option.font = QApplication.font()
+        option.font.setBold(True)
+        badge = {"texts": ["16:45"], "state": "expected", "outline": True}
+        badge_height = QFontMetrics(option.font).height() + 8
+
+        for ratio in (1, 2):
+            for row_height in (badge_height + 9, badge_height + 10):
+                with self.subTest(pixel_ratio=ratio, row_height=row_height):
+                    images = []
+                    for offset in range(8):
+                        top = 10 - offset
+                        option.rect.setRect(0, top, 121, row_height)
+                        pixmap = QPixmap(121 * ratio, (row_height + 20) * ratio)
+                        pixmap.setDevicePixelRatio(ratio)
+                        pixmap.fill(Qt.GlobalColor.transparent)
+                        painter = QPainter(pixmap)
+                        try:
+                            delegate._paint_badges(painter, option, index, badge)
+                        finally:
+                            painter.end()
+                        images.append(pixmap.toImage().copy(
+                            0, top * ratio, 121 * ratio, row_height * ratio,
+                        ))
+
+                    # A scroll step must only translate the rendered badge.
+                    self.assertTrue(all(image == images[0] for image in images))
+                    rect = _badge_rects(option.rect, option.font, badge)[0][0]
+                    corner = images[-1].copy(
+                        int(rect.x() * ratio),
+                        int((rect.y() - option.rect.y()) * ratio),
+                        6 * ratio, 6 * ratio,
+                    )
+                    # Curved border pixels need blended coverage, not hard steps.
+                    self.assertTrue(any(
+                        0 < corner.pixelColor(x, y).alpha() < 255
+                        for y in range(corner.height())
+                        for x in range(corner.width())
+                    ))
+
+    def test_time_badges_center_visible_text_vertically(self):
+        if not QFontDatabase.families():
+            # The offscreen platform may not discover system fonts itself.
+            font_paths = (
+                "C:/Windows/Fonts/segoeui.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            )
+            for path in font_paths:
+                if os.path.isfile(path):
+                    font_id = QFontDatabase.addApplicationFont(path)
+                    if font_id >= 0:
+                        self.addCleanup(QFontDatabase.removeApplicationFont, font_id)
+                        break
+            if not QFontDatabase.families():
+                self.skipTest("A real font is required to measure visible text")
+        model = self.make_model()
+        index = model.index(0, Column.END)
+        delegate = CurrentTimeDelegate()
+        option = QStyleOptionViewItem()
+        option.rect.setRect(0, 0, 180, 42)
+
+        for point_size in (10, 14):
+            font = QApplication.font()
+            font.setFamily(QFontDatabase.families()[0])
+            font.setPointSize(point_size)
+            font.setBold(True)
+            option.font = font
+            for ratio in (1, 2):
+                for text in ("08:00", "16:45", "--:--", "01:00", "12:00-12:30", "12:00-..."):
+                    with self.subTest(point_size=point_size, ratio=ratio, text=text):
+                        interruption = text in ("01:00", "12:00-12:30", "12:00-...")
+                        # Omit the fill to measure only the rendered glyphs.
+                        badge = {"texts": [text], "plain": True, "items": [{"text": text}]}
+                        pixmap = QPixmap(180 * ratio, 42 * ratio)
+                        pixmap.setDevicePixelRatio(ratio)
+                        pixmap.fill(Qt.GlobalColor.transparent)
+                        painter = QPainter(pixmap)
+                        try:
+                            if interruption:
+                                delegate._paint_interruption_badges(painter, option, index, badge)
+                            else:
+                                delegate._paint_badges(painter, option, index, badge)
+                        finally:
+                            painter.end()
+                        rects = (
+                            _interruption_badge_rects if interruption else _badge_rects
+                        )(option.rect, font, badge)
+                        rect = rects[0][0]
+                        image = pixmap.toImage()
+                        ink_rows = [
+                            y for y in range(image.height())
+                            if any(image.pixelColor(x, y).alpha() > 127 for x in range(image.width()))
+                        ]
+                        self.assertTrue(ink_rows)
+                        ink_center = (min(ink_rows) + max(ink_rows) + 1) / (2 * ratio)
+                        self.assertLessEqual(abs(ink_center - rect.center().y()), 1)
+
+    def test_time_and_day_prompts_only_highlight_due_workdays_in_open_month(self):
         model = MonthTableModel()
         model.set_entries([
             DayEntry("", "17.06.2024", "", "--:--", "--:--", "00:00"),
@@ -588,7 +691,7 @@ class QtModelInterruptionTest(unittest.TestCase):
             self.assertEqual(model.index(row, Column.START).data(BADGE_ROLE)["state"], "empty")
             self.assertFalse(model.index(row, Column.START).data(BADGE_ROLE)["outline"])
             self.assertEqual(
-                model.index(row, Column.INTERRUPTION).data(BADGE_ROLE)["items"][-1]["state"], "empty"
+                model.index(row, Column.INTERRUPTION).data(BADGE_ROLE)["items"][-1]["state"], "action"
             )
         self.assertEqual(model.index(2, Column.SPECIAL_DAY).data(BADGE_ROLE)["state"], "empty")
 

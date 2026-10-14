@@ -19,7 +19,7 @@ COLUMNS = (
     "Start",
     "End",
     "Interruption",
-    "Daily OT",
+    "Daily",
     "Monthly",
 )
 

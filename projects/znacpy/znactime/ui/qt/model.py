@@ -436,7 +436,7 @@ class MonthTableModel(QAbstractTableModel):
                     {
                         "text": "+",
                         "icon": InterruptionAction.ADD,
-                        "state": empty_state,
+                        "state": BadgeState.ACTION,
                         "target": {
                             "action": InterruptionAction.ADD,
                             "period_index": None,

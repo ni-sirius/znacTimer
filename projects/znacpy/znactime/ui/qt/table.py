@@ -34,6 +34,7 @@ from znactime.ui.qt import (
     QKeySequence,
     QPainterPath,
     QPainter,
+    QPointF,
     QPixmap,
     QPen,
     QPropertyAnimation,
@@ -156,6 +157,21 @@ def _period_parts(value):
     ]
 
 
+def _draw_badge_text(painter, rect, text):
+    metrics = painter.fontMetrics()
+    bounds = metrics.tightBoundingRect(text)
+    # Center the visible glyphs rather than the font's ascent/descent box.
+    # Round within the badge so a scroll step only translates the baseline.
+    baseline = rect.y() + round((rect.height() - bounds.height()) / 2) - bounds.top()
+    painter.save()
+    painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
+    painter.drawText(
+        QPointF(rect.x() + (rect.width() - metrics.horizontalAdvance(text)) / 2, baseline),
+        text,
+    )
+    painter.restore()
+
+
 def _action_icon(action, color):
     pixmap = QPixmap(32, 32)
     pixmap.setDevicePixelRatio(2.0)
@@ -266,7 +282,7 @@ def _interruption_badge_rects(cell_rect, font, badge):
         len(rows) * badge_height
         + max(0, len(rows) - 1) * BADGE_GAP
     )
-    y = cell_rect.y() + (cell_rect.height() - total_height) / 2
+    y = cell_rect.y() + round((cell_rect.height() - total_height) / 2)
     rects = []
     for row in rows:
         row_width = (
@@ -302,7 +318,9 @@ def _badge_rects(cell_rect, font, badge):
             len(texts) * badge_height
             + max(0, len(texts) - 1) * BADGE_GAP
         )
-    y = cell_rect.y() + (cell_rect.height() - total_height) / 2
+    # Snap the offset within the cell, so scrolling cannot change rounding
+    # at a half-pixel center or leave the outline and text between pixels.
+    y = cell_rect.y() + round((cell_rect.height() - total_height) / 2)
     max_width = max(12, cell_rect.width() - 10)
 
     rects = []
@@ -314,7 +332,7 @@ def _badge_rects(cell_rect, font, badge):
         else:
             desired_width = text_width + BADGE_HORIZONTAL_PADDING * 2
             width = min(max_width, desired_width)
-        x = cell_rect.x() + (cell_rect.width() - width) / 2
+        x = cell_rect.x() + round((cell_rect.width() - width) / 2)
         rects.append((QRectF(x, y, width, badge_height), position, text))
         y += badge_height + BADGE_GAP
     return rects
@@ -866,6 +884,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         state = badge.get("state", BadgeState.EMPTY)
 
         painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         font = option.font
         font.setBold(True)
         painter.setFont(font)
@@ -914,11 +933,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                     Qt.TextElideMode.ElideRight,
                     int(text_rect.width()),
                 )
-            painter.drawText(
-                text_rect,
-                Qt.AlignmentFlag.AlignCenter,
-                displayed_text,
-            )
+            _draw_badge_text(painter, text_rect, displayed_text)
             painter.setPen(Qt.PenStyle.NoPen)
 
         painter.restore()
@@ -1007,11 +1022,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                     Qt.AlignmentFlag.AlignCenter,
                 )
             else:
-                painter.drawText(
-                    text_rect,
-                    Qt.AlignmentFlag.AlignCenter,
-                    text,
-                )
+                _draw_badge_text(painter, text_rect, text)
 
         painter.restore()
 
