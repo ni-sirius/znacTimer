@@ -10,6 +10,7 @@ from znactime.ui.table_schema import Column
 from znactime.core.models import DayEntry
 from znactime.ui.qt import QApplication, QDialog, QEvent, QFontMetrics, QPainter, QPixmap, QRectF, QStyleOptionViewItem, QToolTip, Qt
 from PySide6.QtGui import QHelpEvent
+from PySide6.QtTest import QTest
 from znactime.ui.qt.model import (
     BADGE_ROLE,
     CELL_EDITING_ROLE,
@@ -17,7 +18,9 @@ from znactime.ui.qt.model import (
     MonthTableModel,
     ROW_TEXTURE_ROLE,
 )
-from znactime.ui.qt.table_contract import CALENDAR_WEEK_ROLE, WEEKDAY_ROLE
+from znactime.ui.qt.table_contract import (
+    CALENDAR_WEEK_ROLE, DATE_GRADIENT_ROLE, DATE_PROBLEM_ROLE, WEEKDAY_ROLE, DateGradientState,
+)
 from znactime.ui.qt.table import (
     CurrentTimeDelegate,
     DATE_LINE_GAP,
@@ -67,6 +70,145 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(index.data(Qt.ItemDataRole.ToolTipRole), "14.10.2026")
         self.assertEqual(index.data(Qt.ItemDataRole.EditRole), "14.10.2026")
         self.assertFalse(index.flags() & Qt.ItemFlag.ItemIsEditable)
+
+    def test_today_gradient_tracks_completion_errors_and_corrections(self):
+        model = MonthTableModel()
+        model.set_entries([
+            DayEntry("", "14.10.2026", "Normal day", "08:00", "--:--", "00:00")
+        ])
+        model.recalculate(today=date(2026, 10, 14), autosave=False)
+        index = model.index(0, Column.DATE)
+        self.assertEqual(index.data(DATE_GRADIENT_ROLE), DateGradientState.IN_PROGRESS)
+
+        with patch("znactime.ui.qt.model.date") as calendar_date:
+            calendar_date.today.return_value = date(2026, 10, 14)
+            for changes, expected in (
+                ({"interruption": "12:00-..."}, DateGradientState.IN_PROGRESS),
+                ({"end": "17:00"}, DateGradientState.INVALID),
+                ({"interruption": "12:00-12:30"}, DateGradientState.VALID),
+                ({"interruption": "07:45-08:15"}, DateGradientState.INVALID),
+                ({"interruption": "00:00", "end": "--:--"}, DateGradientState.IN_PROGRESS),
+                ({"interruption": "07:45-..."}, DateGradientState.INVALID),
+                ({"interruption": "12:30-12:00"}, DateGradientState.INVALID),
+                ({"interruption": "00:00", "end": "07:00"}, DateGradientState.INVALID),
+                ({"end": "16:00", "interruption": "09:00"}, DateGradientState.INVALID),
+                ({"interruption": "01:00"}, DateGradientState.VALID),
+            ):
+                with self.subTest(changes=changes):
+                    self.assertTrue(model.update_entry_for_date("14.10.2026", **changes))
+                    self.assertEqual(index.data(DATE_GRADIENT_ROLE), expected)
+        # Negative overtime is still a valid, completed day.
+        self.assertEqual(model.entries()[0].daily_ot, "-01:00")
+
+    def test_date_gradients_distinguish_unfilled_days_and_valid_special_days(self):
+        model = MonthTableModel()
+        model.set_entries([
+            DayEntry("", "12.10.2026", "Normal day", "--:--", "--:--", "00:00"),
+            DayEntry("", "13.10.2026", "Normal day", "08:00", "--:--", "00:00"),
+            DayEntry("", "14.10.2026", "Normal day", "--:--", "--:--", "00:00"),
+            DayEntry("", "15.10.2026", "Normal day", "--:--", "--:--", "00:00"),
+            DayEntry("", "11.10.2026", "Weekend", "--:--", "--:--", "00:00", expected_work_minutes=0),
+            DayEntry("", "10.10.2026", "Weekend", "08:00", "17:00", "01:00", expected_work_minutes=0),
+            DayEntry("", "09.10.2026", "Vacation", "--:--", "--:--", "00:00", expected_work_minutes=0),
+            DayEntry("", "08.10.2026", "Vacation", "08:00", "17:00", "17:00-17:30"),
+        ])
+        model.recalculate(today=date(2026, 10, 14), autosave=False)
+        self.assertEqual(
+            [model.index(row, Column.DATE).data(DATE_GRADIENT_ROLE) for row in range(model.rowCount())],
+            ["", "invalid", "in_progress", "", "", "valid", "", "invalid"],
+        )
+        model.recalculate(today=date(2026, 10, 15), autosave=False)
+        self.assertEqual(model.index(2, Column.DATE).data(DATE_GRADIENT_ROLE), "")
+        self.assertEqual(model.index(3, Column.DATE).data(DATE_GRADIENT_ROLE), "in_progress")
+
+    def test_closed_month_uses_gray_gradients_and_preserves_problem_explanations(self):
+        model = MonthTableModel()
+        model.set_entries([
+            DayEntry("", "12.10.2026", "Normal day", "08:00", "17:00", "01:00"),
+            DayEntry("", "13.10.2026", "No data", "--:--", "--:--", "00:00", expected_work_minutes=0),
+            DayEntry("", "14.10.2026", "Normal day", "08:00", "17:00", "18:00-18:30"),
+        ])
+        model.set_month_closed(True)
+        model.recalculate(today=date(2026, 10, 14), autosave=False)
+        self.assertEqual(
+            [model.index(row, Column.DATE).data(DATE_GRADIENT_ROLE) for row in range(model.rowCount())],
+            ["closed", "closed", "closed"],
+        )
+        self.assertEqual(model.index(1, Column.DATE).data(DATE_PROBLEM_ROLE), "")
+        self.assertIn("ends after the workday", model.index(2, Column.DATE).data(DATE_PROBLEM_ROLE))
+        model.set_month_closed(False)
+        self.assertEqual(
+            [model.index(row, Column.DATE).data(DATE_GRADIENT_ROLE) for row in range(model.rowCount())],
+            ["valid", "", "invalid"],
+        )
+
+    def test_red_day_info_icon_shows_shared_reason_on_hover_and_click(self):
+        model = self.make_model()
+        model.update_entry_for_date("17.06.2024", interruption="07:45-08:15")
+        view = MonthTableView()
+        view.resize(960, 120)
+        view.setModel(model)
+        delegate = CurrentTimeDelegate(view)
+        view.setItemDelegate(delegate)
+        view.show()
+        self.app.processEvents()
+        index = model.index(0, Column.DATE)
+        option = QStyleOptionViewItem()
+        option.font = view.font()
+        option.rect = view.visualRect(index)
+        icon_rect = delegate.date_problem_rect(index, option.rect, option.font)
+        position = icon_rect.center().toPoint()
+        self.assertEqual(index.data(DATE_GRADIENT_ROLE), "invalid")
+        self.assertIn("07:45-08:15 starts before", index.data(DATE_PROBLEM_ROLE))
+        self.assertTrue(option.rect.contains(icon_rect.toRect()))
+        try:
+            event = QHelpEvent(QEvent.Type.ToolTip, position, view.viewport().mapToGlobal(position))
+            with patch("znactime.ui.qt.table.QToolTip.showText") as bubble:
+                self.assertTrue(delegate.helpEvent(event, view, option, index))
+                self.assertIn("07:45-08:15 starts before", bubble.call_args.args[1])
+            with patch("znactime.ui.qt.table.QToolTip.showText") as bubble:
+                QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=position)
+                self.assertEqual(bubble.call_count, 1)
+                self.assertIn("07:45-08:15 starts before", bubble.call_args.args[1])
+            view.setCurrentIndex(index)
+            with patch("znactime.ui.qt.table.QToolTip.showText") as bubble:
+                QTest.keyClick(view, Qt.Key.Key_Return)
+                self.assertEqual(bubble.call_count, 1)
+            view._update_hovered_badge(position)
+            self.assertEqual(view.viewport().cursor().shape(), Qt.CursorShape.PointingHandCursor)
+            view._update_hovered_badge(option.rect.topLeft())
+            self.assertNotEqual(view.viewport().cursor().shape(), Qt.CursorShape.PointingHandCursor)
+            with patch("znactime.ui.qt.table.QToolTip.showText") as bubble:
+                QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=option.rect.adjusted(4, 4, 0, 0).topLeft())
+                bubble.assert_not_called()
+            self.assertFalse(delegate.date_problem_at(index, option.rect, option.rect.topLeft(), option.font))
+            model.update_entry_for_date("17.06.2024", interruption="12:00-12:30")
+            self.assertEqual(index.data(DATE_GRADIENT_ROLE), "valid")
+            self.assertEqual(index.data(DATE_PROBLEM_ROLE), "")
+            self.assertTrue(delegate.date_problem_rect(index, option.rect, option.font).isEmpty())
+        finally:
+            QToolTip.hideText()
+            view.close()
+
+    def test_week_separator_is_not_an_info_icon_target(self):
+        model = self.make_model()
+        model.set_entries([
+            DayEntry("CW-41", "11.10.2026", "Normal day", "08:00", "17:00", "07:00-07:30"),
+            DayEntry("CW-42", "12.10.2026", "Normal day", "08:00", "17:00", "00:00"),
+        ])
+        model.recalculate(today=date(2026, 10, 14), autosave=False)
+        view = MonthTableView()
+        view.resize(960, 240)
+        view.setModel(model)
+        delegate = CurrentTimeDelegate(view)
+        view.setItemDelegate(delegate)
+        view.update_table_geometry()
+        index = model.index(0, Column.DATE)
+        gap_position = view.visualRect(index).bottomRight()
+        with patch("znactime.ui.qt.table.QToolTip.showText") as bubble:
+            self.assertFalse(view._show_date_problem(gap_position))
+            bubble.assert_not_called()
+        view.close()
 
     def test_short_date_handles_single_digit_days_and_year_boundary(self):
         model = MonthTableModel()

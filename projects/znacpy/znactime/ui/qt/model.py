@@ -15,6 +15,7 @@ from znactime.core.constants import (
     DayStatus,
 )
 from znactime.core.models import DayEntry
+from znactime.core.day_evaluator import DayEvaluator
 from znactime.core.time_utils import (
     coerce_interruption_input,
     coerce_time_input,
@@ -54,6 +55,8 @@ from znactime.ui.qt.table_contract import (
     CALENDAR_WEEK_ROLE,
     CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
+    DATE_GRADIENT_ROLE,
+    DATE_PROBLEM_ROLE,
     ROW_TEXTURE_ROLE,
     WEEKDAY_ROLE,
     BadgeKind,
@@ -115,6 +118,8 @@ class MonthTableModel(QAbstractTableModel):
                 Qt.ItemDataRole.ForegroundRole,
                 BADGE_ROLE,
                 ROW_TEXTURE_ROLE,
+                DATE_GRADIENT_ROLE,
+                DATE_PROBLEM_ROLE,
             ]
         )
         self.layoutChanged.emit()
@@ -146,6 +151,8 @@ class MonthTableModel(QAbstractTableModel):
                 Qt.ItemDataRole.ForegroundRole,
                 CURRENT_ROW_ROLE,
                 ROW_TEXTURE_ROLE,
+                DATE_GRADIENT_ROLE,
+                DATE_PROBLEM_ROLE,
             ],
         )
 
@@ -238,6 +245,12 @@ class MonthTableModel(QAbstractTableModel):
             return getattr(entry, ENTRY_FIELDS[column])
 
         if column == Column.DATE:
+            if role == DATE_GRADIENT_ROLE:
+                if self.month_closed:
+                    return RowTextureState.CLOSED
+                return self._evaluate_day(entry).state
+            if role == DATE_PROBLEM_ROLE:
+                return self._evaluate_day(entry).explanation
             if role == Qt.ItemDataRole.ToolTipRole:
                 return entry.date
             if role == CALENDAR_WEEK_ROLE:
@@ -309,6 +322,9 @@ class MonthTableModel(QAbstractTableModel):
             Column.MONTHLY_BALANCE,
         )
         self.dataChanged.emit(top_left, bottom_right, roles or [])
+
+    def _evaluate_day(self, entry):
+        return DayEvaluator.evaluate(entry, today=self._today, month_closed=self.month_closed)
 
     def _row_texture_state(self, entry):
         if self.month_closed:

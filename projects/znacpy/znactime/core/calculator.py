@@ -6,18 +6,16 @@ from znactime.core.constants import (
     DATE_FORMAT,
     DayStatus,
     TIME_FORMAT,
-    UNSET_TIME,
     WEEKEND_DAY,
     is_normal_day,
 )
 from znactime.core.models import DayEntry
+from znactime.core.day_evaluator import DayEvaluation, DayEvaluationState, DayEvaluator
 from znactime.core.time_utils import (
     hhmm_to_hours,
     hours_to_hhmm,
-    interruption_has_outside_workday_period,
     interruption_input_or_zero,
     interruption_hours,
-    parse_interruption_input,
     time_input_or_zero,
 )
 
@@ -55,38 +53,24 @@ def _calculate_daily_overtime(
     entry: DayEntry,
     *,
     day_hours: float,
-    date_is_valid: bool,
+    evaluation: DayEvaluation,
 ) -> tuple[float, bool]:
     """Return daily overtime and whether normal-day time data is incomplete."""
-    if not date_is_valid:
-        return 0.0, True
-
-    if entry.start == UNSET_TIME or entry.end == UNSET_TIME:
+    if not evaluation.can_calculate:
         expected_minutes = (
             entry.expected_work_minutes
             if entry.expected_work_minutes is not None
             else round(day_hours * 60)
         )
-        return 0.0, expected_minutes != 0
+        return 0.0, evaluation.state == DayEvaluationState.INVALID or expected_minutes != 0
 
     try:
-        interruption = parse_interruption_input(entry.interruption)
         worked = _calculate_worked_hours(
             entry.start,
             entry.end,
             entry.interruption,
         )
-        interruption_is_invalid = (
-            interruption is None
-            or interruption.has_incomplete
-            or interruption_has_outside_workday_period(
-                entry.interruption,
-                entry.start,
-                entry.end,
-            )
-            or worked < 0
-        )
-        if interruption_is_invalid:
+        if worked < 0:
             return 0.0, True
         expected_hours = (
             entry.expected_work_minutes / 60
@@ -186,7 +170,7 @@ def _recalculate_entry(
     daily_overtime, time_data_is_incomplete = _calculate_daily_overtime(
         normalized,
         day_hours=day_hours,
-        date_is_valid=date_is_valid,
+        evaluation=DayEvaluator.evaluate(normalized, today=today, month_closed=month_closed),
     )
     row_color = _assign_row_color(
         normalized,

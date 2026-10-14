@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from html import escape
 from math import ceil
 
 from znactime.config import DEFAULT_SHOW_EXPECTED_END
@@ -29,6 +30,7 @@ from znactime.ui.qt import (
     QIcon,
     QLabel,
     QLineEdit,
+    QLinearGradient,
     QKeySequence,
     QPainterPath,
     QPainter,
@@ -57,10 +59,13 @@ from znactime.ui.qt.table_contract import (
     CALENDAR_WEEK_ROLE,
     CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
+    DATE_GRADIENT_ROLE,
+    DATE_PROBLEM_ROLE,
     ROW_TEXTURE_ROLE,
     WEEKDAY_ROLE,
     BadgeKind,
     BadgeState,
+    DateGradientState,
     InterruptionAction,
     RowTextureState,
 )
@@ -77,6 +82,7 @@ MIN_COMPACT_COLUMN_WIDTH = 72
 ROW_HEIGHT_SCALE = 1.5
 MAX_COMPACT_ROW_HEIGHT = 42
 DATE_LINE_GAP = 1
+DATE_PROBLEM_ICON_SIZE = 16
 TABLE_CORNER_RADIUS = 10
 WEEK_SEPARATOR_THICKNESS_MULTIPLIER = 10
 BADGE_HORIZONTAL_PADDING = 8
@@ -623,6 +629,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         date_rect = QRectF(cell_rect)
         if week:
             date_rect.setRight(week_rect.left() - 10)
+        problem_rect = self.date_problem_rect(index, option.rect, option.font)
+        if not problem_rect.isEmpty():
+            date_rect.setRight(problem_rect.left() - 6)
 
         weekday = str(index.data(WEEKDAY_ROLE) or "")
         date_font, weekday_font = _date_fonts(option.font)
@@ -672,7 +681,59 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             week,
         )
+        if not problem_rect.isEmpty():
+            self._paint_date_problem(painter, problem_rect, option.font, index)
         painter.restore()
+
+    def date_problem_rect(self, index, cell_rect, font):
+        if index.column() != Column.DATE or not index.data(DATE_PROBLEM_ROLE):
+            return QRectF()
+        week_font = QFont(font)
+        week_font.setBold(False)
+        week = str(index.data(CALENDAR_WEEK_ROLE) or "")
+        week_width = QFontMetrics(week_font).horizontalAdvance(week)
+        rect = QRectF(cell_rect)
+        return QRectF(
+            rect.right() - 10 - week_width - (6 if week else 0) - DATE_PROBLEM_ICON_SIZE,
+            rect.top() + round((rect.height() - DATE_PROBLEM_ICON_SIZE) / 2),
+            DATE_PROBLEM_ICON_SIZE,
+            DATE_PROBLEM_ICON_SIZE,
+        )
+
+    def _paint_date_problem(self, painter, rect, font, index):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(theme_color("model.overtime_negative", _is_dark_theme()))
+        painter.setPen(QPen(color, 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if self._is_badge_hovered(index, "problem", 0):
+            fill = QColor(color)
+            fill.setAlphaF(0.15)
+            painter.setBrush(fill)
+        painter.drawEllipse(rect.adjusted(0.7, 0.7, -0.7, -0.7))
+        icon_font = QFont(font)
+        icon_font.setBold(True)
+        icon_font.setPixelSize(12)
+        painter.setFont(icon_font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "i")
+        painter.restore()
+
+    def date_problem_at(self, index, cell_rect, position, font):
+        if not index.isValid():
+            return ""
+        rect = self.date_problem_rect(index, cell_rect, font)
+        if not rect.isEmpty() and rect.adjusted(-3, -3, 3, 3).contains(position):
+            return index.data(DATE_PROBLEM_ROLE)
+        return ""
+
+    def show_date_problem(self, index, cell_rect, position, view, global_position):
+        text = self.date_problem_at(index, cell_rect, position, view.font())
+        if not text:
+            return False
+        bubble = "<p>" + escape(text).replace("\n", "<br>") + "</p>"
+        hit_rect = self.date_problem_rect(index, cell_rect, view.font()).adjusted(-3, -3, 3, 3)
+        QToolTip.showText(global_position, bubble, view.viewport(), hit_rect.toRect(), 20000)
+        return True
 
     def _paint_cell_background(self, painter, option, index):
         dark = _is_dark_theme()
@@ -710,6 +771,32 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 row_texture_state,
                 is_current_row,
             )
+        gradient_state = index.data(DATE_GRADIENT_ROLE)
+        if index.column() == Column.DATE and gradient_state:
+            # Fade the inner highlight to transparent so the cell blends into
+            # the row, including any underlying background texture.
+            glow_rect = QRectF(cell_rect).adjusted(
+                0, separator_height, 0, -separator_height
+            )
+            glow = QLinearGradient(
+                glow_rect.left(), 0, glow_rect.right(), 0
+            )
+            accent_path = {
+                DateGradientState.IN_PROGRESS: "primary",
+                DateGradientState.VALID: "model.overtime_positive",
+                DateGradientState.INVALID: "model.overtime_negative",
+                RowTextureState.CLOSED: "table.texture_closed",
+            }[gradient_state]
+            accent = QColor(theme_color(accent_path, dark))
+            glow_strength = 1.0
+            if gradient_state == RowTextureState.CLOSED and not dark:
+                # Pale archive gray loses contrast when blended over white.
+                accent = accent.darker(350)
+                glow_strength = 1.4
+            for position, opacity in ((0.0, 0.24), (0.35, 0.14), (0.7, 0.05), (1.0, 0.0)):
+                accent.setAlphaF(opacity * glow_strength)
+                glow.setColorAt(position, accent)
+            painter.fillRect(glow_rect, QBrush(glow))
         painter.fillRect(
             QRectF(
                 expanded_rect.x(),
@@ -932,6 +1019,8 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         return _interruption_badge_rects(cell_rect, font, badge)
 
     def badge_hover_at(self, index, cell_rect, position, font):
+        if self.date_problem_at(index, cell_rect, position, font):
+            return self._badge_key(index, "problem", 0)
         badge = index.data(BADGE_ROLE) or {}
         if not badge or badge.get("plain"):
             return None
@@ -986,6 +1075,10 @@ class CurrentTimeDelegate(QStyledItemDelegate):
                 event.ignore()
                 return False
             if index.column() == Column.DATE:
+                if self.show_date_problem(
+                    index, option.rect, event.pos(), view, event.globalPos()
+                ):
+                    return True
                 return super().helpEvent(event, view, option, index)
             tooltip = self.badge_tooltip_at(
                 index,
@@ -1549,6 +1642,16 @@ class MonthTableView(QTableView):
         if event.matches(QKeySequence.StandardKey.Paste):
             self.paste_selection()
             return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            index = self.currentIndex()
+            if index.isValid():
+                delegate = self.itemDelegateForIndex(index)
+                cell_rect = _cell_content_rect(index, self.visualRect(index), self.devicePixelRatioF())
+                if hasattr(delegate, "date_problem_rect"):
+                    rect = delegate.date_problem_rect(index, cell_rect, self.font())
+                    if not rect.isEmpty() and self._show_date_problem(rect.center().toPoint()):
+                        event.accept()
+                        return
         super().keyPressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -1557,6 +1660,25 @@ class MonthTableView(QTableView):
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._show_date_problem(event.position().toPoint()):
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _show_date_problem(self, position):
+        index = self.indexAt(position)
+        if not index.isValid():
+            return False
+        delegate = self.itemDelegateForIndex(index)
+        if not hasattr(delegate, "show_date_problem"):
+            return False
+        return delegate.show_date_problem(
+            index,
+            _cell_content_rect(index, self.visualRect(index), self.devicePixelRatioF()),
+            position, self, self.viewport().mapToGlobal(position),
+        )
 
     def mouseDoubleClickEvent(self, event):
         index = self.indexAt(event.pos())
@@ -1623,9 +1745,18 @@ class MonthTableView(QTableView):
             )
         else:
             changed = delegate.clear_hovered_badge()
+        if index.isValid() and hasattr(delegate, "date_problem_at") and delegate.date_problem_at(
+            index,
+            _cell_content_rect(index, self.visualRect(index), self.devicePixelRatioF()),
+            position, self.font(),
+        ):
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.viewport().unsetCursor()
         self._update_badge_keys(changed)
 
     def _clear_hovered_badge(self):
+        self.viewport().unsetCursor()
         delegate = self.itemDelegate()
         if not hasattr(delegate, "clear_hovered_badge"):
             return
