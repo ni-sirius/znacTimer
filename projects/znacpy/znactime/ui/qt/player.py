@@ -16,6 +16,9 @@ from znactime.ui.qt.color_scheme import (
     primary_hover_color,
     theme_color,
 )
+from znactime.ui.qt.day_badge import TodayBadgeView
+
+
 class WorkdayState:
     UNAVAILABLE = "unavailable"
     IDLE = "idle"
@@ -45,7 +48,7 @@ class WorkdayBar(QWidget):
     primaryClicked = Signal()
     stopClicked = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, model=None):
         super().__init__(parent)
         self.setObjectName("workdayBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -57,6 +60,8 @@ class WorkdayBar(QWidget):
 
         self.status_label = QLabel("Workday controls unavailable", self)
         self.status_label.setObjectName("workdayStatus")
+
+        self.day_badge = TodayBadgeView(self, model=model)
 
         self.primary_button = QPushButton("Start day", self)
         self.primary_button.setObjectName("primaryWorkdayButton")
@@ -70,6 +75,8 @@ class WorkdayBar(QWidget):
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(10)
         layout.addWidget(self.status_label, stretch=1)
+        layout.addWidget(self.day_badge)
+        layout.addSpacing(32)
         layout.addWidget(self.primary_button)
         layout.addWidget(self.stop_button)
 
@@ -139,6 +146,7 @@ class WorkdayBar(QWidget):
             )
 
     def apply_theme(self):
+        self.day_badge.viewport().update()
         dark = is_dark_theme()
         surface = theme_color("player.surface", dark)
         border = theme_color("player.border", dark)
@@ -191,3 +199,11 @@ class WorkdayBar(QWidget):
             f"color: {disabled_text};"
             "}"
         )
+        buttons = (self.primary_button, self.stop_button)
+        for button in buttons:
+            button.ensurePolished()
+        control_height = max(button.sizeHint().height() for button in buttons)
+        for button in buttons:
+            button.setFixedHeight(control_height)
+        self.day_badge.setFixedHeight(control_height)
+        self.day_badge.verticalHeader().setDefaultSectionSize(control_height)

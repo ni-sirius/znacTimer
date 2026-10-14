@@ -174,7 +174,7 @@ class TimeTrackerApp(QMainWindow):
         self.table.monthReloaded.connect(self._apply_reloaded_month)
         self.table.contentHeightChanged.connect(self.fit_initial_window_height)
 
-        self.workday_bar = WorkdayBar(self)
+        self.workday_bar = WorkdayBar(self, model=self.table.model)
         self.workday_bar.primaryClicked.connect(self.on_workday_primary)
         self.workday_bar.stopClicked.connect(self.stop_workday)
         self.table.entriesChanged.connect(self.refresh_workday_bar)
@@ -480,6 +480,7 @@ class TimeTrackerApp(QMainWindow):
     def refresh_workday_bar(self, now=None):
         if now is None:
             now = datetime.now()
+        self.workday_bar.day_badge.set_date(now.date())
         entry = self._today_entry(now)
         if self.month_closed or entry is None:
             self.workday_bar.set_state(

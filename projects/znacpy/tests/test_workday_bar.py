@@ -480,7 +480,9 @@ class WorkdayBarTest(unittest.TestCase):
         fake_app = SimpleNamespace(
             month_closed=False,
             _today_entry=Mock(return_value=entry),
-            workday_bar=SimpleNamespace(set_state=Mock()),
+            workday_bar=SimpleNamespace(
+                set_state=Mock(), day_badge=SimpleNamespace(set_date=Mock())
+            ),
         )
         fake_app._active_pause = lambda now=None: TimeTrackerApp._active_pause(
             fake_app, now
@@ -503,6 +505,7 @@ class WorkdayBarTest(unittest.TestCase):
 
         fake_app = self._refresh_fake_app(entry)
 
+        fake_app.workday_bar.day_badge.set_date.assert_called_once_with(date(2024, 6, 17))
         fake_app.workday_bar.set_state.assert_called_once_with(
             "working",
             start="08:00",
