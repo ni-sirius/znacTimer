@@ -13,6 +13,7 @@ from znactime.ui.qt import QApplication, QColor, QPalette
 THEMES_DIR = Path(__file__).resolve().with_name("themes")
 THEME_IDS = ("light", "dark")
 SCHEMA_VERSION = 1
+ENABLE_ALTERNATING_WEEK_COLORS = False
 _COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$")
 _REFERENCE_PATTERN = re.compile(r"^@[a-z][a-z0-9_.]*$")
 _bundled_themes = None
@@ -261,6 +262,8 @@ def current_row_accent_hex(dark=False):
 
 
 def calendar_week_text_color_hex(calendar_week, dark=False):
+    if not ENABLE_ALTERNATING_WEEK_COLORS:
+        return theme_color("model.calendar_week_primary", dark=dark)
     try:
         week_number = int(str(calendar_week).rsplit("-", 1)[-1])
     except (TypeError, ValueError):

@@ -4,18 +4,16 @@ from enum import IntEnum
 
 
 class Column(IntEnum):
-    CALENDAR_WEEK = 0
-    DATE = 1
-    SPECIAL_DAY = 2
-    START = 3
-    END = 4
-    INTERRUPTION = 5
-    DAILY_OVERTIME = 6
-    MONTHLY_BALANCE = 7
+    DATE = 0
+    SPECIAL_DAY = 1
+    START = 2
+    END = 3
+    INTERRUPTION = 4
+    DAILY_OVERTIME = 5
+    MONTHLY_BALANCE = 6
 
 
 COLUMNS = (
-    "CW",
     "Date",
     "Special day",
     "Start",
@@ -26,7 +24,6 @@ COLUMNS = (
 )
 
 ENTRY_FIELDS = (
-    "cw",
     "date",
     "special",
     "start",
@@ -47,7 +44,6 @@ EDITABLE_COLUMNS = frozenset(
 TIME_COLUMNS = frozenset({Column.START, Column.END})
 CENTERED_COLUMNS = frozenset(
     {
-        Column.CALENDAR_WEEK,
         Column.DATE,
         Column.START,
         Column.END,

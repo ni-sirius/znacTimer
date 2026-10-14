@@ -22,12 +22,12 @@ class ColorSchemeTest(unittest.TestCase):
             self.assertTrue(theme.color("primary").startswith("#"))
             self.assertNotIn("accent", theme.colors)
 
-    def test_calendar_week_text_colors_alternate_in_both_themes(self):
-        self.assertNotEqual(
+    def test_calendar_week_text_colors_are_uniform_in_both_themes(self):
+        self.assertEqual(
             calendar_week_text_color_hex("CW-25"),
             calendar_week_text_color_hex("CW-26"),
         )
-        self.assertNotEqual(
+        self.assertEqual(
             calendar_week_text_color_hex("CW-25", dark=True),
             calendar_week_text_color_hex("CW-26", dark=True),
         )

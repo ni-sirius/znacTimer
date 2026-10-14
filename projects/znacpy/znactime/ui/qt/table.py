@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from math import ceil
 
 from znactime.config import DEFAULT_SHOW_EXPECTED_END
 from znactime.core.constants import (
@@ -20,6 +21,7 @@ from znactime.ui.qt import (
     QBrush,
     QColor,
     QEvent,
+    QFont,
     QFontMetrics,
     QGraphicsDropShadowEffect,
     QHeaderView,
@@ -52,9 +54,11 @@ from znactime.ui.qt import (
 from znactime.ui.qt.model import MonthTableModel
 from znactime.ui.qt.table_contract import (
     BADGE_ROLE,
+    CALENDAR_WEEK_ROLE,
     CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
     ROW_TEXTURE_ROLE,
+    WEEKDAY_ROLE,
     BadgeKind,
     BadgeState,
     InterruptionAction,
@@ -68,13 +72,16 @@ from znactime.ui.qt.color_scheme import (
 )
 
 
-COLUMN_WEIGHTS = (1, 1, 2, 1, 1, 2, 1, 1)
+COLUMN_WEIGHTS = (2, 2, 1, 1, 2, 1, 1)
 MIN_COMPACT_COLUMN_WIDTH = 72
 ROW_HEIGHT_SCALE = 1.5
 MAX_COMPACT_ROW_HEIGHT = 42
+DATE_LINE_GAP = 1
 TABLE_CORNER_RADIUS = 10
+WEEK_SEPARATOR_THICKNESS_MULTIPLIER = 10
 BADGE_HORIZONTAL_PADDING = 8
 BADGE_VERTICAL_PADDING = 4
+DATE_VERTICAL_PADDING = BADGE_VERTICAL_PADDING
 BADGE_GAP = 4
 BADGE_CORNER_RADIUS = 6
 EDIT_BADGE_BORDER_WIDTH = 2
@@ -82,6 +89,34 @@ ROW_STRIPE_WIDTH = 12
 ROW_STRIPE_SPACING = round(ROW_STRIPE_WIDTH * 2 * 1.41421356237)
 # Cell background styling is not needed for now; enable to restore the stripes.
 ENABLE_CELL_BACKGROUND_STYLING = False
+
+
+def _week_gap_height(index, pixel_ratio):
+    if not index.isValid():
+        return 0
+    next_date = index.model().index(index.row() + 1, Column.DATE)
+    if (
+        not next_date.isValid()
+        or index.siblingAtColumn(Column.DATE).data(CALENDAR_WEEK_ROLE)
+        == next_date.data(CALENDAR_WEEK_ROLE)
+    ):
+        return 0
+    return max(0, ceil((WEEK_SEPARATOR_THICKNESS_MULTIPLIER - 1) / max(1.0, pixel_ratio)))
+
+
+def _cell_content_rect(index, rect, pixel_ratio):
+    return rect.adjusted(0, 0, 0, -_week_gap_height(index, pixel_ratio))
+
+
+def _date_fonts(font):
+    font_height = QFontMetrics(font).height()
+    date_font = QFont(font)
+    date_font.setBold(True)
+    date_font.setPixelSize(max(1, round(font_height * 1.2)))
+    weekday_font = QFont(font)
+    weekday_font.setBold(False)
+    weekday_font.setPixelSize(max(9, round(font_height * 0.65)))
+    return date_font, weekday_font
 
 
 def _is_dark_theme():
@@ -250,7 +285,10 @@ def _badge_rects(cell_rect, font, badge):
     metrics = QFontMetrics(font)
     badge_height = metrics.height() + BADGE_VERTICAL_PADDING * 2
     if full_width:
-        total_height = max(metrics.height() + 2, cell_rect.height() - 8)
+        total_height = max(
+            metrics.height() + 2,
+            cell_rect.height() - BADGE_VERTICAL_PADDING * 2,
+        )
         badge_height = total_height
         texts = texts[:1]
     else:
@@ -528,6 +566,13 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         self._hovered_badge = None
 
     def paint(self, painter, option, index):
+        gap_height = _week_gap_height(index, painter.device().devicePixelRatioF())
+        if gap_height:
+            gap_rect = QRectF(option.rect)
+            gap_rect.setTop(gap_rect.y() + gap_rect.height() - gap_height)
+            painter.fillRect(gap_rect, QColor(theme_color("table.divider", _is_dark_theme())))
+            option = QStyleOptionViewItem(option)
+            option.rect = option.rect.adjusted(0, 0, 0, -gap_height)
         self._paint_cell_background(painter, option, index)
         if index.data(CELL_EDITING_ROLE):
             return
@@ -535,6 +580,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         style_option = QStyleOptionViewItem(option)
         self.initStyleOption(style_option, index)
         style_option.backgroundBrush = QBrush(Qt.BrushStyle.NoBrush)
+        if index.column() == Column.DATE:
+            self._paint_date(painter, style_option, index)
+            return
         if not index.flags() & Qt.ItemFlag.ItemIsEditable:
             style_option.state &= ~(
                 QStyle.StateFlag.State_MouseOver
@@ -561,6 +609,70 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             painter,
             style_option.widget,
         )
+
+    def _paint_date(self, painter, option, index):
+        cell_rect = QRectF(option.rect).adjusted(
+            10, DATE_VERTICAL_PADDING, -10, -DATE_VERTICAL_PADDING
+        )
+        week = str(index.data(CALENDAR_WEEK_ROLE) or "")
+        week_font = QFont(option.font)
+        week_font.setBold(False)
+        week_width = QFontMetrics(week_font).horizontalAdvance(week)
+        week_rect = QRectF(cell_rect)
+        week_rect.setLeft(cell_rect.right() - week_width)
+        date_rect = QRectF(cell_rect)
+        if week:
+            date_rect.setRight(week_rect.left() - 10)
+
+        weekday = str(index.data(WEEKDAY_ROLE) or "")
+        date_font, weekday_font = _date_fonts(option.font)
+        while (
+            weekday_font.pixelSize() > 1
+            and QFontMetrics(weekday_font).horizontalAdvance(weekday) > date_rect.width()
+        ):
+            weekday_font.setPixelSize(weekday_font.pixelSize() - 1)
+        weekday_bounds = QFontMetrics(weekday_font).tightBoundingRect(weekday)
+        weekday_height = weekday_bounds.height() if weekday else 0
+        line_gap = DATE_LINE_GAP if weekday else 0
+        text = str(index.data() or "")
+        while date_font.pixelSize() > 1:
+            metrics = QFontMetrics(date_font)
+            if (
+                metrics.horizontalAdvance(text) <= date_rect.width()
+                and metrics.tightBoundingRect(text).height()
+                <= cell_rect.height() - weekday_height - line_gap
+            ):
+                break
+            date_font.setPixelSize(date_font.pixelSize() - 1)
+        date_bounds = QFontMetrics(date_font).tightBoundingRect(text)
+        block_height = date_bounds.height() + weekday_height + line_gap
+        # Round the offset within the row so scrolling cannot change the
+        # placement when a half-pixel center crosses an even/odd screen pixel.
+        date_top = cell_rect.top() + round((cell_rect.height() - block_height) / 2)
+
+        painter.save()
+        painter.setClipRect(option.rect)
+        painter.setPen(index.data(Qt.ItemDataRole.ForegroundRole))
+        painter.setFont(date_font)
+        painter.drawText(
+            round(date_rect.left() - date_bounds.left()),
+            round(date_top - date_bounds.top()),
+            text,
+        )
+        if weekday:
+            painter.setFont(weekday_font)
+            painter.drawText(
+                round(date_rect.left() - weekday_bounds.left()),
+                round(date_top + date_bounds.height() + line_gap - weekday_bounds.top()),
+                weekday,
+            )
+        painter.setFont(week_font)
+        painter.drawText(
+            week_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            week,
+        )
+        painter.restore()
 
     def _paint_cell_background(self, painter, option, index):
         dark = _is_dark_theme()
@@ -866,7 +978,15 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         return None
 
     def helpEvent(self, event, view, option, index):
+        option = QStyleOptionViewItem(option)
+        option.rect = _cell_content_rect(index, option.rect, view.devicePixelRatioF())
         if event.type() == QEvent.Type.ToolTip:
+            if not option.rect.contains(event.pos()):
+                QToolTip.hideText()
+                event.ignore()
+                return False
+            if index.column() == Column.DATE:
+                return super().helpEvent(event, view, option, index)
             tooltip = self.badge_tooltip_at(
                 index,
                 option.rect,
@@ -982,6 +1102,9 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         return editor
 
     def updateEditorGeometry(self, editor, option, index):
+        option = QStyleOptionViewItem(option)
+        pixel_ratio = option.widget.devicePixelRatioF() if option.widget else editor.devicePixelRatioF()
+        option.rect = _cell_content_rect(index, option.rect, pixel_ratio)
         if isinstance(editor, IntervalEditor):
             horizontal_margin = 5
             vertical_margin = 4
@@ -1048,7 +1171,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             return
 
         if (
-            index.column() in (3, 4)
+            index.column() in (Column.START, Column.END)
             and index.model().data(index, Qt.ItemDataRole.EditRole) == UNSET_TIME
             and isinstance(editor, QLineEdit)
         ):
@@ -1320,7 +1443,7 @@ class MonthTableView(QTableView):
         today_text = date.today().strftime(DATE_FORMAT)
         for row in range(model.rowCount()):
             date_index = model.index(row, Column.DATE)
-            if model.data(date_index, Qt.ItemDataRole.DisplayRole) != today_text:
+            if model.data(date_index, Qt.ItemDataRole.EditRole) != today_text:
                 continue
 
             row_rect = self.visualRect(date_index)
@@ -1348,7 +1471,11 @@ class MonthTableView(QTableView):
             return True
 
         available_height = max(0, self.viewport().height() - 2)
-        fit_height = available_height // row_count
+        gaps = [
+            _week_gap_height(model.index(row, Column.DATE), self.devicePixelRatioF())
+            for row in range(row_count)
+        ]
+        fit_height = max(0, available_height - sum(gaps)) // row_count
         base_height = max(
             font_safe_height,
             min(MAX_COMPACT_ROW_HEIGHT, fit_height),
@@ -1357,7 +1484,7 @@ class MonthTableView(QTableView):
 
         total_height = 0
         for row in range(row_count):
-            row_height = max(base_height, self._required_row_height(row))
+            row_height = max(base_height, self._required_row_height(row)) + gaps[row]
             self.setRowHeight(row, row_height)
             total_height += row_height
         return total_height <= available_height
@@ -1372,7 +1499,7 @@ class MonthTableView(QTableView):
         badge = interruption_index.data(BADGE_ROLE)
         if badge and badge.get("kind") == BadgeKind.INTERRUPTION:
             rows = _interruption_badge_rows(
-                self.columnWidth(5),
+                self.columnWidth(Column.INTERRUPTION),
                 self.font(),
                 badge,
             )
@@ -1384,11 +1511,20 @@ class MonthTableView(QTableView):
             self.fontMetrics().height()
             + BADGE_VERTICAL_PADDING * 2
         )
-        return (
+        badge_row_height = (
             line_count * badge_height
             + max(0, line_count - 1) * BADGE_GAP
             + 8
         )
+        date_font, weekday_font = _date_fonts(self.font())
+        date_row_height = (
+            QFontMetrics(date_font).tightBoundingRect("00.00").height()
+            + QFontMetrics(weekday_font).tightBoundingRect("Wednesday").height()
+            + DATE_LINE_GAP
+            + DATE_VERTICAL_PADDING * 2
+            + 1
+        )
+        return max(badge_row_height, date_row_height)
 
     def _resize_columns_to_viewport(self):
         available_width = max(0, self.viewport().width())
@@ -1430,6 +1566,14 @@ class MonthTableView(QTableView):
 
         super().mouseDoubleClickEvent(event)
 
+    def indexAt(self, position):
+        index = super().indexAt(position)
+        if index.isValid() and not _cell_content_rect(
+            index, self.visualRect(index), self.devicePixelRatioF()
+        ).contains(position):
+            return index.model().index(-1, -1)
+        return index
+
     def _start_interruption_edit(self, index, position):
         if (
             not index.isValid()
@@ -1442,7 +1586,7 @@ class MonthTableView(QTableView):
         if hasattr(delegate, "interruption_target_at"):
             target = delegate.interruption_target_at(
                 index,
-                self.visualRect(index),
+                _cell_content_rect(index, self.visualRect(index), self.devicePixelRatioF()),
                 position,
             )
             delegate.set_interruption_edit_target(index, target)
@@ -1473,7 +1617,7 @@ class MonthTableView(QTableView):
         if index.isValid():
             changed = delegate.set_hovered_badge(
                 index,
-                self.visualRect(index),
+                _cell_content_rect(index, self.visualRect(index), self.devicePixelRatioF()),
                 position,
                 self.font(),
             )

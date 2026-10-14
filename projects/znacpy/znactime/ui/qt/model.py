@@ -51,9 +51,11 @@ from znactime.ui.qt import (
 )
 from znactime.ui.qt.table_contract import (
     BADGE_ROLE,
+    CALENDAR_WEEK_ROLE,
     CELL_EDITING_ROLE,
     CURRENT_ROW_ROLE,
     ROW_TEXTURE_ROLE,
+    WEEKDAY_ROLE,
     BadgeKind,
     BadgeState,
     InterruptionAction,
@@ -132,7 +134,7 @@ class MonthTableModel(QAbstractTableModel):
     def refresh_theme(self):
         if not self._entries:
             return
-        top_left = self.index(0, Column.CALENDAR_WEEK)
+        top_left = self.index(0, Column.DATE)
         bottom_right = self.index(
             len(self._entries) - 1,
             Column.MONTHLY_BALANCE,
@@ -227,7 +229,29 @@ class MonthTableModel(QAbstractTableModel):
         is_editable = not self.month_closed and column in EDITABLE_COLUMNS
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
+            if column == Column.DATE and role == Qt.ItemDataRole.DisplayRole:
+                try:
+                    work_date = datetime.strptime(entry.date, DATE_FORMAT).date()
+                except (TypeError, ValueError):
+                    return entry.date
+                return work_date.strftime("%d.%m")
             return getattr(entry, ENTRY_FIELDS[column])
+
+        if column == Column.DATE:
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return entry.date
+            if role == CALENDAR_WEEK_ROLE:
+                return entry.cw
+            if role == WEEKDAY_ROLE:
+                try:
+                    work_date = datetime.strptime(entry.date, DATE_FORMAT).date()
+                except (TypeError, ValueError):
+                    return ""
+                weekdays = (
+                    "Monday", "Tuesday", "Wednesday", "Thursday",
+                    "Friday", "Saturday", "Sunday",
+                )
+                return weekdays[work_date.weekday()]
 
         is_current_row = entry.row_color.endswith("_today")
 
@@ -235,7 +259,7 @@ class MonthTableModel(QAbstractTableModel):
             dark = _is_dark_theme()
             if (index.row(), index.column()) in self._editing_cells:
                 return QColor(theme_color("model.editing_text", dark))
-            if column in (Column.CALENDAR_WEEK, Column.DATE):
+            if column == Column.DATE:
                 return QColor(
                     calendar_week_text_color_hex(
                         entry.cw,
@@ -279,7 +303,7 @@ class MonthTableModel(QAbstractTableModel):
         if not self._entries:
             return
 
-        top_left = self.index(0, Column.CALENDAR_WEEK)
+        top_left = self.index(0, Column.DATE)
         bottom_right = self.index(
             len(self._entries) - 1,
             Column.MONTHLY_BALANCE,
@@ -663,7 +687,7 @@ class MonthTableModel(QAbstractTableModel):
         self.overtimeChanged.emit(overtime)
 
         if self._entries:
-            top_left = self.index(0, Column.CALENDAR_WEEK)
+            top_left = self.index(0, Column.DATE)
             bottom_right = self.index(
                 len(self._entries) - 1,
                 Column.MONTHLY_BALANCE,

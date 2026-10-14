@@ -8,6 +8,8 @@ BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
 CURRENT_ROW_ROLE = Qt.ItemDataRole.UserRole + 2
 CELL_EDITING_ROLE = Qt.ItemDataRole.UserRole + 3
 ROW_TEXTURE_ROLE = Qt.ItemDataRole.UserRole + 4
+CALENDAR_WEEK_ROLE = Qt.ItemDataRole.UserRole + 5
+WEEKDAY_ROLE = Qt.ItemDataRole.UserRole + 6
 
 
 class BadgeKind:

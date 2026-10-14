@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from znactime.ui.table_schema import Column
 from znactime.core.models import DayEntry
 from znactime.storage.atomic_file import sqlite_protected_paths
 from znactime.ui.qt import QApplication, QMessageBox, Qt
@@ -415,7 +416,7 @@ class WorkdayBarTest(unittest.TestCase):
         table.entriesChanged.connect(lambda: changes.append(True))
 
         changed = table.model.setData(
-            table.model.index(0, 3),
+            table.model.index(0, Column.START),
             "08:00",
             Qt.ItemDataRole.EditRole,
         )
@@ -632,7 +633,7 @@ class WorkdayBarTest(unittest.TestCase):
 
     def _size_table_for_two_interruption_badges(self, table):
         """Choose a DPI/font-independent width where two periods fit."""
-        index = table.model.index(0, 5)
+        index = table.model.index(0, Column.INTERRUPTION)
         single_line_height = table.view.rowHeight(0)
         changed = table.model.setData(
             index,
@@ -675,7 +676,7 @@ class WorkdayBarTest(unittest.TestCase):
         initial_height = table.view.rowHeight(0)
 
         changed = table.model.setData(
-            table.model.index(0, 5),
+            table.model.index(0, Column.INTERRUPTION),
             "12:30-13:00;14:00-14:30",
             Qt.ItemDataRole.EditRole,
         )
@@ -705,7 +706,7 @@ class WorkdayBarTest(unittest.TestCase):
         initial_height = table.view.rowHeight(0)
 
         changed = table.model.setData(
-            table.model.index(0, 5),
+            table.model.index(0, Column.INTERRUPTION),
             "08:10-08:20;09:10-09:20;10:10-10:20",
             Qt.ItemDataRole.EditRole,
         )

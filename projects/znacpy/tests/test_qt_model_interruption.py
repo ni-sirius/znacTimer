@@ -2,12 +2,14 @@ import os
 import unittest
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from znactime.ui.table_schema import Column
 from znactime.core.models import DayEntry
-from znactime.ui.qt import QApplication, QDialog, QRectF, Qt
+from znactime.ui.qt import QApplication, QDialog, QEvent, QFontMetrics, QPainter, QPixmap, QRectF, QStyleOptionViewItem, QToolTip, Qt
+from PySide6.QtGui import QHelpEvent
 from znactime.ui.qt.model import (
     BADGE_ROLE,
     CELL_EDITING_ROLE,
@@ -15,13 +17,17 @@ from znactime.ui.qt.model import (
     MonthTableModel,
     ROW_TEXTURE_ROLE,
 )
+from znactime.ui.qt.table_contract import CALENDAR_WEEK_ROLE, WEEKDAY_ROLE
 from znactime.ui.qt.table import (
     CurrentTimeDelegate,
+    DATE_LINE_GAP,
+    DATE_VERTICAL_PADDING,
     IntervalEditor,
     MonthTableView,
     ROW_STRIPE_SPACING,
     ROW_STRIPE_WIDTH,
     _badge_rects,
+    _date_fonts,
     _interruption_badge_rows,
     _row_texture_color,
 )
@@ -48,6 +54,135 @@ class QtModelInterruptionTest(unittest.TestCase):
         )
         return model
 
+    def test_date_column_combines_short_date_with_week_and_full_date_tooltip(self):
+        model = MonthTableModel()
+        model.set_entries([DayEntry("CW-42", "14.10.2026", "Normal day", "--:--", "--:--", "00:00")])
+        index = model.index(0, Column.DATE)
+
+        self.assertEqual(model.columnCount(), 7)
+        self.assertEqual(model.headerData(Column.DATE, Qt.Orientation.Horizontal), "Date")
+        self.assertEqual(index.data(), "14.10")
+        self.assertEqual(index.data(WEEKDAY_ROLE), "Wednesday")
+        self.assertEqual(index.data(CALENDAR_WEEK_ROLE), "CW-42")
+        self.assertEqual(index.data(Qt.ItemDataRole.ToolTipRole), "14.10.2026")
+        self.assertEqual(index.data(Qt.ItemDataRole.EditRole), "14.10.2026")
+        self.assertFalse(index.flags() & Qt.ItemFlag.ItemIsEditable)
+
+    def test_short_date_handles_single_digit_days_and_year_boundary(self):
+        model = MonthTableModel()
+        model.set_entries([DayEntry("CW-53", "01.01.2027", "", "--:--", "--:--", "00:00")])
+        index = model.index(0, Column.DATE)
+
+        self.assertEqual(index.data(), "01.01")
+        self.assertEqual(index.data(WEEKDAY_ROLE), "Friday")
+        self.assertEqual(index.data(CALENDAR_WEEK_ROLE), "CW-53")
+        self.assertEqual(index.data(Qt.ItemDataRole.ToolTipRole), "01.01.2027")
+
+    def test_date_labels_keep_their_position_within_the_row_when_scrolled(self):
+        model = self.make_model()
+        index = model.index(0, Column.DATE)
+        option = QStyleOptionViewItem()
+        option.font = QApplication.font()
+        date_font, weekday_font = _date_fonts(option.font)
+        text_height = (
+            QFontMetrics(date_font).tightBoundingRect(index.data()).height()
+            + QFontMetrics(weekday_font).tightBoundingRect(index.data(WEEKDAY_ROLE)).height()
+            + DATE_LINE_GAP
+        )
+        row_height = text_height + DATE_VERTICAL_PADDING * 2 + 5
+        delegate = CurrentTimeDelegate()
+        positions = []
+        for scroll_offset in range(8):
+            option.rect.setRect(0, -scroll_offset, 240, row_height)
+            painter = Mock()
+            delegate._paint_date(painter, option, index)
+            positions.append([
+                call.args[:2] for call in painter.drawText.call_args_list[:2]
+            ])
+
+        for offset, labels in enumerate(positions):
+            for original, current in zip(positions[0], labels):
+                self.assertEqual(current[0], original[0])
+                self.assertEqual(current[1], original[1] - offset)
+
+    def test_date_hover_shows_full_date_through_delegate(self):
+        model = self.make_model()
+        view = MonthTableView()
+        view.setModel(model)
+        delegate = CurrentTimeDelegate(view)
+        index = model.index(0, Column.DATE)
+        option = QStyleOptionViewItem()
+        option.rect = view.visualRect(index)
+        position = option.rect.center()
+        event = QHelpEvent(QEvent.Type.ToolTip, position, view.mapToGlobal(position))
+        try:
+            self.assertTrue(delegate.helpEvent(event, view, option, index))
+            self.assertEqual(QToolTip.text(), "17.06.2024")
+        finally:
+            QToolTip.hideText()
+
+    def test_today_navigation_uses_full_date_after_display_is_shortened(self):
+        model = MonthTableModel()
+        model.set_entries([
+            DayEntry("CW-42", f"{day:02d}.10.2026", "", "--:--", "--:--", "00:00")
+            for day in range(1, 32)
+        ])
+        view = MonthTableView()
+        view.resize(960, 100)
+        view.setModel(model)
+        with patch("znactime.ui.qt.table.date") as calendar_date, patch.object(view, "scrollTo") as scroll:
+            calendar_date.today.return_value = date(2026, 10, 14)
+            view.ensure_today_visible()
+
+        self.assertEqual(scroll.call_args.args[0], model.index(13, Column.DATE))
+
+    @patch("znactime.ui.qt.table.WEEK_SEPARATOR_THICKNESS_MULTIPLIER", 10)
+    def test_week_separator_has_its_own_space_outside_cell_content(self):
+        model = MonthTableModel()
+        model.set_entries([
+            DayEntry(week, day, "Normal day", "08:00", "17:00", "00:00")
+            for week, day in (
+                ("CW-41", "11.10.2026"),
+                ("CW-42", "12.10.2026"),
+                ("CW-42", "13.10.2026"),
+            )
+        ])
+        view = MonthTableView()
+        view.resize(960, 240)
+        view.setModel(model)
+        view.update_table_geometry()
+        gap_height = 9
+        self.assertEqual(view.rowHeight(0), view.rowHeight(1) + gap_height)
+        self.assertEqual(view.rowHeight(1), view.rowHeight(2))
+
+        index = model.index(0, Column.DATE)
+        full_rect = view.visualRect(index)
+        content_rect = full_rect.adjusted(0, 0, 0, -gap_height)
+        self.assertEqual(view.indexAt(content_rect.center()), index)
+        self.assertFalse(view.indexAt(full_rect.bottomLeft()).isValid())
+
+        delegate = CurrentTimeDelegate(view)
+        option = QStyleOptionViewItem()
+        option.rect = full_rect
+        option.widget = view
+        pixmap = QPixmap(view.viewport().size())
+        painter = QPainter(pixmap)
+        try:
+            with patch.object(delegate, "_paint_date") as paint_date:
+                delegate.paint(painter, option, index)
+                self.assertEqual(paint_date.call_args.args[1].rect, content_rect)
+        finally:
+            painter.end()
+
+        editor = IntervalEditor(view)
+        interruption_index = model.index(0, Column.INTERRUPTION)
+        option.rect = view.visualRect(interruption_index)
+        delegate.updateEditorGeometry(editor, option, interruption_index)
+        editor_content_rect = option.rect.adjusted(0, 0, 0, -gap_height)
+        self.assertEqual(editor.geometry().center().y(), editor_content_rect.center().y())
+        view.setModel(None)
+        view.close()
+
     def test_recalculate_renders_malformed_csv_times_as_zero(self):
         model = MonthTableModel()
         model.set_entries(
@@ -65,11 +200,11 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         model.recalculate(today=date(2024, 6, 18), autosave=False)
 
-        self.assertEqual(model.index(0, 3).data(), "--:--")
-        self.assertEqual(model.index(0, 4).data(), "17:00")
-        self.assertEqual(model.index(0, 5).data(), "00:00")
+        self.assertEqual(model.index(0, Column.START).data(), "--:--")
+        self.assertEqual(model.index(0, Column.END).data(), "17:00")
+        self.assertEqual(model.index(0, Column.INTERRUPTION).data(), "00:00")
         self.assertEqual(
-            model.index(0, 2).data(BADGE_ROLE)["state"],
+            model.index(0, Column.SPECIAL_DAY).data(BADGE_ROLE)["state"],
             "action",
         )
 
@@ -90,19 +225,19 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         self.assertFalse(
             view._start_interruption_edit(
-                model.index(0, 3),
-                view.visualRect(model.index(0, 3)).center(),
+                model.index(0, Column.START),
+                view.visualRect(model.index(0, Column.START)).center(),
             )
         )
         self.assertTrue(
             view._start_interruption_edit(
-                model.index(0, 5),
-                view.visualRect(model.index(0, 5)).center(),
+                model.index(0, Column.INTERRUPTION),
+                view.visualRect(model.index(0, Column.INTERRUPTION)).center(),
             )
         )
-        self.assertEqual(view.edited_indexes, [(0, 5)])
+        self.assertEqual(view.edited_indexes, [(0, Column.INTERRUPTION)])
 
-    def test_compact_columns_share_width_and_special_day_is_double(self):
+    def test_date_and_special_day_are_double_the_compact_columns(self):
         model = self.make_model()
         view = MonthTableView()
         view.resize(960, 240)
@@ -110,12 +245,11 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         view._resize_columns_to_viewport()
 
-        self.assertEqual(view.columnWidth(0), view.columnWidth(1))
-        self.assertEqual(view.columnWidth(0), view.columnWidth(3))
-        self.assertEqual(view.columnWidth(0), view.columnWidth(4))
-        self.assertEqual(view.columnWidth(0), view.columnWidth(6))
-        self.assertEqual(view.columnWidth(0), view.columnWidth(7))
-        self.assertEqual(view.columnWidth(2), view.columnWidth(0) * 2)
+        compact_width = view.columnWidth(Column.START)
+        for column in (Column.END, Column.DAILY_OVERTIME, Column.MONTHLY_BALANCE):
+            self.assertEqual(view.columnWidth(column), compact_width)
+        self.assertEqual(view.columnWidth(Column.DATE), compact_width * 2)
+        self.assertEqual(view.columnWidth(Column.SPECIAL_DAY), compact_width * 2)
 
     def test_row_texture_uses_gray_and_red_stripes(self):
         with patch("znactime.ui.qt.table._is_dark_theme", return_value=False):
@@ -147,23 +281,23 @@ class QtModelInterruptionTest(unittest.TestCase):
         )
         model.recalculate(today=date(2024, 6, 18), autosave=False)
 
-        self.assertEqual(model.index(0, 0).data(ROW_TEXTURE_ROLE), "")
-        self.assertEqual(model.index(1, 0).data(ROW_TEXTURE_ROLE), "")
-        self.assertEqual(model.index(2, 0).data(ROW_TEXTURE_ROLE), "")
-        self.assertEqual(model.index(3, 0).data(ROW_TEXTURE_ROLE), "missing_times")
-        self.assertEqual(model.index(4, 0).data(ROW_TEXTURE_ROLE), "")
-        self.assertEqual(model.index(5, 0).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(0, Column.DATE).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(1, Column.DATE).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(2, Column.DATE).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(3, Column.DATE).data(ROW_TEXTURE_ROLE), "missing_times")
+        self.assertEqual(model.index(4, Column.DATE).data(ROW_TEXTURE_ROLE), "")
+        self.assertEqual(model.index(5, Column.DATE).data(ROW_TEXTURE_ROLE), "")
 
         model.set_month_closed(True)
 
         for row in range(model.rowCount()):
-            self.assertEqual(model.index(row, 0).data(ROW_TEXTURE_ROLE), "closed")
+            self.assertEqual(model.index(row, Column.DATE).data(ROW_TEXTURE_ROLE), "closed")
 
     def test_periods_inside_workday_are_saved_without_override_dialog(self):
         model = self.make_model()
 
         changed = model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "12:30-13:00;14:00-14:30",
             Qt.ItemDataRole.EditRole,
         )
@@ -177,7 +311,7 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_qt_table_shows_daily_overtime_and_only_time_inputs_use_badges(self):
         model = self.make_model()
         model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "12:30-13:00;14:00-14:30",
             Qt.ItemDataRole.EditRole,
         )
@@ -186,7 +320,7 @@ class QtModelInterruptionTest(unittest.TestCase):
             model.headerData(column, Qt.Orientation.Horizontal)
             for column in range(model.columnCount())
         ]
-        badge = model.index(0, 5).data(BADGE_ROLE)
+        badge = model.index(0, Column.INTERRUPTION).data(BADGE_ROLE)
 
         self.assertIn("Daily OT", headers)
         self.assertEqual(headers[-1], "Monthly")
@@ -195,19 +329,19 @@ class QtModelInterruptionTest(unittest.TestCase):
             ["12:30-13:00", "14:00-14:30"],
         )
         self.assertEqual(badge["state"], "info")
-        self.assertIsNone(model.index(0, 6).data(BADGE_ROLE))
-        self.assertIsNone(model.index(0, 7).data(BADGE_ROLE))
+        self.assertIsNone(model.index(0, Column.DAILY_OVERTIME).data(BADGE_ROLE))
+        self.assertIsNone(model.index(0, Column.MONTHLY_BALANCE).data(BADGE_ROLE))
 
     def test_clearing_start_or_end_sets_visible_unset_placeholder(self):
         model = self.make_model()
 
         start_changed = model.setData(
-            model.index(0, 3),
+            model.index(0, Column.START),
             "",
             Qt.ItemDataRole.EditRole,
         )
         end_changed = model.setData(
-            model.index(0, 4),
+            model.index(0, Column.END),
             "",
             Qt.ItemDataRole.EditRole,
         )
@@ -240,12 +374,12 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
 
-        badge = model.index(0, 4).data(BADGE_ROLE)
+        badge = model.index(0, Column.END).data(BADGE_ROLE)
 
         self.assertEqual(badge["texts"], ["16:45"])
         self.assertEqual(badge["state"], "expected")
         self.assertTrue(badge["outline"])
-        self.assertEqual(model.index(0, 4).data(), "--:--")
+        self.assertEqual(model.index(0, Column.END).data(), "--:--")
         self.assertEqual(model.entries()[0].end, "--:--")
 
     def test_expected_end_badge_can_be_disabled(self):
@@ -271,7 +405,7 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
 
-        badge = model.index(0, 4).data(BADGE_ROLE)
+        badge = model.index(0, Column.END).data(BADGE_ROLE)
 
         self.assertEqual(badge["texts"], ["--:--"])
         self.assertEqual(badge["state"], "action")
@@ -299,26 +433,26 @@ class QtModelInterruptionTest(unittest.TestCase):
         model.recalculate(today=date(2024, 6, 18), autosave=False)
 
         for row in (0, 1):
-            self.assertEqual(model.index(row, 2).data(BADGE_ROLE)["state"], "action")
-            for column in (3, 4):
+            self.assertEqual(model.index(row, Column.SPECIAL_DAY).data(BADGE_ROLE)["state"], "action")
+            for column in (Column.START, Column.END):
                 badge = model.index(row, column).data(BADGE_ROLE)
                 self.assertEqual(badge["state"], "action")
                 self.assertTrue(badge["outline"])
-            pause = model.index(row, 5).data(BADGE_ROLE)["items"][-1]
+            pause = model.index(row, Column.INTERRUPTION).data(BADGE_ROLE)["items"][-1]
             self.assertEqual(pause["state"], "action")
             self.assertFalse(pause.get("outline", False))
 
         for row in (2, 3):
-            self.assertEqual(model.index(row, 3).data(BADGE_ROLE)["state"], "empty")
-            self.assertFalse(model.index(row, 3).data(BADGE_ROLE)["outline"])
+            self.assertEqual(model.index(row, Column.START).data(BADGE_ROLE)["state"], "empty")
+            self.assertFalse(model.index(row, Column.START).data(BADGE_ROLE)["outline"])
             self.assertEqual(
-                model.index(row, 5).data(BADGE_ROLE)["items"][-1]["state"], "empty"
+                model.index(row, Column.INTERRUPTION).data(BADGE_ROLE)["items"][-1]["state"], "empty"
             )
-        self.assertEqual(model.index(2, 2).data(BADGE_ROLE)["state"], "empty")
+        self.assertEqual(model.index(2, Column.SPECIAL_DAY).data(BADGE_ROLE)["state"], "empty")
 
         model.set_month_closed(True)
-        self.assertEqual(model.index(0, 2).data(BADGE_ROLE)["state"], "empty")
-        self.assertEqual(model.index(0, 3).data(BADGE_ROLE)["state"], "empty")
+        self.assertEqual(model.index(0, Column.SPECIAL_DAY).data(BADGE_ROLE)["state"], "empty")
+        self.assertEqual(model.index(0, Column.START).data(BADGE_ROLE)["state"], "empty")
 
     def test_expected_badge_uses_accent_colors_when_hovered(self):
         delegate = CurrentTimeDelegate()
@@ -344,7 +478,7 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
 
-        badge = model.index(0, 5).data(BADGE_ROLE)
+        badge = model.index(0, Column.INTERRUPTION).data(BADGE_ROLE)
 
         self.assertEqual(badge["texts"], ["+"])
         self.assertEqual(badge["items"][0]["text"], "+")
@@ -354,12 +488,12 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_existing_interruption_badge_keeps_plus_action_near_periods(self):
         model = self.make_model()
         model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "12:30-13:00;14:00-14:30",
             Qt.ItemDataRole.EditRole,
         )
 
-        badge = model.index(0, 5).data(BADGE_ROLE)
+        badge = model.index(0, Column.INTERRUPTION).data(BADGE_ROLE)
 
         self.assertEqual(
             [item["text"] for item in badge["items"]],
@@ -395,11 +529,11 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
 
-        day = model.index(0, 2).data(BADGE_ROLE)
-        start = model.index(0, 3).data(BADGE_ROLE)
-        end = model.index(0, 4).data(BADGE_ROLE)
-        interruption = model.index(0, 5).data(BADGE_ROLE)
-        empty_interruption = model.index(1, 5).data(BADGE_ROLE)
+        day = model.index(0, Column.SPECIAL_DAY).data(BADGE_ROLE)
+        start = model.index(0, Column.START).data(BADGE_ROLE)
+        end = model.index(0, Column.END).data(BADGE_ROLE)
+        interruption = model.index(0, Column.INTERRUPTION).data(BADGE_ROLE)
+        empty_interruption = model.index(1, Column.INTERRUPTION).data(BADGE_ROLE)
 
         self.assertTrue(day["plain"])
         self.assertEqual(day["state"], "valid_day")
@@ -422,7 +556,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         )
 
         delegate = CurrentTimeDelegate()
-        index = model.index(0, 3)
+        index = model.index(0, Column.START)
         cell_rect = QRectF(0, 0, 120, 40)
         self.assertIsNone(
             delegate.badge_hover_at(
@@ -450,12 +584,12 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_interruption_badge_tooltip_shows_total_pause_time(self):
         model = self.make_model()
         model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "11:00-11:30",
             Qt.ItemDataRole.EditRole,
         )
         delegate = CurrentTimeDelegate()
-        index = model.index(0, 5)
+        index = model.index(0, Column.INTERRUPTION)
         cell_rect = QRectF(0, 0, 260, 40)
         badge = index.data(BADGE_ROLE)
         interval_rect, _interval_item = delegate._interruption_badge_rects(
@@ -490,12 +624,12 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_each_interruption_tooltip_shows_period_and_total_time(self):
         model = self.make_model()
         model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "11:00-11:30;14:00-15:00",
             Qt.ItemDataRole.EditRole,
         )
         delegate = CurrentTimeDelegate()
-        index = model.index(0, 5)
+        index = model.index(0, Column.INTERRUPTION)
         cell_rect = QRectF(0, 0, 300, 40)
         rects = delegate._interruption_badge_rects(
             cell_rect,
@@ -525,12 +659,12 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_incomplete_interruption_badge_has_no_tooltip_or_add_action(self):
         model = self.make_model()
         model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "11:00-...",
             Qt.ItemDataRole.EditRole,
         )
         delegate = CurrentTimeDelegate()
-        index = model.index(0, 5)
+        index = model.index(0, Column.INTERRUPTION)
         cell_rect = QRectF(0, 0, 260, 40)
         badge = index.data(BADGE_ROLE)
         interval_rect, interval_item = delegate._interruption_badge_rects(
@@ -554,12 +688,12 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_interruption_badges_wrap_as_complete_items(self):
         model = self.make_model()
         model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "08:10-08:20;09:10-09:20;10:10-10:20",
             Qt.ItemDataRole.EditRole,
         )
 
-        badge = model.index(0, 5).data(BADGE_ROLE)
+        badge = model.index(0, Column.INTERRUPTION).data(BADGE_ROLE)
         rows = _interruption_badge_rows(144, QApplication.font(), badge)
 
         self.assertGreater(len(rows), 1)
@@ -568,7 +702,7 @@ class QtModelInterruptionTest(unittest.TestCase):
 
     def test_interruption_badges_are_hidden_while_cell_is_edited(self):
         model = self.make_model()
-        index = model.index(0, 5)
+        index = model.index(0, Column.INTERRUPTION)
 
         self.assertFalse(index.data(CELL_EDITING_ROLE))
 
@@ -665,12 +799,14 @@ class QtModelInterruptionTest(unittest.TestCase):
         cell = QDialog()
         cell.setGeometry(11, 17, 320, 42)
         editor = IntervalEditor(cell)
-        option = SimpleNamespace(rect=cell.geometry())
+        option = QStyleOptionViewItem()
+        option.rect = cell.geometry()
+        model = self.make_model()
 
         CurrentTimeDelegate().updateEditorGeometry(
             editor,
             option,
-            self.make_model().index(0, 5),
+            model.index(0, Column.INTERRUPTION),
         )
 
         self.assertEqual(
@@ -740,7 +876,7 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
 
-        badge = model.index(0, 2).data(BADGE_ROLE)
+        badge = model.index(0, Column.SPECIAL_DAY).data(BADGE_ROLE)
 
         self.assertEqual(badge["texts"], ["Normal day"])
         self.assertEqual(badge["state"], "valid_day_today")
@@ -782,9 +918,9 @@ class QtModelInterruptionTest(unittest.TestCase):
 
         model.recalculate(today=date(2024, 6, 20), autosave=False)
 
-        zero_planned = model.index(0, 2).data(BADGE_ROLE)
-        positive_planned = model.index(1, 2).data(BADGE_ROLE)
-        calendar_weekend_with_normal_text = model.index(2, 2).data(BADGE_ROLE)
+        zero_planned = model.index(0, Column.SPECIAL_DAY).data(BADGE_ROLE)
+        positive_planned = model.index(1, Column.SPECIAL_DAY).data(BADGE_ROLE)
+        calendar_weekend_with_normal_text = model.index(2, Column.SPECIAL_DAY).data(BADGE_ROLE)
         self.assertEqual(zero_planned["state"], "weekend")
         self.assertEqual(positive_planned["state"], "weekend")
         self.assertEqual(calendar_weekend_with_normal_text["state"], "valid_day")
@@ -824,7 +960,7 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_time_badge_hover_targets_badge_rect_only(self):
         model = self.make_model()
         delegate = CurrentTimeDelegate()
-        index = model.index(0, 3)
+        index = model.index(0, Column.START)
         cell_rect = QRectF(0, 0, 120, 40)
         badge = index.data(BADGE_ROLE)
         badge_rect = _badge_rects(cell_rect, QApplication.font(), badge)[0][0]
@@ -851,12 +987,12 @@ class QtModelInterruptionTest(unittest.TestCase):
     def test_interruption_hover_targets_individual_badges(self):
         model = self.make_model()
         model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "12:30-13:00;14:00-14:30",
             Qt.ItemDataRole.EditRole,
         )
         delegate = CurrentTimeDelegate()
-        index = model.index(0, 5)
+        index = model.index(0, Column.INTERRUPTION)
         cell_rect = QRectF(0, 0, 260, 40)
         rects = delegate._interruption_badge_rects(
             cell_rect,
@@ -887,16 +1023,16 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
 
-        positive = model.index(0, 6).data(Qt.ItemDataRole.ForegroundRole)
-        negative = model.index(1, 6).data(Qt.ItemDataRole.ForegroundRole)
-        neutral = model.index(2, 6).data(Qt.ItemDataRole.ForegroundRole)
-        balance_negative = model.index(0, 7).data(
+        positive = model.index(0, Column.DAILY_OVERTIME).data(Qt.ItemDataRole.ForegroundRole)
+        negative = model.index(1, Column.DAILY_OVERTIME).data(Qt.ItemDataRole.ForegroundRole)
+        neutral = model.index(2, Column.DAILY_OVERTIME).data(Qt.ItemDataRole.ForegroundRole)
+        balance_negative = model.index(0, Column.MONTHLY_BALANCE).data(
             Qt.ItemDataRole.ForegroundRole
         )
-        balance_positive = model.index(1, 7).data(
+        balance_positive = model.index(1, Column.MONTHLY_BALANCE).data(
             Qt.ItemDataRole.ForegroundRole
         )
-        balance_neutral = model.index(2, 7).data(
+        balance_neutral = model.index(2, Column.MONTHLY_BALANCE).data(
             Qt.ItemDataRole.ForegroundRole
         )
 
@@ -907,7 +1043,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(balance_negative, negative)
         self.assertEqual(balance_neutral, neutral)
 
-    def test_cw_and_date_columns_use_centered_normal_text(self):
+    def test_date_column_preserves_week_color_and_current_row_state(self):
         model = MonthTableModel()
         model.set_entries(
             [
@@ -918,31 +1054,21 @@ class QtModelInterruptionTest(unittest.TestCase):
             ]
         )
 
-        current_cw_color = model.index(0, 0).data(
+        current_date_color = model.index(0, Column.DATE).data(
             Qt.ItemDataRole.ForegroundRole
         )
-        current_date_color = model.index(0, 1).data(
+        other_date_color = model.index(1, Column.DATE).data(
             Qt.ItemDataRole.ForegroundRole
-        )
-        other_cw_color = model.index(1, 0).data(
-            Qt.ItemDataRole.ForegroundRole
-        )
-        cw_alignment = model.index(0, 0).data(Qt.ItemDataRole.TextAlignmentRole)
-        date_alignment = model.index(0, 1).data(
-            Qt.ItemDataRole.TextAlignmentRole
         )
 
-        self.assertEqual(current_cw_color, current_date_color)
-        self.assertEqual(current_cw_color, other_cw_color)
-        self.assertEqual(cw_alignment, Qt.AlignmentFlag.AlignCenter)
-        self.assertEqual(date_alignment, Qt.AlignmentFlag.AlignCenter)
-        self.assertTrue(model.index(0, 0).data(CURRENT_ROW_ROLE))
-        self.assertFalse(model.index(1, 0).data(CURRENT_ROW_ROLE))
+        self.assertEqual(current_date_color, other_date_color)
+        self.assertTrue(model.index(0, Column.DATE).data(CURRENT_ROW_ROLE))
+        self.assertFalse(model.index(1, Column.DATE).data(CURRENT_ROW_ROLE))
         self.assertIsNone(
-            model.index(0, 0).data(Qt.ItemDataRole.BackgroundRole)
+            model.index(0, Column.DATE).data(Qt.ItemDataRole.BackgroundRole)
         )
 
-    def test_cw_and_date_text_alternates_by_calendar_week(self):
+    def test_date_text_uses_the_same_color_across_calendar_weeks(self):
         model = MonthTableModel()
         model.set_entries(
             [
@@ -966,34 +1092,24 @@ class QtModelInterruptionTest(unittest.TestCase):
         )
 
         with patch("znactime.ui.qt.model._is_dark_theme", return_value=False):
-            light_week_25 = model.index(0, 0).data(
+            light_week_25 = model.index(0, Column.DATE).data(
                 Qt.ItemDataRole.ForegroundRole
             )
-            light_date_25 = model.index(0, 1).data(
-                Qt.ItemDataRole.ForegroundRole
-            )
-            light_week_26 = model.index(1, 0).data(
+            light_week_26 = model.index(1, Column.DATE).data(
                 Qt.ItemDataRole.ForegroundRole
             )
 
-        self.assertEqual(light_week_25, light_date_25)
-        self.assertNotEqual(light_week_25, light_week_26)
-        self.assertLess(light_week_25.lightness(), light_week_26.lightness())
+        self.assertEqual(light_week_25, light_week_26)
 
         with patch("znactime.ui.qt.model._is_dark_theme", return_value=True):
-            dark_week_25 = model.index(0, 0).data(
+            dark_week_25 = model.index(0, Column.DATE).data(
                 Qt.ItemDataRole.ForegroundRole
             )
-            dark_date_25 = model.index(0, 1).data(
-                Qt.ItemDataRole.ForegroundRole
-            )
-            dark_week_26 = model.index(1, 0).data(
+            dark_week_26 = model.index(1, Column.DATE).data(
                 Qt.ItemDataRole.ForegroundRole
             )
 
-        self.assertEqual(dark_week_25, dark_date_25)
-        self.assertNotEqual(dark_week_25, dark_week_26)
-        self.assertGreater(dark_week_25.lightness(), dark_week_26.lightness())
+        self.assertEqual(dark_week_25, dark_week_26)
 
     def test_outside_periods_are_saved_without_changing_workday_boundaries(
         self,
@@ -1001,7 +1117,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         model = self.make_model()
 
         changed = model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "07:30-08:00;16:30-18:00",
             Qt.ItemDataRole.EditRole,
         )
@@ -1040,7 +1156,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         )
 
         changed = model.setData(
-            model.index(0, 5),
+            model.index(0, Column.INTERRUPTION),
             "17:00-18:00",
             Qt.ItemDataRole.EditRole,
         )
@@ -1052,7 +1168,7 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(entry.interruption, "17:00-18:00")
         self.assertEqual(entry.row_color, "missing_times")
         self.assertEqual(
-            model.index(0, 4).data(BADGE_ROLE)["texts"],
+            model.index(0, Column.END).data(BADGE_ROLE)["texts"],
             ["17:00"],
         )
 

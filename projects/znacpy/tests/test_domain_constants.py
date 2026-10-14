@@ -38,7 +38,9 @@ class DomainConstantsTest(unittest.TestCase):
         day_entry_fields = tuple(field.name for field in fields(DayEntry))
 
         self.assertEqual(tuple(Column), tuple(range(len(COLUMNS))))
-        self.assertEqual(ENTRY_FIELDS, day_entry_fields[: len(ENTRY_FIELDS)])
+        self.assertEqual(ENTRY_FIELDS, day_entry_fields[1 : len(ENTRY_FIELDS) + 1])
+        self.assertEqual(COLUMNS[Column.DATE], "Date")
+        self.assertNotIn("CW", COLUMNS)
 
 
 if __name__ == "__main__":
