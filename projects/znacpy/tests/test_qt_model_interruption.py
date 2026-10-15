@@ -32,6 +32,7 @@ from znactime.ui.qt.table import (
     ROW_STRIPE_SPACING,
     ROW_STRIPE_WIDTH,
     _badge_rects,
+    _badge_text_baseline,
     _cell_content_rect,
     _draw_badge_text,
     _date_fonts,
@@ -777,6 +778,13 @@ class QtModelInterruptionTest(unittest.TestCase):
                             _interruption_badge_rects if interruption else _badge_rects
                         )(option.rect, font, badge)
                         rect = rects[0][0]
+                        metrics = QFontMetrics(font)
+                        bounds = metrics.tightBoundingRect(text)
+                        baseline = _badge_text_baseline(rect, metrics, text)
+                        metric_center = baseline + bounds.top() + bounds.height() / 2
+                        # Snapping the baseline must keep the measured glyph box
+                        # centered to within half a logical pixel.
+                        self.assertLessEqual(abs(metric_center - rect.center().y()), 0.5)
                         image = pixmap.toImage()
                         ink_rows = [
                             y for y in range(image.height())
@@ -784,7 +792,15 @@ class QtModelInterruptionTest(unittest.TestCase):
                         ]
                         self.assertTrue(ink_rows)
                         ink_center = (min(ink_rows) + max(ink_rows) + 1) / (2 * ratio)
-                        self.assertLessEqual(abs(ink_center - rect.center().y()), 1)
+                        # Integer font metrics and the alpha-thresholded raster
+                        # bounds can differ with platform fonts and hinting.
+                        # macOS at 2x can differ by 1.5 logical pixels even when
+                        # the metric box is centered correctly (checked above).
+                        self.assertLessEqual(
+                            abs(ink_center - rect.center().y()), 2,
+                            f"font={font.family()!r}, ink_center={ink_center}, "
+                            f"badge_center={rect.center().y()}",
+                        )
 
     def test_time_and_day_prompts_only_highlight_due_workdays_in_open_month(self):
         model = MonthTableModel()
