@@ -1,6 +1,7 @@
 import os
 import unittest
 from datetime import date
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -85,6 +86,40 @@ class BadgeClickEditingTest(unittest.TestCase):
                 root = editor.parentWidget() if column == Column.INTERRUPTION else editor
                 view.closeEditor(root, QAbstractItemDelegate.EndEditHint.RevertModelCache)
                 self.process_events()
+
+    def test_editing_below_today_preserves_bottom_scroll_position(self):
+        with patch("znactime.ui.qt.table.date") as calendar_date:
+            calendar_date.today.return_value = date(2026, 10, 14)
+            self.table.set_entries([
+                DayEntry("", f"{day:02d}.10.2026", "Normal day", "08:00", "17:00", "00:00")
+                for day in range(1, 32)
+            ])
+            QTest.qWait(20)
+            self.process_events()
+            view = self.table.view
+            today_index = self.table.model.index(13, Column.DATE)
+            self.assertTrue(view.viewport().rect().contains(view.visualRect(today_index)))
+            scrollbar = view.verticalScrollBar()
+            self.assertGreater(scrollbar.maximum(), 0)
+            scrollbar.setValue(scrollbar.maximum())
+            self.process_events()
+            bottom = scrollbar.value()
+            index = self.table.model.index(30, Column.START)
+            self.assertTrue(view.viewport().rect().contains(view.visualRect(index).center()))
+
+            self.click(view, index)
+
+            self.assertEqual(scrollbar.value(), bottom)
+            self.assertEqual(len(self.visible_editors()), 1)
+            self.visible_editors()[0].setText("09:00")
+            QTest.keyClick(self.visible_editors()[0], Qt.Key.Key_Return)
+            self.process_events()
+            self.assertEqual(self.table.model.entries()[30].start, "09:00")
+            self.assertEqual(scrollbar.value(), bottom)
+
+            self.window.resize(980, 280)
+            self.process_events()
+            self.assertTrue(view.viewport().rect().contains(view.visualRect(index).center()))
 
     def test_clicking_another_time_finishes_first_without_opening_second(self):
         self.click(self.table.view, self.table_index(Column.START))

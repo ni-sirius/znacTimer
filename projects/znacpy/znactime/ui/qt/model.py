@@ -80,6 +80,7 @@ class MonthTableModel(QAbstractTableModel):
     overtimeChanged = Signal(float)
     monthReloaded = Signal(object)
     entryCommitted = Signal()
+    entryEdited = Signal(object, object)
 
     def __init__(self, parent=None, repository=None):
         super().__init__(parent)
@@ -199,7 +200,9 @@ class MonthTableModel(QAbstractTableModel):
             else:
                 self._entries[row] = replace(entry, **changes)
             self.recalculate(autosave=True)
+            updated = self._entries[row]
             self.entryCommitted.emit()
+            self.entryEdited.emit(entry, updated)
             return True
         return False
 
@@ -545,7 +548,9 @@ class MonthTableModel(QAbstractTableModel):
         else:
             self._entries[index.row()] = replace(current, **changes)
         self.recalculate(autosave=True)
+        updated = self._entries[index.row()]
         self.entryCommitted.emit()
+        self.entryEdited.emit(current, updated)
         return True
 
     def _persist_changes(self, entry, changes):

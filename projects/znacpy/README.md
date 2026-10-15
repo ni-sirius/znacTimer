@@ -71,6 +71,11 @@ finalize a month. Its lock icon shows whether the month is open or closed. Click
 the locked button or use **Approvals > Reopen Month** to reopen it for corrections;
 both actions ask for confirmation.
 
+The app also offers to close the month after you enter an End time on its last
+calendar day, even if other days are unfinished, or complete its final unfinished
+workday. Accepting this suggestion opens the usual close confirmation, which
+explains how any remaining empty days are handled.
+
 Closed months are intentionally non-editable. Badge-like inputs become plain
 colored text, the whole month receives a subtle gray archive pattern, the
 header shows a red closed-lock icon, and the month remains available for review.

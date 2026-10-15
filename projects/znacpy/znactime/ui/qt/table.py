@@ -1596,10 +1596,8 @@ class MonthTableView(BadgeTableView):
 
     def update_table_geometry(self):
         self._resize_columns_to_viewport()
-        all_rows_fit = self._resize_rows_to_viewport()
+        self._resize_rows_to_viewport()
         self.contentHeightChanged.emit(self.content_height())
-        if not all_rows_fit:
-            QTimer.singleShot(0, self.ensure_today_visible)
 
     def content_height(self):
         model = self.model()
@@ -1954,11 +1952,18 @@ class TableWidget(QWidget):
         QTimer.singleShot(0, self._update_view_geometry)
 
     def _handle_model_reset(self):
-        QTimer.singleShot(0, self._update_view_geometry)
+        QTimer.singleShot(0, self._update_loaded_month_geometry)
 
-    def _update_view_geometry(self):
+    def _update_loaded_month_geometry(self):
+        self._update_view_geometry(scroll_to_today=True)
+
+    def _update_view_geometry(self, *, scroll_to_today=False):
         try:
             self.view.update_table_geometry()
+            # Loading a month can reveal today; edits and resizes must preserve
+            # the user's position even when row geometry needs refreshing.
+            if scroll_to_today:
+                QTimer.singleShot(0, self.view.ensure_today_visible)
         except RuntimeError:
             pass
 
@@ -2021,3 +2026,7 @@ class TableWidget(QWidget):
     @property
     def monthReloaded(self):
         return self.model.monthReloaded
+
+    @property
+    def entryEdited(self):
+        return self.model.entryEdited

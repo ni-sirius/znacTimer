@@ -1,3 +1,4 @@
+import calendar
 import os
 from datetime import date, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from znactime.core.constants import (
     ZERO_DURATION,
 )
 from znactime.core.models import MonthStats
+from znactime.core.day_evaluator import DayEvaluator
 from znactime.core.time_utils import (
     append_interruption_period,
     finish_interruption_period,
@@ -122,6 +124,10 @@ class TimeTrackerApp(QMainWindow):
         self.month_carry_discontinuity = False
         self.carry_over = 0.0
         self.current_overtime = 0.0
+        self._pending_month_close = None
+        self._month_close_prompt_timer = QTimer(self)
+        self._month_close_prompt_timer.setSingleShot(True)
+        self._month_close_prompt_timer.timeout.connect(self._prompt_to_close_month)
         self._initial_size_fitted = False
         self.theme_controller = ThemeController(settings=settings)
         self.theme_controller.themeChanged.connect(self.on_theme_changed)
@@ -174,6 +180,7 @@ class TimeTrackerApp(QMainWindow):
         self.table = TableWidget(self, repository=repository)
         self.table.overtimeChanged.connect(self.set_current_overtime)
         self.table.monthReloaded.connect(self._apply_reloaded_month)
+        self.table.entryEdited.connect(self._maybe_offer_month_close)
         self.table.contentHeightChanged.connect(self.fit_initial_window_height)
 
         self.workday_bar = WorkdayBar(self, model=self.table.model)
@@ -429,6 +436,8 @@ class TimeTrackerApp(QMainWindow):
         )
 
     def load_month(self):
+        self._month_close_prompt_timer.stop()
+        self._pending_month_close = None
         year = self.header.year()
         month = self.header.month()
         if self.repository is None:
@@ -737,6 +746,92 @@ class TimeTrackerApp(QMainWindow):
         self.table.update_entry_for_date(entry.date, end=end_text)
         self.refresh_workday_bar(now)
 
+    @staticmethod
+    def _day_is_filled(entry, today):
+        no_times = (
+            entry.start in ("", UNSET_TIME)
+            and entry.end in ("", UNSET_TIME)
+            and entry.interruption in ("", ZERO_DURATION)
+        )
+        if no_times and entry.expected_work_minutes == 0:
+            return True
+        return DayEvaluator.evaluate(entry, today=today).can_calculate
+
+    def _maybe_offer_month_close(self, before, after):
+        if self.repository is None or self.month_closed:
+            return
+        year, month = self.header.year(), self.header.month()
+        today = datetime.today().date()
+        work_date = parse_display_date(after.date)
+        if (work_date.year, work_date.month) != (year, month) or (year, month) > (today.year, today.month):
+            return
+        end_entered = before.end in ("", UNSET_TIME) and after.end not in ("", UNSET_TIME)
+        last_calendar_day = work_date.day == calendar.monthrange(year, month)[1]
+        final_unfilled_day = (
+            not self._day_is_filled(before, today)
+            and all(self._day_is_filled(entry, today) for entry in self.table.model.entries())
+        )
+        if (last_calendar_day and end_entered) or final_unfilled_day:
+            self._pending_month_close = (year, month, work_date)
+            # Finish saving and closing the editor before opening a modal dialog.
+            # A single timer also combines milestones reached by a pasted batch.
+            if not self._month_close_prompt_timer.isActive():
+                self._month_close_prompt_timer.start(0)
+
+    def _prompt_to_close_month(self):
+        pending = self._pending_month_close
+        if pending is None or self.month_closed or self.repository is None:
+            self._pending_month_close = None
+            return
+        if QApplication.activeModalWidget() is not None:
+            self._month_close_prompt_timer.start(100)
+            return
+        self._pending_month_close = None
+        year, month, work_date = pending
+        if (self.header.year(), self.header.month()) != (year, month):
+            return
+        today = datetime.today().date()
+        if (year, month) > (today.year, today.month):
+            return
+        entries = self.table.model.entries()
+        if not entries:
+            return
+        entry = self.table.entry_for_date(work_date.strftime(DATE_FORMAT))
+        last_calendar_day_has_end = (
+            entry is not None
+            and work_date.day == calendar.monthrange(year, month)[1]
+            and entry.end not in ("", UNSET_TIME)
+        )
+        all_days_filled = all(
+            self._day_is_filled(item, today) for item in entries
+        )
+        if not last_calendar_day_has_end and not all_days_filled:
+            return
+        reason = (
+            "You've entered the end time for the last calendar day of this month."
+            if last_calendar_day_has_end
+            else "You've completed the last unfinished workday of this month."
+        )
+        answer = QMessageBox.question(
+            self,
+            "Ready to close the month?",
+            f"{reason}\n\nThis is a good time to close the month. "
+            "Would you like to review and close it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if (
+            answer == QMessageBox.StandardButton.Yes
+            and not self.month_closed
+            and (self.header.year(), self.header.month()) == (year, month)
+        ):
+            self.close_month()
+
+    def closeEvent(self, event):
+        self._month_close_prompt_timer.stop()
+        self._pending_month_close = None
+        super().closeEvent(event)
+
     def toggle_month_closed(self):
         if self.month_closed:
             self.reopen_month()
@@ -744,6 +839,8 @@ class TimeTrackerApp(QMainWindow):
             self.close_month()
 
     def close_month(self):
+        self._month_close_prompt_timer.stop()
+        self._pending_month_close = None
         if self.month_closed:
             QMessageBox.information(self, "Month closed", "This month is already closed.")
             return

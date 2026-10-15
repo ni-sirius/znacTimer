@@ -29,6 +29,7 @@ class MonthLifecycleUiTest(unittest.TestCase):
             month_closed=closed,
             header=SimpleNamespace(year=lambda: 2024, month=lambda: 6),
             _month_record=SimpleNamespace(revision=7),
+            _month_close_prompt_timer=Mock(),
             load_month=Mock(),
         )
 

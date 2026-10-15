@@ -42,6 +42,22 @@ class QtSQLiteModelTest(unittest.TestCase):
         self.assertEqual(stored.start_minute, 510)
         self.assertEqual(self.model.index(0, Column.START).data(), "08:30")
 
+    @patch("znactime.ui.qt.model.QMessageBox.warning")
+    def test_entry_edited_reports_saved_before_and_after_values_only(self, _warning):
+        edits = []
+        self.model.entryEdited.connect(lambda before, after: edits.append((before, after)))
+        self.assertFalse(self.model.setData(self.model.index(0, Column.END), "17:00"))
+        self.assertEqual(edits, [])
+        self.assertTrue(self.model.setData(self.model.index(0, Column.START), "08:00"))
+        self.assertTrue(self.model.update_entry_for_date("01.06.2024", end="17:00"))
+
+        self.assertEqual(len(edits), 2)
+        self.assertEqual(edits[0][0].start, "--:--")
+        self.assertEqual(edits[0][1].start, "08:00")
+        self.assertEqual(edits[1][0].end, "--:--")
+        self.assertEqual(edits[1][1].end, "17:00")
+        self.assertEqual(self.repository.load_month(2024, 6).days[0].end_minute, 1020)
+
     def test_first_virtual_edit_materializes_and_refreshes_month_revision(self):
         virtual = self.repository.view_month(2024, 7)
         self.model.set_context(2024, 7, 0, 8, False)
