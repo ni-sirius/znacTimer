@@ -1,4 +1,4 @@
-"""Reject tracked release files that are outside the reviewed source allowlist."""
+"""Check only projects/znacpy files against the reviewed release source allowlist."""
 
 from __future__ import annotations
 
@@ -7,13 +7,9 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 
+PROJECT_DIRECTORY = "projects/znacpy"
 EXACT_FILES = frozenset(
     {
-        ".gitignore",
-        ".gitattributes",
-        ".vscode/settings.json",
-        "LICENSE",
-        "README.md",
         "projects/znacpy/.vscode/settings.json",
         "projects/znacpy/.python-version",
         "projects/znacpy/README.md",
@@ -22,13 +18,6 @@ EXACT_FILES = frozenset(
         "projects/znacpy/pyproject.toml",
         "projects/znacpy/uv.lock",
         "projects/znacpy/tracker.py",
-        "projects/otherplatform/README.md",
-        "contracts/README.md",
-        "contracts/schemas/README.md",
-        "contracts/fixtures/README.md",
-        "docs/images/closed-month.png",
-        "docs/images/dashboard.png",
-        "docs/images/interruption-editor.png",
         "projects/znacpy/znactime/ui/qt/assets/app_icon.png",
         "projects/znacpy/packaging/macos/znactime.icon/icon.json",
         "projects/znacpy/packaging/macos/znactime.icon/Assets/artwork.png",
@@ -42,13 +31,11 @@ def is_release_source(relative_path: str) -> bool:
     if path.is_absolute() or ".." in path.parts:
         return False
     normalized = path.as_posix()
+    if not normalized.startswith(PROJECT_DIRECTORY + "/"):
+        return False
     if normalized in EXACT_FILES:
         return True
-    if normalized.startswith("docs/"):
-        return path.suffix == ".md"
-    if normalized.startswith(".github/workflows/"):
-        return path.suffix in {".yml", ".yaml"}
-    if normalized.startswith(("scripts/", "projects/znacpy/tests/")):
+    if normalized.startswith("projects/znacpy/tests/"):
         return path.suffix == ".py"
     if normalized.startswith("projects/znacpy/scripts/"):
         return path.suffix in {".py", ".cmd", ".sh"}
@@ -64,10 +51,11 @@ def is_release_source(relative_path: str) -> bool:
 
 
 def tracked_files(repository_root: Path, *, working_tree: bool = False) -> tuple[str, ...]:
-    """List index paths, or existing tracked and non-ignored new working files."""
+    """List only znacpy index paths or existing tracked and new working files."""
     command = ["git", "ls-files", "--full-name", "-z"]
     if working_tree:
         command.extend(("--cached", "--others", "--exclude-standard"))
+    command.extend(("--", PROJECT_DIRECTORY + "/"))
     completed = subprocess.run(
         command,
         cwd=repository_root,
@@ -89,7 +77,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--working-tree",
         action="store_true",
-        help="Check existing tracked and non-ignored new files before staging.",
+        help="Check existing tracked and non-ignored new znacpy files before staging.",
     )
     args = parser.parse_args(argv)
     repository_root = Path(__file__).resolve().parents[1]
@@ -100,10 +88,10 @@ def main(argv=None) -> int:
     )
     source = "working tree" if args.working_tree else "index"
     if not rejected:
-        print(f"Release {source} matches the reviewed source allowlist.")
+        print(f"znacpy release {source} matches the reviewed source allowlist.")
         return 0
 
-    print(f"Release blocked: {source} files outside the reviewed source allowlist:")
+    print(f"znacpy release blocked: {source} files outside the reviewed source allowlist:")
     for path in rejected:
         print(f"- {path}")
     return 1

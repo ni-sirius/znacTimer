@@ -259,8 +259,8 @@ Run the complete test suite with:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Before creating a source or release archive, verify that every tracked file belongs to
-the reviewed source allowlist:
+Before creating a znacpy source or release archive, verify that tracked files under
+`projects/znacpy/` belong to the reviewed source allowlist:
 
 ```powershell
 .\.venv\Scripts\python.exe ..\..\scripts\check_release_tree.py
@@ -268,9 +268,9 @@ the reviewed source allowlist:
 
 The repository ignores the local legacy `data/` tree, SQLite databases and journals,
 first-launch/runtime lock files, and conventional backup/export directories. The release
-check independently fails if such data is force-added or another unreviewed artifact type
-enters the Git index. To check pending moves and new source files before staging,
-add `--working-tree` to the release-check command.
+check scans only `projects/znacpy/` and fails if such data is force-added or another
+unreviewed artifact type enters that project's Git index. To check pending moves and
+new source files before staging, add `--working-tree` to the release-check command.
 
 After importing legacy CSV files, verify the current Qt AppData database against
 the `data` folder with:
