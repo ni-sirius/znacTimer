@@ -1,6 +1,7 @@
 import os
 import unittest
 from datetime import date
+from math import ceil
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -31,6 +32,7 @@ from znactime.ui.qt.table import (
     ROW_STRIPE_SPACING,
     ROW_STRIPE_WIDTH,
     _badge_rects,
+    _cell_content_rect,
     _draw_badge_text,
     _date_fonts,
     _interruption_badge_rects,
@@ -296,7 +298,8 @@ class QtModelInterruptionTest(unittest.TestCase):
         view.resize(960, 240)
         view.setModel(model)
         view.update_table_geometry()
-        gap_height = 9
+        pixel_ratio = view.devicePixelRatioF()
+        gap_height = ceil(9 / max(1.0, pixel_ratio))
         self.assertEqual(view.rowHeight(0), view.rowHeight(1) + gap_height)
         self.assertEqual(view.rowHeight(1), view.rowHeight(2))
 
@@ -310,7 +313,11 @@ class QtModelInterruptionTest(unittest.TestCase):
         option = QStyleOptionViewItem()
         option.rect = full_rect
         option.widget = view
-        pixmap = QPixmap(view.viewport().size())
+        pixmap = QPixmap(
+            ceil(view.viewport().width() * pixel_ratio),
+            ceil(view.viewport().height() * pixel_ratio),
+        )
+        pixmap.setDevicePixelRatio(pixel_ratio)
         painter = QPainter(pixmap)
         try:
             with patch.object(delegate, "_paint_date") as paint_date:
@@ -707,8 +714,10 @@ class QtModelInterruptionTest(unittest.TestCase):
                         editor.setText(text)
                         editor.show()
                         self.app.processEvents()
-                        actual = editor.grab().toImage()
-                        reference = QPixmap(width, height)
+                        actual_pixmap = editor.grab()
+                        actual = actual_pixmap.toImage()
+                        reference = QPixmap(actual_pixmap.size())
+                        reference.setDevicePixelRatio(actual_pixmap.devicePixelRatioF())
                         reference.fill(Qt.GlobalColor.white)
                         painter = QPainter(reference)
                         try:
@@ -1172,6 +1181,52 @@ class QtModelInterruptionTest(unittest.TestCase):
         self.assertEqual(editor.start_edit.height(), editor.height())
         self.assertEqual(editor.end_edit.height(), editor.height())
         self.assertEqual(editor.remove_button.height(), editor.height())
+
+    def test_interval_controls_remain_centered_after_resizing_and_changing_actions(self):
+        cell = QDialog()
+        self.addCleanup(cell.close)
+        cell.resize(400, 220)
+        editor = IntervalEditor(cell)
+        model = MonthTableModel()
+        model.set_entries([
+            DayEntry("CW-24", "16.06.2024", "Normal day", "08:00", "17:00", "12:00-12:30"),
+            DayEntry("CW-25", "17.06.2024", "Normal day", "08:00", "17:00", "00:00"),
+        ])
+        delegate = CurrentTimeDelegate()
+        index = model.index(0, Column.INTERRUPTION)
+        option = QStyleOptionViewItem()
+        option.widget = cell
+        cell.show()
+
+        for point_size in (10, 14):
+            font = QApplication.font()
+            font.setPointSize(point_size)
+            editor.setFont(font)
+            option.font = font
+            for width, row_height in ((240, 41), (321, 42), (240, 73), (321, 124)):
+                option.rect.setRect(11, 17, width, row_height)
+                content_rect = _cell_content_rect(index, option.rect, cell.devicePixelRatioF())
+                for action in ("edit", "add", "replace", "add"):
+                    with self.subTest(font=point_size, width=width, height=row_height, action=action):
+                        editor.set_value("12:00-12:30", {"action": action, "period_index": 0})
+                        delegate.updateEditorGeometry(editor, option, index)
+                        self.app.processEvents()
+
+                        self.assertLessEqual(
+                            abs(editor.geometry().center().y() - content_rect.center().y()), 1,
+                        )
+                        controls = [editor.start_edit, editor.separator_label, editor.end_edit]
+                        if action != "add":
+                            controls.append(editor.remove_button)
+                        for control in controls:
+                            self.assertEqual(control.y(), 0)
+                            self.assertEqual(control.height(), editor.height())
+                            self.assertTrue(editor.rect().contains(control.geometry()))
+                        for left, right in zip(controls, controls[1:]):
+                            self.assertEqual(right.x() - (left.x() + left.width()), 4)
+                        self.assertEqual(controls[-1].geometry().right(), editor.rect().right())
+                        for field in (editor.start_edit, editor.end_edit):
+                            self.assertFalse(field.testAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect))
 
     def test_remove_icon_has_balanced_internal_margins(self):
         editor = IntervalEditor()

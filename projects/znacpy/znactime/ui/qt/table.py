@@ -30,7 +30,6 @@ from znactime.ui.qt import (
     QFontMetrics,
     QGraphicsDropShadowEffect,
     QHeaderView,
-    QHBoxLayout,
     QIcon,
     QLabel,
     QLineEdit,
@@ -415,6 +414,7 @@ class IntervalEditor(QWidget):
             editor.returnPressed.connect(self.request_commit)
             editor.editingFinished.connect(self._commit_if_focus_left)
             editor.installEventFilter(self)
+            editor.setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, False)
 
         self.separator_label = QLabel(PERIOD_SEPARATOR, self)
         self.separator_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -427,18 +427,31 @@ class IntervalEditor(QWidget):
         self.remove_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.remove_button.clicked.connect(self._remove_period)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        layout.addWidget(self.start_edit)
-        layout.addWidget(self.separator_label)
-        layout.addWidget(self.end_edit)
-        layout.addWidget(
-            self.remove_button,
-            alignment=Qt.AlignmentFlag.AlignVCenter,
-        )
         self._apply_style()
         self._synchronize_control_heights()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_controls()
+
+    def _place_controls(self):
+        # Native macOS line-edit layout insets can shift a QHBoxLayout's
+        # controls below the cell center. Use the editor's actual rectangle.
+        spacing = 4
+        height = self.height()
+        right = self.width()
+        if not self.remove_button.isHidden():
+            button_width = self.remove_button.width()
+            right -= button_width
+            self.remove_button.setGeometry(right, 0, button_width, height)
+            right -= spacing
+        separator_width = self.separator_label.sizeHint().width()
+        edit_width = max(1, (right - separator_width - spacing * 2) // 2)
+        self.start_edit.setGeometry(0, 0, edit_width, height)
+        x = edit_width + spacing
+        self.separator_label.setGeometry(x, 0, separator_width, height)
+        x += separator_width + spacing
+        self.end_edit.setGeometry(x, 0, max(1, right - x), height)
 
     def preferred_height(self):
         return (
@@ -452,6 +465,7 @@ class IntervalEditor(QWidget):
         edit_height = height or self.preferred_height()
         for control in controls:
             control.setFixedHeight(edit_height)
+        self._place_controls()
 
     def _apply_style(self):
         dark = _is_dark_theme()
@@ -473,6 +487,7 @@ class IntervalEditor(QWidget):
             f"selection-color: {on_primary};"
             "font-weight: 700;"
             "padding: 0 6px;"
+            "margin: 0;"
             "}"
             "QLabel {"
             f"color: {separator};"
@@ -500,6 +515,7 @@ class IntervalEditor(QWidget):
             self.target.get("action")
             in {InterruptionAction.EDIT, InterruptionAction.REPLACE}
         )
+        self._place_controls()
         period = self._period_for_target()
         if period and PERIOD_SEPARATOR in period:
             start, end = period.split(PERIOD_SEPARATOR, 1)
