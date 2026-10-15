@@ -47,6 +47,11 @@ def application_settings():
     return QSettings(APP_NAME, APP_NAME)
 
 
+def _macos_bundle_supplies_icon():
+    # A runtime Dock icon replaces the bundle's native one with the flat PNG.
+    return sys.platform == "darwin" and getattr(sys, "frozen", False)
+
+
 def main(argv=None, *, database=None, settings=None):
     runtime_arguments = sys.argv[1:] if argv is None else list(argv)
     if "--smoke-test" in runtime_arguments:
@@ -58,7 +63,8 @@ def main(argv=None, *, database=None, settings=None):
     app = QApplication(sys.argv)
     app.setOrganizationName(ORGANIZATION_NAME)
     app.setApplicationName(APP_NAME)
-    app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
+    if not _macos_bundle_supplies_icon():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     target = database_path() if database is None else database
     runtime_settings = application_settings() if settings is None else settings
     try:

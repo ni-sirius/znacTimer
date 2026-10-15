@@ -1,12 +1,14 @@
 import importlib.util
 import json
+import os
 import plistlib
 import struct
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +21,35 @@ _spec.loader.exec_module(packaging_build)
 
 
 class PackagingBuildTest(unittest.TestCase):
+    @staticmethod
+    def _execute_spec(target, *, xcode_version="26.3", create_catalog=True):
+        analysis = Mock(return_value=SimpleNamespace(datas=[], pure=[], scripts=[], binaries=[]))
+        bundle = Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            def run(command, **kwargs):
+                if command[:2] == ["xcrun", "xcodebuild"]:
+                    return SimpleNamespace(stdout=f"Xcode {xcode_version}\nBuild version test\n")
+                if command[:2] == ["xcrun", "actool"]:
+                    output = Path(command[command.index("--compile") + 1])
+                    if create_catalog:
+                        (output / "Assets.car").write_bytes(b"compiled icon catalog")
+                    return SimpleNamespace(returncode=0)
+                raise AssertionError(f"Unexpected build command: {command}")
+
+            namespace = {
+                "SPECPATH": str(PROJECT_ROOT / "packaging"),
+                "workpath": temporary,
+                "Analysis": analysis,
+                "PYZ": Mock(), "EXE": Mock(), "COLLECT": Mock(), "BUNDLE": bundle,
+            }
+            with (
+                patch.dict(os.environ, {"ZNACTIME_BUILD_TARGET": target, "ZNACTIME_BUILD_VERSION": "0.6.0"}),
+                patch("PyInstaller.utils.hooks.copy_metadata", return_value=[("metadata", "znactime.dist-info")]),
+                patch("subprocess.run", side_effect=run) as command,
+            ):
+                exec(compile(packaging_build.SPEC_PATH.read_text(encoding="utf-8"), str(packaging_build.SPEC_PATH), "exec"), namespace)
+        return analysis, bundle, command
+
     @staticmethod
     def _write_windows_x64_executable(path):
         content = bytearray(0x88)
@@ -111,6 +142,41 @@ class PackagingBuildTest(unittest.TestCase):
             packaging_build.MACOS_ENTITLEMENTS_PATH.read_bytes()
         )
         self.assertEqual(entitlements, {})
+
+    def test_macos_spec_compiles_icon_catalog_and_preserves_icns_fallback(self):
+        analysis, bundle, command = self._execute_spec("macos-arm64")
+
+        self.assertEqual(len(command.call_args_list), 2)
+        compile_command = command.call_args_list[1].args[0]
+        self.assertEqual(compile_command[:2], ["xcrun", "actool"])
+        self.assertEqual(Path(compile_command[2]).name, "znactime.icon")
+        self.assertEqual(compile_command[compile_command.index("--app-icon") + 1], "znactime")
+        self.assertTrue(any(Path(source).name == "Assets.car" and destination == "." for source, destination in analysis.call_args.kwargs["datas"]))
+        self.assertEqual(bundle.call_args.kwargs["info_plist"]["CFBundleIconName"], "znactime")
+        self.assertEqual(Path(bundle.call_args.kwargs["icon"]).name, "znactime.icns")
+
+    def test_windows_spec_does_not_invoke_apple_tools(self):
+        analysis, bundle, command = self._execute_spec("windows-x64")
+
+        command.assert_not_called()
+        bundle.assert_not_called()
+        self.assertFalse(any(Path(source).name == "Assets.car" for source, _destination in analysis.call_args.kwargs["datas"]))
+
+    def test_macos_icon_compile_rejects_old_xcode_and_missing_catalog(self):
+        with self.assertRaisesRegex(SystemExit, "requires Xcode 26"):
+            self._execute_spec("macos-arm64", xcode_version="16.4")
+        with self.assertRaisesRegex(SystemExit, "did not produce Assets.car"):
+            self._execute_spec("macos-arm64", create_catalog=False)
+
+    def test_icon_composer_source_references_valid_artwork(self):
+        source = PROJECT_ROOT / "packaging" / "macos" / "znactime.icon"
+        definition = json.loads((source / "icon.json").read_text(encoding="utf-8"))
+        for group in definition["groups"]:
+            for layer in group["layers"]:
+                artwork = source / "Assets" / layer["image-name"]
+                content = artwork.read_bytes()
+                self.assertEqual(content[:8], b"\x89PNG\r\n\x1a\n")
+                self.assertEqual(struct.unpack(">II", content[16:24]), (1024, 1024))
 
     def test_macos_commands_verify_app_signature_and_create_compressed_dmg(self):
         context = packaging_build.BuildContext(

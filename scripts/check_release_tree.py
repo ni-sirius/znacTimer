@@ -30,6 +30,8 @@ EXACT_FILES = frozenset(
         "docs/images/dashboard.png",
         "docs/images/interruption-editor.png",
         "projects/znacpy/znactime/ui/qt/assets/app_icon.png",
+        "projects/znacpy/packaging/macos/znactime.icon/icon.json",
+        "projects/znacpy/packaging/macos/znactime.icon/Assets/artwork.png",
     }
 )
 

@@ -52,6 +52,7 @@ class GitHubActionsTest(unittest.TestCase):
         self.assertIn("packaging/native-tools.json", self.workflow)
         self.assertIn(r"scripts\build_windows.cmd --release", self.workflow)
         self.assertIn("bash scripts/build_macos.sh --release", self.workflow)
+        self.assertIn("DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer", self.workflow)
 
     def test_packaged_smoke_reports_and_unsigned_artifacts_are_uploaded(self):
         self.assertEqual(self.workflow.count("--smoke-test"), 2)

@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 
 from PyInstaller.utils.hooks import copy_metadata
@@ -16,8 +17,47 @@ PROJECT_ROOT = PACKAGING_DIR.parent
 APP_ICON = PROJECT_ROOT / "znactime" / "ui" / "qt" / "assets" / "app_icon.png"
 WINDOWS_ICON = PACKAGING_DIR / "windows" / "znactime.ico"
 MACOS_ICON = PACKAGING_DIR / "macos" / "znactime.icns"
+MACOS_ICON_SOURCE = PACKAGING_DIR / "macos" / "znactime.icon"
+MACOS_ICON_NAME = MACOS_ICON_SOURCE.stem
 MACOS_ENTITLEMENTS = PACKAGING_DIR / "macos" / "entitlements.plist"
 THEMES_DIR = PROJECT_ROOT / "znactime" / "ui" / "qt" / "themes"
+
+
+def compile_macos_icon():
+    # Package the Icon Composer catalog for native macOS icon rendering;
+    # the committed .icns remains the fallback for older macOS versions.
+    xcode = subprocess.run(
+        ["xcrun", "xcodebuild", "-version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    if int(xcode.splitlines()[0].split()[1].split(".")[0]) < 26:
+        raise SystemExit(
+            "Icon Composer compilation requires Xcode 26 or newer. "
+            "Select it with DEVELOPER_DIR or xcode-select before building."
+        )
+    output = Path(workpath).resolve() / "macos-icon"
+    output.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "xcrun", "actool", str(MACOS_ICON_SOURCE),
+            "--compile", str(output),
+            "--output-format", "human-readable-text",
+            "--output-partial-info-plist", str(output / "partial.plist"),
+            "--app-icon", MACOS_ICON_NAME,
+            "--include-all-app-icons",
+            "--target-device", "mac",
+            "--platform", "macosx",
+            "--minimum-deployment-target", "14.0",
+        ],
+        check=True,
+    )
+    catalog = output / "Assets.car"
+    if not catalog.is_file():
+        raise SystemExit("Icon Composer compilation did not produce Assets.car.")
+    return catalog
+
 
 metadata_source, metadata_destination = copy_metadata("znactime")[0]
 datas = [
@@ -26,6 +66,8 @@ datas = [
     (str(THEMES_DIR), "znactime/ui/qt/themes"),
     (str(PROJECT_ROOT / "THIRD_PARTY_NOTICES.md"), "."),
 ]
+if TARGET == "macos-arm64":
+    datas.append((str(compile_macos_icon()), "."))
 
 analysis = Analysis(
     [str(PACKAGING_DIR / "launcher.py")],
@@ -90,6 +132,7 @@ if TARGET == "macos-arm64":
             "CFBundleDisplayName": "znacTime",
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
+            "CFBundleIconName": MACOS_ICON_NAME,
             "NSHighResolutionCapable": True,
         },
     )

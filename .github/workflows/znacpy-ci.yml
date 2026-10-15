@@ -125,6 +125,8 @@ jobs:
 
       - name: Build macOS candidate
         if: matrix.target == 'macos-arm64'
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
         shell: bash
         run: bash scripts/build_macos.sh --release
 

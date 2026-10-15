@@ -50,3 +50,6 @@ closed_[0-1][0-9].flag
 *.egg-info/
 .coverage
 htmlcov/
+
+# macOS Finder metadata
+.DS_Store

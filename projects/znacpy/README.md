@@ -118,6 +118,9 @@ successful build; it never runs the installer.
 
 On macOS Apple silicon, use the matching local scripts:
 
+Native builds require full Xcode 26 or newer to compile the Icon Composer artwork.
+Select that installation with `DEVELOPER_DIR` or `xcode-select` before building.
+
 ```bash
 ./scripts/run_dev.sh
 ./scripts/build_macos.sh

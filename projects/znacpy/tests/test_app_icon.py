@@ -1,5 +1,6 @@
 import os
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -45,6 +46,32 @@ class AppIconTest(unittest.TestCase):
         shell32.SetCurrentProcessExplicitAppUserModelID.assert_called_once_with(
             APP_USER_MODEL_ID
         )
+
+    def test_startup_preserves_native_bundle_icon_only_for_frozen_macos(self):
+        for platform, frozen, set_runtime_icon in (
+            ("darwin", True, False),
+            ("darwin", False, True),
+            ("win32", True, True),
+        ):
+            with self.subTest(platform=platform, frozen=frozen):
+                application = Mock()
+                with (
+                    patch("znactime.__main__.sys.platform", platform),
+                    patch("znactime.__main__.sys.frozen", frozen, create=True),
+                    patch("znactime.__main__._set_windows_app_user_model_id"),
+                    patch("znactime.__main__.QApplication", return_value=application),
+                    patch("znactime.__main__.QIcon") as icon,
+                    patch("znactime.__main__.application_lock", return_value=nullcontext()),
+                    patch("znactime.__main__.load_work_schedule_settings", return_value=(8, True)),
+                    patch("znactime.__main__.open_or_initialize_repository", return_value=None),
+                ):
+                    self.assertEqual(main(database=Path("test.db"), settings=Mock()), 0)
+
+                if set_runtime_icon:
+                    application.setWindowIcon.assert_called_once_with(icon.return_value)
+                else:
+                    application.setWindowIcon.assert_not_called()
+                    icon.assert_not_called()
 
     @patch("znactime.__main__.QMessageBox")
     def test_already_running_dialog_has_only_an_exit_action(self, message_box):
