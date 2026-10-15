@@ -66,9 +66,14 @@ incomplete pauses are clearly represented.
 
 ### Review and close a month
 
+Click the **This Month** overtime button or use **Approvals > Close Month** to
+finalize a month. Its lock icon shows whether the month is open or closed. Click
+the locked button or use **Approvals > Reopen Month** to reopen it for corrections;
+both actions ask for confirmation.
+
 Closed months are intentionally non-editable. Badge-like inputs become plain
 colored text, the whole month receives a subtle gray archive pattern, the
-header displays **Closed**, and the month remains available for review.
+header shows a red closed-lock icon, and the month remains available for review.
 
 ![Closed month in read-only mode](../../docs/images/closed-month.png)
 

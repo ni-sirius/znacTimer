@@ -169,6 +169,7 @@ class TimeTrackerApp(QMainWindow):
         self.header.set_month(now.month)
         self.header.selectionChanged.connect(self.load_month)
         self.header.todayClicked.connect(self.show_today)
+        self.header.monthActionClicked.connect(self.toggle_month_closed)
 
         self.table = TableWidget(self, repository=repository)
         self.table.overtimeChanged.connect(self.set_current_overtime)
@@ -735,6 +736,12 @@ class TimeTrackerApp(QMainWindow):
 
         self.table.update_entry_for_date(entry.date, end=end_text)
         self.refresh_workday_bar(now)
+
+    def toggle_month_closed(self):
+        if self.month_closed:
+            self.reopen_month()
+        else:
+            self.close_month()
 
     def close_month(self):
         if self.month_closed:

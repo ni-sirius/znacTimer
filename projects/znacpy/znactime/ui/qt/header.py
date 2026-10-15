@@ -1,5 +1,3 @@
-from html import escape
-
 from znactime.core.constants import ZERO_DURATION
 from znactime.ui.constants import MONTHS
 from znactime.ui.qt import (
@@ -7,6 +5,7 @@ from znactime.ui.qt import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSize,
     QSpinBox,
     QStyle,
     QStyleOptionSpinBox,
@@ -21,12 +20,28 @@ from znactime.ui.qt.color_scheme import (
     overtime_text_color_hex,
     theme_color,
 )
-from znactime.ui.qt.theme_assets import themed_chevron_paths, themed_information_icon
+from znactime.ui.qt.theme_assets import (
+    themed_chevron_paths,
+    themed_information_icon,
+    themed_lock_icon,
+)
+
+
+class _MonthActionButton(QPushButton):
+    def sizeHint(self):
+        hint = super().sizeHint()
+        if self.layout() is not None:
+            hint = hint.expandedTo(self.layout().sizeHint())
+        return hint
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
 
 class HeaderWidget(QWidget):
     selectionChanged = Signal()
     todayClicked = Signal()
+    monthActionClicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -74,12 +89,30 @@ class HeaderWidget(QWidget):
         self._overtime_text = f"This Month: {ZERO_DURATION}"
         self._month_closed = False
         self._carry_discontinuity = False
-        self.overtime_label = QLabel(self._overtime_text, self)
-        self.overtime_label.setObjectName("summaryBadge")
-        self.overtime_label.setTextFormat(Qt.TextFormat.RichText)
+        self.overtime_button = _MonthActionButton(self)
+        self.overtime_button.setObjectName("monthActionButton")
+        self.overtime_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.overtime_button.setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, False)
+        self.overtime_button.clicked.connect(self.monthActionClicked.emit)
+        self.overtime_label = QLabel(self._overtime_text, self.overtime_button)
+        self.overtime_label.setObjectName("overtimeValue")
+        self.overtime_label.setTextFormat(Qt.TextFormat.PlainText)
         self.overtime_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
+        self.month_lock_icon = QLabel(self.overtime_button)
+        self.month_lock_icon.setObjectName("monthLockIcon")
+        self.month_lock_icon.setFixedSize(20, 20)
+        self.month_status_label = QLabel(self.overtime_button)
+        self.month_status_label.setObjectName("monthStatus")
+        self.month_status_label.hide()
+        month_action_layout = QHBoxLayout(self.overtime_button)
+        month_action_layout.setContentsMargins(10, 6, 10, 6)
+        month_action_layout.setSpacing(6)
+        month_action_layout.addStretch(1)
+        for label in (self.overtime_label, self.month_lock_icon, self.month_status_label):
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            month_action_layout.addWidget(label)
         self.calendar_week_label = QLabel("Calendar week 00", self)
         self.month_week_label = QLabel("This month 00-00", self)
         self.year_week_label = QLabel("This year 00", self)
@@ -117,7 +150,7 @@ class HeaderWidget(QWidget):
         layout.addWidget(self.today_button, 0, Qt.AlignmentFlag.AlignTop)
         layout.addStretch(1)
         layout.addWidget(self.carry_over_badge)
-        layout.addWidget(self.overtime_label)
+        layout.addWidget(self.overtime_button)
         self.apply_theme()
 
         self.year_box.valueChanged.connect(
@@ -249,13 +282,28 @@ class HeaderWidget(QWidget):
             "outline: 0;"
             "padding: 4px;"
             "}"
-            "QLabel#summaryBadge {"
+            "QPushButton#monthActionButton {"
             f"background-color: {badge};"
             f"color: {accent};"
-            "border: none;"
+            f"border: 1px solid {accent};"
             "border-radius: 8px;"
-            "padding: 6px 10px;"
+            "padding: 0;"
+            "}"
+            "QPushButton#monthActionButton:hover, QPushButton#monthActionButton:focus {"
+            f"background-color: {control_hover};"
+            "}"
+            "QPushButton#monthActionButton:pressed {"
+            f"background-color: {control};"
+            "}"
+            "QLabel#overtimeValue, QLabel#monthLockIcon, QLabel#monthStatus {"
+            "background: transparent;"
+            "border: none;"
+            "padding: 0;"
+            f"color: {accent};"
             "font-weight: 600;"
+            "}"
+            "QLabel#monthStatus {"
+            f"color: {warning};"
             "}"
             "QWidget#carryOverBadge {"
             f"background-color: {badge};"
@@ -348,6 +396,7 @@ class HeaderWidget(QWidget):
         self.month_box.setFixedSize(month_width, control_height)
         self.today_button.setFixedHeight(control_height)
         self.period_widget.setFixedWidth(year_width + month_width + 6)
+        self.overtime_button.setFixedHeight(self.period_widget.sizeHint().height())
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -410,19 +459,42 @@ class HeaderWidget(QWidget):
         self._render_overtime_text(dark)
 
     def _render_overtime_text(self, dark):
-        text = escape(self._overtime_text)
+        self.overtime_label.setText(self._overtime_text)
+        self.month_lock_icon.setPixmap(
+            themed_lock_icon(dark, closed=self._month_closed).pixmap(QSize(20, 20), 2.0)
+        )
+        self.month_lock_icon.setAccessibleName(
+            "Month closed" if self._month_closed else "Month open"
+        )
         if self._month_closed:
-            closed_color = overtime_text_color_hex("-00:01", dark=dark)
-            closed_text = (
-                "Closed &mdash; carry-over discontinuity"
+            status = (
+                "carry-over discontinuity"
                 if self._carry_discontinuity
-                else "Closed"
+                else ""
             )
-            text += (
-                " &nbsp;&middot;&nbsp; "
-                f'<span style="color: {closed_color};">{closed_text}</span>'
+            explanation = (
+                "This month is closed and read-only. Click to reopen it for corrections. "
+                "Later closed months will remain unchanged."
             )
-        self.overtime_label.setText(text)
+            if self._carry_discontinuity:
+                explanation += (
+                    " The saved carry-over no longer matches last month. "
+                    "Reopen this month to recalculate it."
+                )
+            action = "Reopen this month"
+        else:
+            status = ""
+            explanation = (
+                "This month is open. Click to review and close it. "
+                "Closing makes it read-only and carries its balance into next month."
+            )
+            action = "Close this month"
+        self.month_status_label.setText(status)
+        self.month_status_label.setVisible(bool(status))
+        self.overtime_button.setToolTip(explanation)
+        self.overtime_button.setAccessibleName(f"{action}: {self._overtime_text}")
+        self.overtime_button.setAccessibleDescription(explanation)
+        self.overtime_button.updateGeometry()
 
     def set_calendar_week_text(self, text):
         parts = str(text).split(", ", 2)

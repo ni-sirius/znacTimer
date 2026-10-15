@@ -10,9 +10,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtTest import QTest
 
-from znactime.ui.qt import QApplication, QFont, QPalette, Qt
+from znactime.ui.qt import QApplication, QFont, QPalette, QPushButton, Qt
 from znactime.ui.qt.app import TimeTrackerApp
 from znactime.ui.qt.header import HeaderWidget
+from znactime.ui.qt.color_scheme import theme_color
 
 
 class QtHeaderTest(unittest.TestCase):
@@ -20,20 +21,25 @@ class QtHeaderTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_closed_month_adds_red_closed_marker_to_overtime_badge(self):
+    def test_closed_month_uses_red_lock_without_redundant_closed_text(self):
         header = HeaderWidget()
 
-        with patch(
-            "znactime.ui.qt.header.overtime_text_color_hex",
-            return_value="#ff0000",
-        ):
-            header.set_overtime_text("This Month: 01:30", closed=True)
-
-        self.assertIn("This Month: 01:30", header.overtime_label.text())
-        self.assertIn(
-            '<span style="color: #ff0000;">Closed</span>',
-            header.overtime_label.text(),
-        )
+        for dark in (False, True):
+            with self.subTest(dark=dark):
+                with patch("znactime.ui.qt.header.is_dark_theme", return_value=dark):
+                    header.apply_theme()
+                    header.set_overtime_text("This Month: 01:30", closed=True)
+                self.assertEqual(header.overtime_label.text(), "This Month: 01:30")
+                self.assertEqual(header.month_status_label.text(), "")
+                self.assertTrue(header.month_status_label.isHidden())
+                self.assertEqual(header.month_lock_icon.accessibleName(), "Month closed")
+                image = header.month_lock_icon.pixmap().toImage()
+                solid_colors = {
+                    image.pixelColor(x, y).name()
+                    for x in range(image.width()) for y in range(image.height())
+                    if image.pixelColor(x, y).alpha() == 255
+                }
+                self.assertIn(theme_color("tokens.danger_text", dark=dark), solid_colors)
 
     def test_closed_month_discontinuity_is_visible_in_overtime_badge(self):
         header = HeaderWidget()
@@ -44,7 +50,48 @@ class QtHeaderTest(unittest.TestCase):
             carry_discontinuity=True,
         )
 
-        self.assertIn("carry-over discontinuity", header.overtime_label.text())
+        self.assertIn("carry-over discontinuity", header.month_status_label.text())
+        self.assertFalse(header.month_status_label.isHidden())
+        self.assertIn("saved carry-over no longer matches", header.overtime_button.toolTip())
+
+    def test_overtime_button_updates_lock_icons_tooltips_and_keyboard_action(self):
+        header = HeaderWidget()
+        self.addCleanup(header.close)
+        clicked = Mock()
+        header.monthActionClicked.connect(clicked)
+        header.set_overtime_text("This Month: 02:15")
+        header.show()
+        self.app.processEvents()
+
+        self.assertIsInstance(header.overtime_button, QPushButton)
+        self.assertEqual(header.month_lock_icon.accessibleName(), "Month open")
+        self.assertIn("Click to review and close", header.overtime_button.toolTip())
+        self.assertTrue(header.month_status_label.isHidden())
+        for label in (header.overtime_label, header.month_lock_icon):
+            self.assertTrue(header.overtime_button.rect().contains(label.geometry()))
+        unlocked = header.month_lock_icon.pixmap().toImage()
+        QTest.mouseClick(header.overtime_button, Qt.MouseButton.LeftButton)
+        clicked.assert_called_once_with()
+
+        header.set_overtime_text("This Month: 02:15", closed=True)
+        self.app.processEvents()
+        self.assertEqual(header.month_lock_icon.accessibleName(), "Month closed")
+        self.assertNotEqual(header.month_lock_icon.pixmap().toImage(), unlocked)
+        self.assertIn("read-only", header.overtime_button.toolTip())
+        self.assertIn("Click to reopen", header.overtime_button.toolTip())
+        self.assertIn("Reopen this month", header.overtime_button.accessibleName())
+        self.assertEqual(header.overtime_button.height(), header.period_widget.height())
+        self.assertTrue(header.month_status_label.isHidden())
+        for label in (header.overtime_label, header.month_lock_icon):
+            self.assertTrue(header.overtime_button.rect().contains(label.geometry()))
+        clicked.reset_mock()
+        header.overtime_button.setFocus()
+        QTest.keyClick(header.overtime_button, Qt.Key.Key_Space)
+        clicked.assert_called_once_with()
+
+        header.set_overtime_text("This Month: 02:15")
+        self.assertEqual(header.month_lock_icon.pixmap().toImage(), unlocked)
+        self.assertTrue(header.month_status_label.isHidden())
 
     def test_unclosed_last_month_is_red_with_hint_only_on_the_info_icon(self):
         header = HeaderWidget()

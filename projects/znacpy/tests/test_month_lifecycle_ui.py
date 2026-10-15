@@ -8,10 +8,12 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtTest import QTest
+
 from znactime.core.models import MonthClosePreview
 from znactime.storage.csv_export import month_rows
 from znactime.storage.sqlite.repository import SQLiteRepository
-from znactime.ui.qt import QApplication, QMessageBox, QPalette, QSettings
+from znactime.ui.qt import QApplication, QMessageBox, QPalette, QSettings, Qt
 from znactime.ui.qt.app import TimeTrackerApp
 
 
@@ -150,6 +152,51 @@ class MonthLifecycleUiTest(unittest.TestCase):
 
                 self.assertEqual(result, expected)
                 repository.load_month.assert_called_once_with(2024, 12)
+
+    @patch("znactime.ui.qt.app.QMessageBox.information")
+    @patch("znactime.ui.qt.app.QMessageBox.question")
+    def test_overtime_button_uses_existing_close_and_reopen_confirmations(self, question, _information):
+        palette = QPalette(self.app.palette())
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteRepository.create(Path(directory) / "app.db")
+            window = None
+            try:
+                repository.get_or_create_month(2024, 6)
+                settings = QSettings(str(Path(directory) / "settings.ini"), QSettings.Format.IniFormat)
+                window = TimeTrackerApp(repository=repository, settings=settings)
+                window.header.set_period(2024, 6)
+                window.load_month()
+                window.show()
+                self.app.processEvents()
+                header = window.header
+                last_month_text = header.carry_over_label.text()
+
+                for answer, expected_status, title in (
+                    (QMessageBox.StandardButton.No, "open", "Close Month"),
+                    (QMessageBox.StandardButton.Yes, "closed", "Close Month"),
+                    (QMessageBox.StandardButton.No, "closed", "Reopen Month"),
+                    (QMessageBox.StandardButton.Yes, "open", "Reopen Month"),
+                ):
+                    with self.subTest(answer=answer, expected_status=expected_status):
+                        question.return_value = answer
+                        question.reset_mock()
+                        QTest.mouseClick(header.overtime_button, Qt.MouseButton.LeftButton)
+                        self.app.processEvents()
+
+                        self.assertEqual(question.call_count, 1)
+                        self.assertEqual(question.call_args.args[1], title)
+                        self.assertEqual(repository.load_month(2024, 6).status, expected_status)
+                        closed = expected_status == "closed"
+                        self.assertEqual(window.month_closed, closed)
+                        self.assertEqual(header.month_lock_icon.accessibleName(), "Month closed" if closed else "Month open")
+                        self.assertEqual(window.menu.close_month_action.isEnabled(), not closed)
+                        self.assertEqual(window.menu.reopen_month_action.isEnabled(), closed)
+                        self.assertEqual(header.carry_over_label.text(), last_month_text)
+            finally:
+                if window is not None:
+                    window.close()
+                repository.close()
+                self.app.setPalette(palette)
 
 
 if __name__ == "__main__":

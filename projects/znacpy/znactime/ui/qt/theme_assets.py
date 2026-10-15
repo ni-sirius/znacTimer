@@ -9,12 +9,43 @@ from znactime.ui.qt import (
     QPainterPath,
     QPen,
     QPixmap,
+    QRectF,
     Qt,
 )
 from znactime.ui.qt.color_scheme import theme_color
 
 
 _asset_directory = None
+
+
+@lru_cache(maxsize=4)
+def themed_lock_icon(dark: bool, *, closed: bool):
+    pixmap = QPixmap(40, 40)
+    pixmap.setDevicePixelRatio(2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = "tokens.danger_text" if closed else "primary"
+    pen = QPen(QColor(theme_color(color, dark=dark)))
+    pen.setWidthF(1.6)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    shackle = QPainterPath()
+    shackle.moveTo(7, 9)
+    if closed:
+        shackle.lineTo(7, 6)
+        shackle.cubicTo(7, 2, 13, 2, 13, 6)
+        shackle.lineTo(13, 9)
+    else:
+        shackle.lineTo(7, 5)
+        shackle.cubicTo(7, 1, 14, 1, 14, 5)
+        shackle.lineTo(14, 6)
+    painter.drawPath(shackle)
+    painter.drawRoundedRect(QRectF(5, 9, 10, 9), 2, 2)
+    painter.drawLine(10, 13, 10, 15)
+    painter.end()
+    return QIcon(pixmap)
 
 
 @lru_cache(maxsize=2)
