@@ -32,7 +32,10 @@ class GitHubActionsTest(unittest.TestCase):
 
     def test_matrix_targets_windows_x64_and_macos_arm64(self):
         self.assertIn("target: windows-x64\n            runner: windows-2025", self.workflow)
-        self.assertIn("target: macos-arm64\n            runner: macos-15", self.workflow)
+        self.assertRegex(
+            self.workflow,
+            r"target: macos-arm64\n(?:\s*#[^\n]*\n)*            runner: macos-26\n",
+        )
         self.assertIn('$env:PROCESSOR_ARCHITECTURE -ne "AMD64"', self.workflow)
         self.assertIn('test "$(uname -m)" = "arm64"', self.workflow)
         self.assertIn("fail-fast: false", self.workflow)

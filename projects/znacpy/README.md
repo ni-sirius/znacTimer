@@ -130,6 +130,8 @@ On macOS Apple silicon, use the matching local scripts:
 
 Native builds require full Xcode 26 or newer to compile the Icon Composer artwork.
 Select that installation with `DEVELOPER_DIR` or `xcode-select` before building.
+CI uses macOS 26 with Xcode 26.3 pinned because the Icon Composer asset compiler
+crashed on the macOS 15 runner with missing system framework symbols.
 
 ```bash
 ./scripts/run_dev.sh

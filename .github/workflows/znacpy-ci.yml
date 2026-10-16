@@ -41,7 +41,8 @@ jobs:
             runner: windows-2025
             artifact: znactime-windows-x64-unsigned
           - target: macos-arm64
-            runner: macos-15
+            # Use Tahoe to avoid the Icon Composer runtime crash on macOS 15.
+            runner: macos-26
             artifact: znactime-macos-arm64-unsigned
 
     defaults:
@@ -128,7 +129,11 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
         shell: bash
-        run: bash scripts/build_macos.sh --release
+        run: |
+          sw_vers
+          xcrun xcodebuild -version
+          xcrun --find actool
+          bash scripts/build_macos.sh --release
 
       - name: Smoke-test Windows bundle
         if: matrix.target == 'windows-x64'
