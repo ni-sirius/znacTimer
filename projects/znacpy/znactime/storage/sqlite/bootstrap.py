@@ -57,6 +57,32 @@ class BootstrapInspection:
 
 
 @dataclass(frozen=True)
+class SchemaUpgrade:
+    database_version: int
+    supported_version: int
+
+
+def inspect_schema_upgrade(database_path: str | Path) -> SchemaUpgrade | None:
+    """Inspect an existing database without enabling writes or running migrations."""
+    connection = None
+    try:
+        uri = f"{Path(database_path).resolve().as_uri()}?mode=ro"
+        connection = sqlite3.connect(uri, uri=True, isolation_level=None, timeout=0.75)
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("BEGIN")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        migration = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+        if version == migration and version in MIGRATIONS and version < SCHEMA_VERSION:
+            return SchemaUpgrade(version, SCHEMA_VERSION)
+        return None
+    except sqlite3.Error as error:
+        raise translate_error(error) from error
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+@dataclass(frozen=True)
 class InterruptedSetupAssessment:
     inspection: BootstrapInspection
     recoverable: bool

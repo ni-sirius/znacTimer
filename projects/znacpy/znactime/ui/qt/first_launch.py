@@ -23,6 +23,7 @@ from znactime.storage.sqlite.bootstrap import (
     create_new_database,
     failed_migration_recovery,
     inspect_bootstrap,
+    inspect_schema_upgrade,
     migrate_legacy_database,
     recover_failed_schema_migration,
     recover_interrupted_setup,
@@ -161,6 +162,41 @@ def _show_failed_migration_dialog(parent, target: Path, error) -> FailedMigratio
         if dialog.clickedButton() is recover_button
         else FailedMigrationChoice.EXIT
     )
+
+
+def _confirm_database_upgrade(parent, target: Path, *, recovery_source: Path | None = None):
+    upgrade = inspect_schema_upgrade(recovery_source or target)
+    if upgrade is None:
+        return True
+
+    dialog = QMessageBox(parent)
+    dialog.setWindowTitle("Database upgrade required")
+    dialog.setIcon(QMessageBox.Icon.Warning)
+    dialog.setText(
+        f"Your database uses version {upgrade.database_version}. "
+        f"This app requires database version {upgrade.supported_version}."
+    )
+    recovery_notice = (
+        "The saved pre-upgrade database will be restored and then upgraded.\n\n"
+        if recovery_source is not None else ""
+    )
+    dialog.setInformativeText(
+        recovery_notice
+        + "This upgrade is irreversible in znacTime. Older app versions may no longer "
+        "be able to open your database.\n\n"
+        "A recovery copy is created before upgrading and retained if the upgrade fails. "
+        "It is removed after the upgrade succeeds.\n\n"
+        "Choose Exit application to leave your database unchanged."
+    )
+    dialog.setDetailedText(f"Database: {target}")
+    upgrade_button = QPushButton("Upgrade database", dialog)
+    exit_button = QPushButton("Exit application", dialog)
+    dialog.addButton(upgrade_button, QMessageBox.ButtonRole.AcceptRole)
+    dialog.addButton(exit_button, QMessageBox.ButtonRole.RejectRole)
+    dialog.setDefaultButton(exit_button)
+    dialog.setEscapeButton(exit_button)
+    dialog.exec()
+    return dialog.clickedButton() is upgrade_button
 
 
 def _show_newer_database_dialog(parent, target: Path, error: DatabaseVersionTooNew):
@@ -363,6 +399,10 @@ def open_or_initialize_repository(
                 recovery = failed_migration_recovery(target)
                 if recovery is not None:
                     with startup_lock(target):
+                        if not _confirm_database_upgrade(
+                            parent, target, recovery_source=recovery.backup_path,
+                        ):
+                            return None
                         return recover_failed_schema_migration(
                             target,
                             recovery.backup_path,
@@ -377,7 +417,10 @@ def open_or_initialize_repository(
                 )
                 return None
             try:
-                repository = SQLiteRepository(target)
+                with startup_lock(target):
+                    if not _confirm_database_upgrade(parent, target):
+                        return None
+                    repository = SQLiteRepository(target)
             except DatabaseVersionTooNew as error:
                 return _resolve_newer_database(
                     parent, target, error, default_workday_minutes=default_workday_minutes

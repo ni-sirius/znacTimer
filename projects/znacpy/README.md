@@ -165,11 +165,16 @@ timestamped recovery folder before setup restarts. Exiting the recovery dialog l
 staging files byte-for-byte unchanged, and no recovery action automatically deletes user
 data or legacy CSV sources.
 
+When an older database needs upgrading, startup asks before making changes. The
+**Database upgrade required** dialog shows the current and required database versions
+and warns that the upgrade cannot be undone in the app. **Exit application** is the
+default; cancelling leaves the database unchanged. Choose **Upgrade database** to proceed.
+
 If a forward schema upgrade fails, znacTime offers **Recover database** instead of leaving
 the user to manipulate files. Recovery verifies and atomically restores the pre-upgrade
 copy, runs the normal forward migration again, validates and reopens the upgraded database,
 and then continues application startup. A recovery marker lets an interrupted recovery
-resume automatically on the next launch. The recovery copy and marker are removed only
+resume on the next launch after upgrade confirmation. The recovery copy and marker are removed only
 after the current-schema database validates successfully.
 
 If the database was created by a newer app, startup shows **Database needs a newer
@@ -199,7 +204,7 @@ it is closed; an open or missing previous month contributes zero. Closing freeze
 month's calculated balances. If the allowed carry-over later changes, an affected closed
 successor shows a carry-over discontinuity; its saved results are preserved until
 explicitly reopened. Future months and incomplete or
-invalid work entries still cannot be closed. Existing databases upgrade automatically
+invalid work entries still cannot be closed. After confirmation, existing databases upgrade
 to schema v7 with a verified recovery backup before replacing the month-close trigger.
 
 New CSV exports use schema v3. Free-text special-day values that could be interpreted as

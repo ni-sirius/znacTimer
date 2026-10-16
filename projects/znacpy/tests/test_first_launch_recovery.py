@@ -220,6 +220,9 @@ class FirstLaunchRecoveryDialogTest(unittest.TestCase):
             ),
             patch("znactime.ui.qt.first_launch.startup_lock", return_value=nullcontext()),
             patch(
+                "znactime.ui.qt.first_launch._confirm_database_upgrade", return_value=True,
+            ) as confirm,
+            patch(
                 "znactime.ui.qt.first_launch.recover_failed_schema_migration",
                 return_value=recovered_repository,
             ) as recover,
@@ -229,6 +232,9 @@ class FirstLaunchRecoveryDialogTest(unittest.TestCase):
 
         self.assertIs(opened, recovered_repository)
         repository.assert_not_called()
+        confirm.assert_called_once_with(
+            None, self.database, recovery_source=recovery.backup_path,
+        )
         recover.assert_called_once_with(
             self.database,
             recovery.backup_path,
@@ -245,6 +251,7 @@ class FirstLaunchRecoveryDialogTest(unittest.TestCase):
             patch("znactime.ui.qt.first_launch.database_path", return_value=self.database),
             patch("znactime.ui.qt.first_launch.inspect_bootstrap", return_value=inspection),
             patch("znactime.ui.qt.first_launch.failed_migration_recovery", return_value=None),
+            patch("znactime.ui.qt.first_launch._confirm_database_upgrade", return_value=True),
             patch("znactime.ui.qt.first_launch.SQLiteRepository", side_effect=error),
             patch(
                 "znactime.ui.qt.first_launch._show_failed_migration_dialog",
