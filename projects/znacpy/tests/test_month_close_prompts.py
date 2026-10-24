@@ -8,10 +8,13 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtTest import QTest
 
 from znactime.storage.sqlite.repository import SQLiteRepository
-from znactime.ui.qt import QApplication, QMessageBox, QPalette, QSettings, Qt
+from znactime.ui.qt import QAbstractItemDelegate, QApplication, QMessageBox, QPalette, QSettings, Qt
 from znactime.ui.qt.app import TimeTrackerApp
+from znactime.ui.qt.table import BadgeLineEdit
+from znactime.ui.qt.table_contract import CELL_EDITING_ROLE
 from znactime.ui.table_schema import Column
 
 
@@ -102,6 +105,74 @@ class MonthClosePromptTest(unittest.TestCase):
 
         self.assertEqual(self.question.call_count, 1)
         self.assertIn("last unfinished workday", self.question.call_args.args[2])
+
+    def test_end_badge_is_painted_before_close_suggestion_after_inline_edit(self):
+        self.assertTrue(self.edit(30, Column.START, "08:00"))
+        self.window.show()
+        view = self.window.table.view
+        index = self.window.table.model.index(29, Column.END)
+        view.scrollTo(index)
+        self.app.processEvents()
+        delegate = view.itemDelegateForIndex(index)
+        paint_badges = delegate._paint_badges
+        painted = []
+        observed = []
+
+        def record_paint(painter, option, painted_index, badge):
+            if painted_index == index and index.data() == "17:00":
+                painted.append(True)
+            return paint_badges(painter, option, painted_index, badge)
+
+        def check_suggestion(*_args):
+            observed.append((
+                index.data(CELL_EDITING_ROLE), bool(painted),
+                any(item.isVisible() for item in view.findChildren(BadgeLineEdit)),
+            ))
+            return QMessageBox.StandardButton.No
+
+        with patch.object(delegate, "_paint_badges", side_effect=record_paint):
+            view.setCurrentIndex(index)
+            view.edit(index)
+            self.app.processEvents()
+            editor = next(
+                item for item in view.findChildren(BadgeLineEdit) if item.isVisible()
+            )
+            editor.setText("17:00")
+            self.question.side_effect = check_suggestion
+            QTest.keyClick(editor, Qt.Key.Key_Return)
+            QTest.qWait(20)
+            self.app.processEvents()
+            self.assertEqual(index.data(), "17:00", str(self.warning.call_args_list))
+            self.question.assert_called_once()
+            self.assertEqual(self.question.call_args.args[1], "Ready to close the month?")
+            self.assertEqual(observed, [(False, True, False)])
+            self.assertEqual(self.repository.load_month(2024, 6).days[29].end_minute, 1020)
+
+    def test_close_suggestion_waits_until_inline_editor_is_removed(self):
+        self.assertTrue(self.edit(30, Column.START, "08:00"))
+        self.window.show()
+        view = self.window.table.view
+        index = self.window.table.model.index(29, Column.END)
+        view.scrollTo(index)
+        self.app.processEvents()
+        view.setCurrentIndex(index)
+        view.edit(index)
+        editor = next(
+            item for item in view.findChildren(BadgeLineEdit) if item.isVisible()
+        )
+        editor.setText("17:00")
+        view.commitData(editor)
+
+        self.window._prompt_to_close_month()
+
+        self.assertTrue(index.data(CELL_EDITING_ROLE))
+        self.question.assert_not_called()
+        self.assertIsNotNone(self.window._pending_month_close)
+        view.closeEditor(editor, QAbstractItemDelegate.EndEditHint.NoHint)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.window._prompt_to_close_month()
+        self.question.assert_called_once()
+        self.assertFalse(index.data(CELL_EDITING_ROLE))
 
     def test_programmatic_stop_update_also_offers_close(self):
         self.fill_other_planned_days(except_days=(17,))

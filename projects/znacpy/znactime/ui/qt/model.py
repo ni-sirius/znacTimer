@@ -157,6 +157,9 @@ class MonthTableModel(QAbstractTableModel):
             ],
         )
 
+    def has_active_edits(self):
+        return bool(self._editing_cells)
+
     def set_cell_editing(self, index, editing):
         if not index.isValid():
             return

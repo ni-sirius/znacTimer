@@ -810,7 +810,10 @@ class TimeTrackerApp(QMainWindow):
         if pending is None or self.month_closed or self.repository is None:
             self._pending_month_close = None
             return
-        if QApplication.activeModalWidget() is not None:
+        if (
+            QApplication.activeModalWidget() is not None
+            or self.table.model.has_active_edits()
+        ):
             self._month_close_prompt_timer.start(100)
             return
         self._pending_month_close = None
@@ -839,6 +842,9 @@ class TimeTrackerApp(QMainWindow):
             if last_calendar_day_has_end
             else "You've completed the last unfinished workday of this month."
         )
+        # A zero-delay timer can run before Qt paints the saved cell. Restore
+        # the badge on screen before the modal dialog starts its event loop.
+        self.table.view.viewport().repaint()
         answer = QMessageBox.question(
             self,
             "Ready to close the month?",
