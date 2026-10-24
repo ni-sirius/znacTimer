@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import qVersion
+from PySide6.QtCore import QSettings, qVersion
 
 from znactime.config import APP_NAME, VERSION
 from znactime.core.models import MonthStats
@@ -15,7 +15,7 @@ from znactime.storage.pdf_export import export_pdf
 from znactime.storage.sqlite.repository import SQLiteRepository
 from znactime.storage.sqlite.schema import SCHEMA_VERSION
 from znactime.ui.qt import QApplication, QIcon
-from znactime.ui.qt.app import APP_ICON_PATH
+from znactime.ui.quick.app import APP_ICON_PATH, TimeTrackerApp
 from znactime.ui.qt.color_scheme import validate_theme_files
 
 
@@ -76,6 +76,27 @@ def _check_themes(_workspace: Path, _runtime: dict) -> dict:
     }
 
 
+def _check_qml(workspace: Path, runtime: dict) -> dict:
+    """Load the actual window, controls, dialogs and model from bundled sources."""
+    repository = SQLiteRepository.create(workspace / "qml-smoke.db")
+    settings = QSettings(str(workspace / "qml-settings.ini"), QSettings.Format.IniFormat)
+    window = None
+    try:
+        window = TimeTrackerApp(repository=repository, settings=settings)
+        window.show()
+        runtime["application"].processEvents()
+        if window.window.objectName() != "mainWindow" or window.controller.monthModel.rowCount() < 28:
+            raise RuntimeError("The QML month view did not initialize.")
+    finally:
+        if window is not None:
+            window.shutdown()
+            runtime["application"].processEvents()
+        repository.close()
+    if window.errors:
+        raise RuntimeError("\n".join(window.errors))
+    return {"engine": "QQmlApplicationEngine", "window": "loaded", "month_model": "loaded"}
+
+
 def _check_pdf(workspace: Path, _runtime: dict) -> dict:
     report = workspace / "smoke.pdf"
     export_pdf(MonthStats(year=2024, month="January", overtime=0.0), report)
@@ -92,6 +113,7 @@ _CHECKS = (
     ("qt", _check_qt),
     ("sqlite", _check_sqlite),
     ("themes", _check_themes),
+    ("qml", _check_qml),
     ("pdf", _check_pdf),
 )
 

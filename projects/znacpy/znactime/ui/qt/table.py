@@ -74,6 +74,8 @@ from znactime.ui.qt.table_contract import (
     RowTextureState,
 )
 from znactime.ui.qt.color_scheme import (
+    badge_colors,
+    badge_text_color,
     current_row_accent_hex,
     is_dark_theme,
     row_color_hex,
@@ -134,19 +136,7 @@ def _is_dark_theme():
 
 
 def _badge_text_color(fill, dark):
-    hue, saturation, _lightness, alpha = fill.getHsl()
-    if hue < 0:
-        return fill.lighter(230) if dark else fill.darker(240)
-
-    text = QColor()
-    if dark:
-        saturation = min(max(saturation, 100), 175)
-        lightness = 195
-    else:
-        saturation = min(max(saturation, 120), 190)
-        lightness = 72
-    text.setHsl(hue, saturation, lightness, alpha)
-    return text
+    return badge_text_color(fill, dark=dark)
 
 
 def _period_parts(value):
@@ -1007,41 +997,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _badge_colors(self, state, hovered=False):
-        dark = _is_dark_theme()
-        if hovered:
-            return {
-                "fill": QColor(theme_color("primary", dark)),
-                "text": QColor(theme_color("on_primary", dark)),
-            }
-
-        if state == BadgeState.EXPECTED:
-            expected = theme_color("table.expected_text", dark)
-            return {
-                "fill": QColor(theme_color("table.expected_background", dark)),
-                "text": QColor(expected),
-                "border": QColor(expected),
-            }
-
-        palette = {
-            badge_state: {
-                "fill": QColor(theme_color(f"table.{prefix}_fill", dark)),
-                "text": QColor(theme_color(f"table.{prefix}_text", dark)),
-            }
-            for badge_state, prefix in (
-                (BadgeState.SUCCESS, "success"),
-                (BadgeState.INFO, "info"),
-                (BadgeState.EMPTY, "empty"),
-                (BadgeState.ACTION, "action"),
-            )
-        }
-        row_color = row_color_hex(state, dark=dark)
-        if row_color:
-            fill = QColor(row_color)
-            return {
-                "fill": fill,
-                "text": _badge_text_color(fill, dark=dark),
-            }
-        return palette.get(state, palette[BadgeState.EMPTY])
+        return badge_colors(state, dark=_is_dark_theme(), hovered=hovered)
 
     def _paint_interruption_badges(self, painter, option, index, badge):
         painter.save()

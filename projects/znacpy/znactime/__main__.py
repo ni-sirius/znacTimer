@@ -5,7 +5,7 @@ from znactime.config import APP_NAME, ORGANIZATION_NAME
 from znactime.storage.errors import ApplicationAlreadyRunning
 from znactime.storage.sqlite.bootstrap import application_lock
 from znactime.ui.qt import QApplication, QIcon, QMessageBox, QSettings
-from znactime.ui.qt.app import APP_ICON_PATH, TimeTrackerApp
+from znactime.ui.quick.app import APP_ICON_PATH, TimeTrackerApp
 from znactime.ui.qt.first_launch import database_path, open_or_initialize_repository
 from znactime.ui.qt.settings import load_work_schedule_settings
 
@@ -78,11 +78,14 @@ def main(argv=None, *, database=None, settings=None):
             )
             if repository is None:
                 return 0
-            window = TimeTrackerApp(repository=repository, settings=runtime_settings)
-            window.show()
+            window = None
             try:
+                window = TimeTrackerApp(repository=repository, settings=runtime_settings)
+                window.show()
                 return app.exec()
             finally:
+                if window is not None:
+                    window.shutdown()
                 repository.close()
     except ApplicationAlreadyRunning:
         _show_already_running_dialog()

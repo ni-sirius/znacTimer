@@ -82,8 +82,9 @@ class MonthTableModel(QAbstractTableModel):
     entryCommitted = Signal()
     entryEdited = Signal(object, object)
 
-    def __init__(self, parent=None, repository=None):
+    def __init__(self, parent=None, repository=None, notify=None):
         super().__init__(parent)
+        self._notify = notify
         self.repository = repository
         self._records = {}
         self._entries: list[DayEntry] = []
@@ -95,6 +96,13 @@ class MonthTableModel(QAbstractTableModel):
         self.month_closed = False
         self._today = date.today()
         self._editing_cells = set()
+
+    def _warning(self, parent, title, message):
+        """Let non-Widgets frontends present model errors without modal widgets."""
+        if self._notify is not None:
+            self._notify(title, message)
+        else:
+            QMessageBox.warning(parent, title, message)
 
     def set_context(
         self,
@@ -515,7 +523,7 @@ class MonthTableModel(QAbstractTableModel):
                 else coerce_time_input(value)
             )
             if value is None:
-                QMessageBox.warning(
+                self._warning(
                     None,
                     "Invalid time",
                     f"Time must be HH:MM (00:00-{END_OF_DAY}), or blank to clear.",
@@ -523,7 +531,7 @@ class MonthTableModel(QAbstractTableModel):
                 return False
         elif column == Column.INTERRUPTION:
             if parse_interruption_input(value) is None:
-                QMessageBox.warning(
+                self._warning(
                     None,
                     "Invalid interruption",
                     "Use HH:MM or periods such as "
@@ -557,7 +565,7 @@ class MonthTableModel(QAbstractTableModel):
         work_date = parse_display_date(entry.date)
         record = self._records.get(work_date)
         if record is None:
-            QMessageBox.warning(None, "Save failed", "The selected day is not loaded from SQLite.")
+            self._warning(None, "Save failed", "The selected day is not loaded from SQLite.")
             return None
         fields = set()
         values = {}
@@ -612,14 +620,14 @@ class MonthTableModel(QAbstractTableModel):
             self._reload_after_conflict(work_date, changes)
             return None
         except (StorageError, ValueError) as error:
-            QMessageBox.warning(None, "Save failed", str(error))
+            self._warning(None, "Save failed", str(error))
             return None
         if record.revision == 0:
             try:
                 refreshed = self.repository.load_month(self.year, self.month)
             except StorageError as error:
                 self._records[work_date] = committed
-                QMessageBox.warning(
+                self._warning(
                     None,
                     "Saved; reload failed",
                     f"The edit was saved, but the materialized month could not be reloaded: {error}",
@@ -627,7 +635,7 @@ class MonthTableModel(QAbstractTableModel):
                 return committed
             if refreshed is None:
                 self._records[work_date] = committed
-                QMessageBox.warning(
+                self._warning(
                     None,
                     "Saved; reload failed",
                     "The edit was saved, but the newly created month could not be reloaded.",
@@ -644,7 +652,7 @@ class MonthTableModel(QAbstractTableModel):
         try:
             refreshed = self.repository.load_month(self.year, self.month)
         except StorageError as error:
-            QMessageBox.warning(
+            self._warning(
                 None,
                 "Save conflict",
                 "Your edit was not saved because the day changed after it was loaded. "
@@ -652,7 +660,7 @@ class MonthTableModel(QAbstractTableModel):
             )
             return
         if refreshed is None:
-            QMessageBox.warning(
+            self._warning(
                 None,
                 "Save conflict",
                 "Your edit was not saved because the day changed after it was loaded. "
@@ -688,7 +696,7 @@ class MonthTableModel(QAbstractTableModel):
         )
         if details:
             message += f"\n\n{details}"
-        QMessageBox.warning(None, "Save conflict", message)
+        self._warning(None, "Save conflict", message)
 
     def recalculate(self, today=None, autosave=True):
         if today is None:

@@ -39,6 +39,7 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/scripts/verify_legacy_import.py",
             "projects/znacpy/znactime/storage/sqlite/repository.py",
             "projects/znacpy/znactime/ui/qt/themes/dark.json",
+            "projects/znacpy/znactime/ui/quick/qml/Main.qml",
         )
 
         self.assertTrue(all(is_release_source(path) for path in allowed))

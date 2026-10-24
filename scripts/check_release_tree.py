@@ -46,6 +46,8 @@ def is_release_source(relative_path: str) -> bool:
             return path.suffix in {".icns", ".plist"}
         return path.suffix in {".py", ".spec"}
     if normalized.startswith("projects/znacpy/znactime/"):
+        if normalized.startswith("projects/znacpy/znactime/ui/quick/qml/"):
+            return path.suffix == ".qml"
         return path.suffix in {".py", ".json"}
     return False
 
