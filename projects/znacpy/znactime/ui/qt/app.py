@@ -557,6 +557,11 @@ class TimeTrackerApp(QMainWindow):
         if self.month_closed or entry is None:
             return
 
+        if entry.start != UNSET_TIME and entry.end != UNSET_TIME:
+            self.table.update_entry_for_date(entry.date, end=UNSET_TIME)
+            self.refresh_workday_bar(now)
+            return
+
         if getattr(self, "repository", None) is not None:
             work_date = parse_display_date(entry.date)
             minute = now.hour * 60 + now.minute
@@ -716,6 +721,29 @@ class TimeTrackerApp(QMainWindow):
         if self.month_closed or entry is None or entry.start == UNSET_TIME:
             return
 
+        end_text = now.strftime(TIME_FORMAT)
+        if end_text == entry.start and entry.end == UNSET_TIME:
+            if entry.interruption not in ("", ZERO_DURATION):
+                answer = QMessageBox.question(
+                    self,
+                    "Cancel workday?",
+                    "The start and stop times are the same. Cancelling this "
+                    "workday will clear its start time and delete all recorded "
+                    "breaks. Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            self.table.update_entry_for_date(
+                entry.date,
+                start=UNSET_TIME,
+                end=UNSET_TIME,
+                interruption=ZERO_DURATION,
+            )
+            self.refresh_workday_bar(now)
+            return
+
         if getattr(self, "repository", None) is not None:
             try:
                 self.repository.stop_workday(
@@ -729,7 +757,6 @@ class TimeTrackerApp(QMainWindow):
             self.load_month()
             return
 
-        end_text = now.strftime(TIME_FORMAT)
         if end_text <= entry.start:
             QMessageBox.warning(
                 self,
