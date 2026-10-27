@@ -114,10 +114,12 @@ Surface {
             activeFocusOnTab: root.selectedColumn !== 4
             ScrollBar.vertical: ScrollBar {
                 id: scrollbar
+                objectName: "monthScrollBar"
+                z: 2
                 width: 10
                 minimumSize: Math.min(1, 28 / table.height)
                 contentItem: Rectangle { implicitWidth: 6; radius: 3; color: scrollbar.hovered ? root.colors.table.scrollbar_hover : root.colors.table.scrollbar_handle }
-                background: Rectangle { color: root.colors.table.background }
+                background: Item { }
             }
             ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOff }
             onWidthChanged: forceLayout()

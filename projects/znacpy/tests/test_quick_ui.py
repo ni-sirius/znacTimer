@@ -394,6 +394,19 @@ class QuickUITest(unittest.TestCase):
                 viewport_bottom = table.mapToScene(QPointF(0, table.height())).y()
                 self.assertAlmostEqual(bottom, viewport_bottom, delta=1, msg=(month, height))
 
+    def test_scrollbar_overlays_full_width_rows(self):
+        for width in (800, 1250):
+            self.window.window.resize(width, 600)
+            QTest.qWait(30)
+            table = self.find("monthTable")
+            last_cell = self.find("monthCell_0_6")
+            row_right = last_cell.mapToScene(QPointF(last_cell.width(), 0)).x()
+            viewport_right = table.mapToScene(QPointF(table.width(), 0)).x()
+            self.assertAlmostEqual(row_right, viewport_right)
+            scrollbar = self.find("monthScrollBar")
+            self.assertGreater(scrollbar.property("z"), 0)
+            self.assertLess(scrollbar.mapToScene(QPointF()).x(), row_right)
+
     def test_inline_interruption_editor_commits_selected_period(self):
         self.window.controller.editCell(0, 2, "08:00")
         self.window.controller.editCell(0, 4, "12:00-12:30;14:00-14:15")

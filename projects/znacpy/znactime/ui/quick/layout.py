@@ -14,7 +14,7 @@ from znactime.ui.qt.table_contract import CALENDAR_WEEK_ROLE
 
 
 def month_layout(model, width, height, pixel_ratio):
-    available_width = max(0, width - 10)
+    available_width = max(0, width)
     unit = max(MIN_COMPACT_COLUMN_WIDTH, available_width // sum(COLUMN_WEIGHTS))
     widths = [unit * weight for weight in COLUMN_WEIGHTS]
     widths[1] += max(0, available_width - sum(widths))
