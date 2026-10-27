@@ -379,6 +379,21 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(self.find("workdayBar").height(), 53)
 
+    def test_table_ends_at_last_row_without_empty_bottom_space(self):
+        for month in (2, 6, 12):
+            self.window.controller.selectMonth(2025, month)
+            for height in (600, 1800):
+                self.window.window.resize(1250, height)
+                QTest.qWait(30)
+                table = self.find("monthTable")
+                last_row = table.property("rows") - 1
+                self.invoke(self.find("monthTableSurface"), "showRow", last_row)
+                QTest.qWait(30)
+                last = self.find(f"monthCell_{last_row}_0")
+                bottom = last.mapToScene(QPointF(0, last.height())).y()
+                viewport_bottom = table.mapToScene(QPointF(0, table.height())).y()
+                self.assertAlmostEqual(bottom, viewport_bottom, delta=1, msg=(month, height))
+
     def test_inline_interruption_editor_commits_selected_period(self):
         self.window.controller.editCell(0, 2, "08:00")
         self.window.controller.editCell(0, 4, "12:00-12:30;14:00-14:15")

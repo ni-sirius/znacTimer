@@ -23,9 +23,6 @@ Surface {
     signal editRequested(int row, int column)
     objectName: "monthTableSurface"
 
-    Rectangle { z: -2; x: -6; y: 1; width: parent.width + 12; height: parent.height + 10; radius: 15; color: root.colors.table.shadow; opacity: 0.15 }
-    Rectangle { z: -1; x: -3; y: 3; width: parent.width + 6; height: parent.height + 6; radius: 12; color: root.colors.table.shadow; opacity: 0.35 }
-
     function columnWidth(column) {
         return layoutInfo.widths[column] || 72
     }
@@ -98,6 +95,9 @@ Surface {
             Layout.fillHeight: true
             clip: true
             model: root.controller.monthModel
+            // Row heights include variable week gaps and wrapped interruptions.
+            // An estimated extent can leave empty space after the final row.
+            contentHeight: root.layoutInfo.rows.reduce((total, row) => total + row.height, 0)
             selectionModel: ItemSelectionModel {
                 id: selection
                 model: root.controller.monthModel

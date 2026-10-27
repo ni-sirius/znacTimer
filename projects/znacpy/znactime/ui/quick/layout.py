@@ -43,6 +43,12 @@ def month_layout(model, width, height, pixel_ratio):
         rows.append({"height": max(base_height, required) + gaps[row], "gap": gaps[row],
                      "badges": [[{"width": item_width, "item": item} for item_width, item in line]
                                 for line in badge_rows]})
+    # Fill a tall viewport completely, including the integer division remainder.
+    # Keep minimum content heights when the month needs vertical scrolling.
+    if rows:
+        extra, remainder = divmod(max(0, height - sum(row["height"] for row in rows)), len(rows))
+        for index, row in enumerate(rows):
+            row["height"] += extra + (index < remainder)
     return {"widths": widths, "rows": rows, "badgeHeight": badge_height,
             "timeBadgeWidth": QFontMetrics(bold).horizontalAdvance("00:00") + 16,
             "dateSize": date_font.pixelSize(), "weekdaySize": weekday_font.pixelSize()}
