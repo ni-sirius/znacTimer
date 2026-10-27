@@ -294,11 +294,12 @@ Surface {
                 Loader {
                     active: cell.column === 4
                     visible: !cell.editing
-                    width: cell.width; height: cell.bodyHeight
+                    width: cell.width
+                    height: item ? item.implicitHeight : 0
+                    y: (cell.bodyHeight - height) / 2
                     sourceComponent: Component {
                         Column {
                             width: cell.width
-                            y: (cell.bodyHeight - height) / 2
                             spacing: 4
                             Repeater {
                                 model: cell.rowLayout.badges

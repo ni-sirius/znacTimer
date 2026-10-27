@@ -21,6 +21,7 @@ Rectangle {
     FontMetrics { id: metrics; font: label.font }
     Text {
         id: label
+        visible: badge.text !== "+"
         anchors.fill: parent
         anchors.leftMargin: 8; anchors.rightMargin: 8
         text: badge.text
@@ -30,6 +31,23 @@ Rectangle {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
+    }
+    Item {
+        objectName: "addInterruptionIcon"
+        visible: badge.text === "+"
+        x: (badge.width - width) / 2
+        y: (badge.height - height) / 2
+        width: 10; height: 10
+        Rectangle {
+            anchors.centerIn: parent
+            width: parent.width; height: 2
+            color: label.color
+        }
+        Rectangle {
+            anchors.centerIn: parent
+            width: 2; height: parent.height
+            color: label.color
+        }
     }
     MouseArea {
         id: mouse
