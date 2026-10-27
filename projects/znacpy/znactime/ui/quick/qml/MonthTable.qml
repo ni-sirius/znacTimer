@@ -254,10 +254,22 @@ Surface {
                                     }
                                 }
                                 Text { anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: cell.dayWeek; color: root.ink; font.pointSize: 10 }
-                                Label {
+                                Rectangle {
+                                    objectName: "dateInfoIcon_" + cell.row
                                     visible: cell.dayProblem !== ""
                                     anchors.right: parent.right; anchors.rightMargin: 60; anchors.verticalCenter: parent.verticalCenter
-                                    text: "?"; color: root.colors.model.overtime_negative
+                                    width: 16; height: 16; radius: 8
+                                    color: "transparent"
+                                    border.width: 1.2
+                                    border.color: root.colors.model.overtime_negative
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "i"
+                                        font.pixelSize: 12; font.bold: true
+                                        color: parent.border.color
+                                    }
+                                    Accessible.name: "Day information"
+                                    Accessible.description: cell.dayProblem
                                     HoverHandler { id: problemHover }
                                     ToolTip.visible: problemHover.hovered
                                     ToolTip.text: cell.dayProblem
