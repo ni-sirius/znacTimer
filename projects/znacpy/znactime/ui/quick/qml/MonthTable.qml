@@ -107,6 +107,8 @@ Surface {
                 return root.layoutInfo.rows[row] ? root.layoutInfo.rows[row].height : 35
             }
             boundsBehavior: Flickable.StopAtBounds
+            // Keep one-pixel row rules on pixel boundaries while flicking.
+            pixelAligned: true
             editTriggers: TableView.EditKeyPressed
             keyNavigationEnabled: false
             activeFocusOnTab: root.selectedColumn !== 4
