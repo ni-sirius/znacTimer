@@ -17,7 +17,7 @@ Surface {
         ColumnLayout {
             id: period
             Layout.preferredWidth: 255
-            Layout.minimumWidth: Layout.preferredWidth
+            Layout.minimumWidth: 200
             Layout.maximumWidth: Layout.preferredWidth
             Layout.alignment: Qt.AlignTop
             spacing: 3
@@ -80,12 +80,15 @@ Surface {
             objectName: "carryOverBadge"
             radius: 8
             color: root.colors.header.badge
-            Layout.preferredWidth: Math.min(root.width < 900 ? 123 : 250, carryText.implicitWidth + 20 + (root.ui.previousUnclosed ? 24 : 0))
+            Layout.preferredWidth: carryContents.implicitWidth + 20
+            Layout.minimumWidth: Layout.preferredWidth
             Layout.fillHeight: true
             RowLayout {
+                id: carryContents
                 anchors.fill: parent; anchors.margins: 10; spacing: 6
                 Label {
                     id: carryText
+                    objectName: "carryOverText"
                     text: root.ui.previousUnclosed ? "Last month is not closed" : "Last Month: " + root.ui.carry
                     color: root.ui.previousUnclosed ? root.colors.model.overtime_negative : root.colors.primary
                     font.weight: Font.DemiBold

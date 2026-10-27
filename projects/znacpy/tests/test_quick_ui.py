@@ -281,6 +281,25 @@ class QuickUITest(unittest.TestCase):
                 self.assertFalse(labels[text].property("truncated"), (width, text))
                 self.assertGreaterEqual(labels[text].width(), labels[text].implicitWidth())
 
+    def test_carry_over_badge_shows_complete_balance_and_unclosed_warning(self):
+        from dataclasses import replace
+
+        controller = self.window.controller
+        for width in (800, 900, 1250):
+            self.window.window.resize(width, 900)
+            for unclosed in (False, True):
+                controller._record = replace(controller._record, opening_balance_minutes=-74040)
+                controller._previous_unclosed = unclosed
+                controller.changed.emit()
+                QTest.qWait(30)
+                label = self.find("carryOverText")
+                self.assertFalse(label.property("truncated"), (width, unclosed))
+                self.assertGreaterEqual(label.width(), label.implicitWidth())
+                carry = self.find("carryOverBadge")
+                action = self.find("monthActionButton")
+                self.assertLessEqual(carry.x() + carry.width(), action.x())
+                self.assertLessEqual(action.x() + action.width(), self.find("monthHeader").width())
+
     def test_pointer_and_keyboard_edit_commit_to_sqlite(self):
         self.click(self.find("monthCell_0_2"))
         editor = self.window.window.activeFocusItem()
