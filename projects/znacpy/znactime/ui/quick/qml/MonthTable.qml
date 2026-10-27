@@ -26,6 +26,11 @@ Surface {
     function columnWidth(column) {
         return layoutInfo.widths[column] || 72
     }
+    function dividerY(viewportY) {
+        const sceneY = table.mapToItem(null, 0, 0).y
+        const ratio = Screen.devicePixelRatio
+        return Math.round((sceneY + viewportY) * ratio) / ratio - sceneY
+    }
     function selectCell(row, column, extend) {
         selectedRow = Math.max(0, Math.min(table.rows - 1, row))
         selectedColumn = Math.max(0, Math.min(6, column))
@@ -107,7 +112,7 @@ Surface {
                 return root.layoutInfo.rows[row] ? root.layoutInfo.rows[row].height : 35
             }
             boundsBehavior: Flickable.StopAtBounds
-            // Keep one-pixel row rules on pixel boundaries while flicking.
+            // Logical pixel alignment alone does not align rules at fractional DPI.
             pixelAligned: true
             editTriggers: TableView.EditKeyPressed
             keyNavigationEnabled: false
@@ -122,6 +127,12 @@ Surface {
                 background: Item { }
             }
             ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOff }
+            Item {
+                id: dividerOverlay
+                parent: table
+                anchors.fill: parent
+                z: 1
+            }
             onWidthChanged: forceLayout()
             onHeightChanged: forceLayout()
             onRowsChanged: {
@@ -173,7 +184,12 @@ Surface {
                 required property bool editing
                 property var rowLayout: root.layoutInfo.rows[row] || ({height: 35, gap: 0, badges: []})
                 property real bodyHeight: height - rowLayout.gap
+                property real dividerBottom: column === 0 ? root.dividerY(cell.y - table.contentY + cell.height) : 0
+                property real dividerGap: Math.round(rowLayout.gap * Screen.devicePixelRatio) / Screen.devicePixelRatio
                 property bool expected: cellBadge.state === "expected"
+                property bool pooled: false
+                TableView.onPooled: pooled = true
+                TableView.onReused: pooled = false
                 objectName: "monthCell_" + row + "_" + column
                 implicitWidth: 100
                 implicitHeight: rowLayout.height
@@ -307,9 +323,41 @@ Surface {
                     color: cell.display.indexOf("-") === 0 ? root.colors.model.overtime_negative
                            : cell.display !== "00:00" && cell.display !== "" ? root.colors.model.overtime_positive : root.colors.model.read_only_text
                 }
-                Rectangle { y: cell.bodyHeight - 1; width: parent.width; height: 1; color: cell.isToday ? root.colors.primary : root.colors.table.divider }
-                Rectangle { visible: cell.isToday; width: parent.width; height: 1; color: root.colors.primary }
-                Rectangle { visible: cell.rowLayout.gap > 0; y: cell.bodyHeight; width: parent.width; height: cell.rowLayout.gap; color: root.colors.table.divider }
+                // Draw one continuous rule per loaded row outside the moving
+                // content. Snap after its scroll/scene transforms, so fractional
+                // DPI and fractional delegate positions cannot change coverage.
+                // Use integer local sizes scaled back to device pixels: the
+                // software renderer rounds fractional Rectangle dimensions.
+                // Include the week gap in the same band to avoid seams.
+                Item {
+                    parent: dividerOverlay
+                    objectName: cell.column === 0 ? "rowDivider_" + cell.row : ""
+                    visible: cell.column === 0 && !cell.pooled && cell.visible
+                    y: cell.dividerBottom - cell.dividerGap - 1 / Screen.devicePixelRatio
+                    width: table.width * Screen.devicePixelRatio
+                    height: Math.round(cell.rowLayout.gap * Screen.devicePixelRatio) + 1
+                    scale: 1 / Screen.devicePixelRatio
+                    transformOrigin: Item.TopLeft
+                    Rectangle {
+                        width: parent.width; height: 1
+                        color: cell.isToday ? root.colors.primary : root.colors.table.divider
+                    }
+                    Rectangle {
+                        y: 1; width: parent.width; height: parent.height - 1
+                        color: root.colors.table.divider
+                    }
+                }
+                Rectangle {
+                    parent: dividerOverlay
+                    visible: cell.column === 0 && !cell.pooled && cell.visible && cell.isToday
+                    z: 1
+                    y: cell.column === 0 && cell.isToday ? root.dividerY(cell.y - table.contentY) : 0
+                    width: table.width * Screen.devicePixelRatio
+                    height: 1
+                    scale: 1 / Screen.devicePixelRatio
+                    transformOrigin: Item.TopLeft
+                    color: root.colors.primary
+                }
                 TableView.editDelegate: Loader {
                     focus: true
                     x: 5; width: parent.width - 10

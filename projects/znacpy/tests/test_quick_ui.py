@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 from PySide6.QtCore import QObject, QPointF, QSettings, Qt, QMetaObject, QTimer, Q_ARG
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
@@ -406,6 +406,44 @@ class QuickUITest(unittest.TestCase):
             scrollbar = self.find("monthScrollBar")
             self.assertGreater(scrollbar.property("z"), 0)
             self.assertLess(scrollbar.mapToScene(QPointF()).x(), row_right)
+
+    def test_scrolled_dividers_keep_one_solid_physical_pixel(self):
+        from datetime import datetime
+        from math import floor
+
+        controller = self.window.controller
+        for today in (3, 5):
+            controller._clock = lambda day=today: datetime(2025, 1, day, 12)
+            controller.selectMonth(2025, 1)
+            self.window.window.resize(800, 600)
+            QTest.qWait(30)
+            table = self.find("monthTable")
+            ratio = self.window.window.devicePixelRatio()
+            for recycled in (False, True):
+                if recycled:
+                    self.invoke(self.find("monthTableSurface"), "showRow", 30)
+                    QTest.qWait(30)
+                    self.invoke(self.find("monthTableSurface"), "showRow", 0)
+                    QTest.qWait(30)
+                for offset in (0, 1, 2, 3, 4, 5, 6, 7, 12.25, 13.75):
+                    table.setProperty("contentY", offset)
+                    QTest.qWait(20)
+                    image = self.window.window.grabWindow()
+                    x = round(table.mapToScene(QPointF(table.width() - 20, 0)).x() * ratio)
+                    for row in (1, 2, 4):
+                        cell = self.find(f"monthCell_{row}_0")
+                        bottom = cell.mapToScene(QPointF(0, cell.height())).y()
+                        gap = cell.height() - cell.property("bodyHeight")
+                        pixels = floor(gap * ratio + 0.5) + 1
+                        y = floor(bottom * ratio + 0.5) - pixels
+                        divider = QColor(controller.state["colors"]["table"]["divider"])
+                        accent = QColor(controller.state["colors"]["primary"])
+                        context = (ratio, recycled, offset, row, today)
+                        colors = [accent if row == today - 1 else divider] + [divider] * (pixels - 1)
+                        for pixel, expected in enumerate(colors):
+                            self.assertEqual(image.pixelColor(x, y + pixel), expected, context)
+                        self.assertNotEqual(image.pixelColor(x, y - 1), colors[0], context)
+                        self.assertNotEqual(image.pixelColor(x, y + pixels), colors[-1], context)
 
     def test_inline_interruption_editor_commits_selected_period(self):
         self.window.controller.editCell(0, 2, "08:00")
