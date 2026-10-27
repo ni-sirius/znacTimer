@@ -158,20 +158,20 @@ class ApplicationController(QObject):
     def load_month(self):
         try:
             record = self.repository.view_month(self.year, self.month)
-            self._record_reloaded(record)
+            # Publish state once, when metadata and calculated rows agree.
+            self._record_reloaded(record, notify=False)
             self._model.set_context(
                 self.year, self.month, record.opening_balance_minutes / 60,
                 self._day_hours, record.status == "closed", self._show_expected_end,
             )
-            self._model.set_month_record(record)
-            self._model.recalculate(today=self._clock().date(), autosave=False)
+            self._model.load_calculated_month(record, self._clock().date())
             self.changed.emit()
             return True
         except StorageError as error:
             self.notification.emit("Database error", str(error))
             return False
 
-    def _record_reloaded(self, record):
+    def _record_reloaded(self, record, *, notify=True):
         if (record.year, record.month) != (self.year, self.month):
             return
         self._record = record
@@ -186,7 +186,8 @@ class ApplicationController(QObject):
         except StorageError as error:
             self._carry_discontinuity = self._previous_unclosed = False
             self.notification.emit("Balance status unavailable", str(error))
-        self.changed.emit()
+        if notify:
+            self.changed.emit()
 
     def _edit_committed(self):
         try:

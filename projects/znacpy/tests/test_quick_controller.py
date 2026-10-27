@@ -62,6 +62,23 @@ class QuickControllerTest(unittest.TestCase):
         self.controller.showToday()
         self.assertEqual(self.controller.state["month"], 6)
 
+    def test_navigation_publishes_one_fully_calculated_month(self):
+        states = []
+        resets = []
+        data_changes = []
+        model = self.controller.monthModel
+        self.controller.changed.connect(lambda: states.append(self.controller.state))
+        model.modelReset.connect(lambda: resets.append(model.entries()))
+        model.dataChanged.connect(lambda *args: data_changes.append(args))
+        self.controller.selectMonth(2024, 5)
+        self.assertEqual(len(states), 1)
+        self.assertEqual(len(resets), 1)
+        self.assertEqual(data_changes, [], "Navigation recalculated rows after publishing them")
+        self.assertEqual((states[0]["year"], states[0]["month"]), (2024, 5))
+        self.assertEqual(len(resets[0]), 31)
+        self.assertTrue(all(entry.cw and entry.row_color for entry in resets[0]))
+        self.assertEqual(states[0]["balance"], resets[0][-1].monthly_balance)
+
     def test_edits_persist_and_expected_end_is_never_saved(self):
         self.assertTrue(self.controller.editCell(16, 2, "08:00"))
         index = self.controller.monthModel.index(16, 3)

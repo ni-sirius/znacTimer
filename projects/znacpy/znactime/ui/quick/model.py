@@ -2,6 +2,8 @@
 
 from PySide6.QtCore import Qt
 
+from znactime.core.calculator import recalculate as recalculate_entries
+from znactime.ui.qt.repository_mapper import day_record_to_entry
 from znactime.ui.qt.model import MonthTableModel
 from znactime.ui.qt.color_scheme import badge_colors, is_dark_theme
 from znactime.ui.qt.table_contract import (
@@ -20,6 +22,19 @@ class QuickMonthModel(MonthTableModel):
     WEEKDAY = EDIT_VALUE + 6
     TODAY = EDIT_VALUE + 7
     ROW_STATUS = EDIT_VALUE + 8
+
+    def load_calculated_month(self, record, today):
+        """Publish a complete month once, without exposing uncalculated rows."""
+        entries = recalculate_entries(
+            [day_record_to_entry(day) for day in record.days],
+            carry_over=self.carry_over, day_hours=self.day_hours,
+            today=today, month_closed=self.month_closed,
+        )
+        self.beginResetModel()
+        self._today = today
+        self._records = {day.work_date: day for day in record.days}
+        self._entries = entries
+        self.endResetModel()
 
     def roleNames(self):
         return {

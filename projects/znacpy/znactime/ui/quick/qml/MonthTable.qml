@@ -190,56 +190,64 @@ Surface {
                             root.editSelected()
                     }
                 }
-                Rectangle {
-                    id: dateGlow
-                    visible: cell.column === 0 && cell.dayState !== ""
-                    width: parent.width; height: cell.bodyHeight - 2; y: 1
-                    property color accent: cell.dayState === "closed" ? (root.ui.dark ? root.colors.table.texture_closed : Qt.darker(root.colors.table.texture_closed, 3.5))
-                                           : cell.dayState === "valid" ? root.colors.model.overtime_positive
-                                           : cell.dayState === "invalid" ? root.colors.model.overtime_negative : root.colors.primary
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0; color: Qt.rgba(dateGlow.accent.r, dateGlow.accent.g, dateGlow.accent.b, 0.24) }
-                        GradientStop { position: 0.35; color: Qt.rgba(dateGlow.accent.r, dateGlow.accent.g, dateGlow.accent.b, 0.14) }
-                        GradientStop { position: 0.7; color: Qt.rgba(dateGlow.accent.r, dateGlow.accent.g, dateGlow.accent.b, 0.05) }
-                        GradientStop { position: 1; color: "transparent" }
-                    }
-                }
-                Item {
-                    visible: cell.column === 0
-                    width: parent.width; height: cell.bodyHeight
-                    Item {
-                        id: dateBlock
-                        anchors.left: parent.left; anchors.leftMargin: 10
-                        height: parent.height
-                        property var dateBounds: dateMetrics.tightBoundingRect(dateText.text)
-                        property var weekdayBounds: weekdayMetrics.tightBoundingRect(weekdayText.text)
-                        property real textTop: Math.round((height - dateBounds.height - weekdayBounds.height - 1) / 2)
-                        FontMetrics { id: dateMetrics; font: dateText.font }
-                        FontMetrics { id: weekdayMetrics; font: weekdayText.font }
-                        Text {
-                            id: dateText
-                            y: dateBlock.textTop - dateBlock.dateBounds.y - baselineOffset
-                            text: cell.display; color: root.ink
-                            font.family: Qt.application.font.family
-                            font.pixelSize: root.layoutInfo.dateSize; font.bold: true
+                Loader {
+                    active: cell.column === 0
+                    width: cell.width; height: cell.bodyHeight
+                    sourceComponent: Component {
+                        Item {
+                            anchors.fill: parent
+                            Rectangle {
+                                id: dateGlow
+                                visible: cell.dayState !== ""
+                                width: parent.width; height: cell.bodyHeight - 2; y: 1
+                                property color accent: cell.dayState === "closed" ? (root.ui.dark ? root.colors.table.texture_closed : Qt.darker(root.colors.table.texture_closed, 3.5))
+                                                       : cell.dayState === "valid" ? root.colors.model.overtime_positive
+                                                       : cell.dayState === "invalid" ? root.colors.model.overtime_negative : root.colors.primary
+                                gradient: Gradient {
+                                    orientation: Gradient.Horizontal
+                                    GradientStop { position: 0; color: Qt.rgba(dateGlow.accent.r, dateGlow.accent.g, dateGlow.accent.b, 0.24) }
+                                    GradientStop { position: 0.35; color: Qt.rgba(dateGlow.accent.r, dateGlow.accent.g, dateGlow.accent.b, 0.14) }
+                                    GradientStop { position: 0.7; color: Qt.rgba(dateGlow.accent.r, dateGlow.accent.g, dateGlow.accent.b, 0.05) }
+                                    GradientStop { position: 1; color: "transparent" }
+                                }
+                            }
+                            Item {
+                                width: parent.width; height: cell.bodyHeight
+                                Item {
+                                    id: dateBlock
+                                    anchors.left: parent.left; anchors.leftMargin: 10
+                                    height: parent.height
+                                    property var dateBounds: dateMetrics.tightBoundingRect(dateText.text)
+                                    property var weekdayBounds: weekdayMetrics.tightBoundingRect(weekdayText.text)
+                                    property real textTop: Math.round((height - dateBounds.height - weekdayBounds.height - 1) / 2)
+                                    FontMetrics { id: dateMetrics; font: dateText.font }
+                                    FontMetrics { id: weekdayMetrics; font: weekdayText.font }
+                                    Text {
+                                        id: dateText
+                                        y: dateBlock.textTop - dateBlock.dateBounds.y - baselineOffset
+                                        text: cell.display; color: root.ink
+                                        font.family: Qt.application.font.family
+                                        font.pixelSize: root.layoutInfo.dateSize; font.bold: true
+                                    }
+                                    Text {
+                                        id: weekdayText
+                                        y: dateBlock.textTop + dateBlock.dateBounds.height + 1 - dateBlock.weekdayBounds.y - baselineOffset
+                                        text: cell.dayWeekday; color: root.ink
+                                        font.family: Qt.application.font.family
+                                        font.pixelSize: root.layoutInfo.weekdaySize
+                                    }
+                                }
+                                Text { anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: cell.dayWeek; color: root.ink; font.pointSize: 10 }
+                                Label {
+                                    visible: cell.dayProblem !== ""
+                                    anchors.right: parent.right; anchors.rightMargin: 60; anchors.verticalCenter: parent.verticalCenter
+                                    text: "?"; color: root.colors.model.overtime_negative
+                                    HoverHandler { id: problemHover }
+                                    ToolTip.visible: problemHover.hovered
+                                    ToolTip.text: cell.dayProblem
+                                }
+                            }
                         }
-                        Text {
-                            id: weekdayText
-                            y: dateBlock.textTop + dateBlock.dateBounds.height + 1 - dateBlock.weekdayBounds.y - baselineOffset
-                            text: cell.dayWeekday; color: root.ink
-                            font.family: Qt.application.font.family
-                            font.pixelSize: root.layoutInfo.weekdaySize
-                        }
-                    }
-                    Text { anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: cell.dayWeek; color: root.ink; font.pointSize: 10 }
-                    Label {
-                        visible: cell.dayProblem !== ""
-                        anchors.right: parent.right; anchors.rightMargin: 60; anchors.verticalCenter: parent.verticalCenter
-                        text: "?"; color: root.colors.model.overtime_negative
-                        HoverHandler { id: problemHover }
-                        ToolTip.visible: problemHover.hovered
-                        ToolTip.text: cell.dayProblem
                     }
                 }
                 CellBadge {
@@ -255,29 +263,35 @@ Surface {
                     interactive: cell.editableCell
                     onClicked: { root.selectCell(cell.row, cell.column, false); root.editSelected() }
                 }
-                Column {
-                    visible: cell.column === 4 && !cell.editing
-                    width: cell.width
-                    y: (cell.bodyHeight - height) / 2
-                    spacing: 4
-                    Repeater {
-                        model: cell.rowLayout.badges
-                        delegate: Row {
-                            required property var modelData
-                            anchors.horizontalCenter: parent.horizontalCenter
+                Loader {
+                    active: cell.column === 4
+                    visible: !cell.editing
+                    width: cell.width; height: cell.bodyHeight
+                    sourceComponent: Component {
+                        Column {
+                            width: cell.width
+                            y: (cell.bodyHeight - height) / 2
                             spacing: 4
                             Repeater {
-                                model: parent.modelData
-                                delegate: CellBadge {
+                                model: cell.rowLayout.badges
+                                delegate: Row {
                                     required property var modelData
-                                    colors: root.colors
-                                    appearance: modelData.item
-                                    text: modelData.item.text
-                                    width: Math.max(implicitWidth, modelData.width)
-                                    height: root.layoutInfo.badgeHeight
-                                    plain: root.ui.closed
-                                    interactive: cell.editableCell
-                                    onClicked: root.editInterruption(cell.row, modelData.item.target)
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    spacing: 4
+                                    Repeater {
+                                        model: parent.modelData
+                                        delegate: CellBadge {
+                                            required property var modelData
+                                            colors: root.colors
+                                            appearance: modelData.item
+                                            text: modelData.item.text
+                                            width: Math.max(implicitWidth, modelData.width)
+                                            height: root.layoutInfo.badgeHeight
+                                            plain: root.ui.closed
+                                            interactive: cell.editableCell
+                                            onClicked: root.editInterruption(cell.row, modelData.item.target)
+                                        }
+                                    }
                                 }
                             }
                         }
