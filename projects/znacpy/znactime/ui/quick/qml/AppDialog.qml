@@ -10,6 +10,7 @@ Dialog {
     parent: host.contentItem
     popupType: Popup.Item
     x: 0; y: 0
+    height: implicitHeight
     modal: true
     focus: true
     closePolicy: Popup.CloseOnEscape
@@ -18,7 +19,25 @@ Dialog {
     // The operating system supplies the title bar.
     header: null
 
+    function syncHostSize() {
+        // Release the old limits before resizing. Updating live fixed-size
+        // bindings separately makes Windows reject intermediate geometries.
+        host.minimumWidth = 0
+        host.minimumHeight = 0
+        host.maximumWidth = 16777215
+        host.maximumHeight = 16777215
+        host.width = Math.ceil(dialog.width)
+        host.height = Math.ceil(dialog.height)
+        host.minimumWidth = host.width
+        host.minimumHeight = host.height
+        host.maximumWidth = host.width
+        host.maximumHeight = host.height
+    }
+    onWidthChanged: Qt.callLater(syncHostSize)
+    onHeightChanged: Qt.callLater(syncHostSize)
+
     onAboutToShow: {
+        syncHostSize()
         // Position once per opening so moving the dialog or its owner does not
         // snap the dialog back to the centre.
         let screen = ownerWindow.screen
@@ -40,10 +59,6 @@ Dialog {
         // than presenting them as sheets attached to the owner.
         modality: dialog.modal ? Qt.ApplicationModal : Qt.NonModal
         title: dialog.title
-        width: Math.ceil(dialog.width)
-        height: Math.ceil(dialog.height)
-        minimumWidth: Math.ceil(dialog.width); maximumWidth: Math.ceil(dialog.width)
-        minimumHeight: Math.ceil(dialog.height); maximumHeight: Math.ceil(dialog.height)
         visible: dialog.visible && dialog.ownerWindow.visible
         palette: dialog.palette
         font: dialog.font

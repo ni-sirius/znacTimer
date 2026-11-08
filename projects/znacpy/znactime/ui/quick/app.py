@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from znactime.ui.quick.controller import ApplicationController
@@ -18,6 +19,8 @@ class TimeTrackerApp:
         # A shared, customizable style is available on both supported platforms.
         if QQuickStyle.name() != "Fusion":
             QQuickStyle.setStyle("Fusion")
+        # Match native desktop text rendering for crisp small UI fonts.
+        QQuickWindow.setTextRenderType(QQuickWindow.NativeTextRendering)
         self.controller = ApplicationController(repository, settings, clock=clock)
         self.engine = QQmlApplicationEngine()
         self._shutdown = False

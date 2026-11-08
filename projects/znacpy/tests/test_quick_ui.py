@@ -351,6 +351,23 @@ class QuickUITest(unittest.TestCase):
         self.assertTrue(self.find("notificationDialog").property("visible"))
         self.assertEqual(self.window.controller.cellValue(0, 2), "--:--")
 
+    def test_notification_can_reopen_with_different_message_heights(self):
+        dialog = self.find("notificationDialog")
+        for message in ("", "Invalid time", "A wrapped notification message. " * 30, "Short again"):
+            self.window.controller.notification.emit("Notification", message)
+            QTest.qWait(100)
+            host = self.dialog_window(dialog)
+            self.assertTrue(host.isVisible())
+            footer = dialog.property("footer")
+            self.assertGreaterEqual(dialog.property("height"),
+                                    footer.height() + dialog.property("contentHeight"))
+            settled_height = host.height()
+            QTest.qWait(100)
+            self.assertEqual(host.height(), settled_height)
+            self.invoke(dialog, "accept")
+            QTest.qWait(50)
+            self.assertFalse(host.isVisible())
+
     def test_month_buttons_and_today_navigation(self):
         before = self.window.controller.state
         selector = self.find("monthSelector")
