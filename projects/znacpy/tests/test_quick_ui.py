@@ -78,10 +78,10 @@ class QuickUITest(unittest.TestCase):
         self._dialog_windows.append(host)
         return host
 
-    def click(self, item, local=None, *, window=None):
+    def click(self, item, local=None, *, window=None, modifiers=Qt.NoModifier):
         local = local or QPointF(item.width() / 2, item.height() / 2)
         point = item.mapToScene(local).toPoint()
-        QTest.mouseClick(window or self.window.window, Qt.LeftButton, Qt.NoModifier, point)
+        QTest.mouseClick(window or self.window.window, Qt.LeftButton, modifiers, point)
         self.app.processEvents()
 
     def type_text(self, text):
@@ -363,6 +363,35 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(self.window.window.activeFocusItem().objectName(), "pauseEndEditor")
         self.click(self.find("monthCell_0_3"))
         self.assertEqual(self.window.controller.cellValue(0, 4), "12:15-12:30")
+        self.assertNotEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
+
+    def test_modifier_clicks_select_ranges_without_editing(self):
+        for row in (0, 1):
+            self.window.controller.editCell(row, 2, "08:00")
+            self.window.controller.editCell(row, 3, "17:00")
+        self.click(self.find("monthCell_0_2"), modifiers=Qt.ControlModifier)
+        self.click(self.find("monthCell_1_3"), modifiers=Qt.ControlModifier)
+        selection = self.find("monthTable").property("selectionModel")
+        self.assertEqual(len(selection.selectedIndexes()), 2)
+        self.assertNotEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
+        QTest.keyClick(self.window.window, Qt.Key_C, Qt.ControlModifier)
+        self.assertEqual(self.app.clipboard().text(), "08:00\t\n\t17:00")
+        self.invoke(self.find("monthTableSurface"), "selectCell", 0, 2, False, False)
+        self.click(self.find("monthCell_1_3"), modifiers=Qt.ShiftModifier)
+        self.assertEqual(len(selection.selectedIndexes()), 4)
+        self.assertEqual(self.find("monthTableSurface").property("anchorRow"), 0)
+        QTest.keyClick(self.window.window, Qt.Key_C, Qt.ControlModifier)
+        self.assertEqual(self.app.clipboard().text(), "08:00\t17:00\n08:00\t17:00")
+
+    def test_dragging_across_badges_selects_without_editing(self):
+        first, last = self.find("monthCell_0_2"), self.find("monthCell_1_3")
+        start = first.mapToScene(QPointF(first.width()/2, first.height()/2)).toPoint()
+        end = last.mapToScene(QPointF(last.width()/2, last.height()/2)).toPoint()
+        QTest.mousePress(self.window.window, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(self.window.window, end, 20)
+        QTest.mouseRelease(self.window.window, Qt.LeftButton, Qt.NoModifier, end)
+        self.app.processEvents()
+        self.assertEqual(len(self.find("monthTable").property("selectionModel").selectedIndexes()), 4)
         self.assertNotEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
 
     def test_escape_cancels_time_edit(self):

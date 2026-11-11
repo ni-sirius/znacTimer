@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QThread, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QObject, Property, QThread, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 
 from znactime.config import APP_NAME, VERSION
@@ -264,6 +264,26 @@ class ApplicationController(QObject):
         columns = range(max(0, min(first_column, last_column)), min(self._model.columnCount(), max(first_column, last_column) + 1))
         text = "\n".join("\t".join(self.cellValue(row, col) for col in columns) for row in rows)
         QGuiApplication.clipboard().setText(text)
+
+    @Slot(QObject, int, int, int, int, bool)
+    def selectCells(self, selection, first_row, first_column, last_row, last_column, toggle):
+        top = self._model.index(min(first_row, last_row), min(first_column, last_column))
+        bottom = self._model.index(max(first_row, last_row), max(first_column, last_column))
+        if selection.model() is self._model and top.isValid() and bottom.isValid():
+            flag = QItemSelectionModel.Toggle if toggle else QItemSelectionModel.ClearAndSelect
+            selection.select(QItemSelection(top, bottom), flag)
+
+    @Slot(QObject)
+    def copySelection(self, selection):
+        indexes = selection.selectedIndexes()
+        if not indexes:
+            return
+        rows = sorted({index.row() for index in indexes})
+        columns = sorted({index.column() for index in indexes})
+        values = {(index.row(), index.column()): index.data() for index in indexes}
+        QGuiApplication.clipboard().setText("\n".join(
+            "\t".join(str(values.get((row, column), "")) for column in columns) for row in rows
+        ))
 
     @Slot(int, int, result=bool)
     def pasteCells(self, first_row, first_column):

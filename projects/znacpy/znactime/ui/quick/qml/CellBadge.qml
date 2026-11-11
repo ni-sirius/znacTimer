@@ -12,7 +12,9 @@ Rectangle {
     property bool hovered: mouse.containsMouse && interactive && !plain
     property bool fullWidth: false
     property var editSession: null
-    signal clicked()
+    signal clicked(int modifiers)
+    signal pointerPressed(int modifiers)
+    signal pointerDragged(point scenePosition)
     implicitWidth: Math.max(text === "+" ? 28 : 44, Math.ceil(label.implicitWidth) + 16)
     implicitHeight: metrics.height + 8
     radius: 6
@@ -57,7 +59,20 @@ Rectangle {
         enabled: badge.interactive && !badge.plain
         cursorShape: Qt.PointingHandCursor
         property bool dismissOnly: false
-        onPressed: dismissOnly = badge.editSession ? badge.editSession.finishActive() : false
-        onClicked: { if (!dismissOnly) badge.clicked() }
+        property point pressPosition
+        property bool dragging: false
+        onPressed: function(mouse) {
+            dismissOnly = badge.editSession ? badge.editSession.finishActive() : false
+            pressPosition = Qt.point(mouse.x, mouse.y)
+            dragging = false
+            if (!dismissOnly) badge.pointerPressed(mouse.modifiers)
+        }
+        onPositionChanged: function(mouse) {
+            if (!pressed || dismissOnly) return
+            if (Math.abs(mouse.x - pressPosition.x) + Math.abs(mouse.y - pressPosition.y) > Qt.styleHints.startDragDistance)
+                dragging = true
+            if (dragging) badge.pointerDragged(mapToItem(null, mouse.x, mouse.y))
+        }
+        onClicked: function(mouse) { if (!dismissOnly && !dragging) badge.clicked(mouse.modifiers) }
     }
 }

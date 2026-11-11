@@ -18,7 +18,7 @@ Surface {
     readonly property int selectedColumn: selection.currentIndex.valid ? selection.currentIndex.column : 2
     property int anchorRow: 0
     property int anchorColumn: 2
-    property bool extendingSelection: false
+    property bool changingSelection: false
     property var interruptionTarget: ({action: "add", period_index: null})
     property color ink: colors.model.text
     property color muted: colors.header.muted
@@ -33,15 +33,24 @@ Surface {
         const ratio = Screen.devicePixelRatio
         return Math.round((sceneY + viewportY) * ratio) / ratio - sceneY
     }
-    function selectCell(row, column, extend) {
+    function selectCell(row, column, extend, toggle = false) {
         row = Math.max(0, Math.min(table.rows - 1, row))
         column = Math.max(0, Math.min(6, column))
-        extendingSelection = extend
+        changingSelection = true
         selection.setCurrentIndex(controller.monthModel.index(row, column), ItemSelectionModel.NoUpdate)
-        extendingSelection = false
         if (!extend) { anchorRow = row; anchorColumn = column }
+        controller.selectCells(selection, anchorRow, anchorColumn, row, column, toggle)
+        changingSelection = false
         table.positionViewAtCell(Qt.point(selectedColumn, selectedRow), TableView.Contain)
         table.forceActiveFocus()
+    }
+    function pointerSelect(row, column, modifiers) {
+        selectCell(row, column, !!(modifiers & Qt.ShiftModifier), !!(modifiers & Qt.ControlModifier))
+    }
+    function dragSelect(scenePosition) {
+        const point = table.mapFromItem(null, scenePosition.x, scenePosition.y)
+        const target = table.cellAtPosition(Qt.point(point.x + table.contentX, point.y + table.contentY), true)
+        if (target.x >= 0 && target.y >= 0) selectCell(target.y, target.x, true)
     }
     function editSelected() {
         if (ui.closed || selectedColumn < 1 || selectedColumn > 4)
@@ -108,9 +117,10 @@ Surface {
                 id: selection
                 model: root.controller.monthModel
                 onCurrentChanged: function(current, previous) {
-                    if (current.valid && !root.extendingSelection) {
+                    if (current.valid && !root.changingSelection) {
                         root.anchorRow = current.row
                         root.anchorColumn = current.column
+                        selection.select(current, ItemSelectionModel.ClearAndSelect)
                     }
                 }
             }
@@ -147,7 +157,7 @@ Surface {
             }
             Keys.onPressed: function(event) {
                 if (event.matches(StandardKey.Copy)) {
-                    root.controller.copyCells(root.anchorRow, root.anchorColumn, root.selectedRow, root.selectedColumn)
+                    root.controller.copySelection(selection)
                 } else if (event.matches(StandardKey.Paste)) {
                     root.controller.pasteCells(root.selectedRow, root.selectedColumn)
                 } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && event.modifiers & Qt.ControlModifier && root.selectedColumn === 4) {
@@ -207,11 +217,23 @@ Surface {
                 MouseArea {
                     anchors.fill: parent
                     property bool dismissOnly: false
-                    onPressed: dismissOnly = root.editSession.finishActive()
+                    property point pressPosition
+                    property bool dragging: false
+                    onPressed: function(mouse) {
+                        dismissOnly = root.editSession.finishActive()
+                        pressPosition = Qt.point(mouse.x, mouse.y)
+                        dragging = false
+                        if (!dismissOnly) root.pointerSelect(cell.row, cell.column, mouse.modifiers)
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed || dismissOnly) return
+                        if (Math.abs(mouse.x - pressPosition.x) + Math.abs(mouse.y - pressPosition.y) > Qt.styleHints.startDragDistance)
+                            dragging = true
+                        if (dragging) root.dragSelect(mapToItem(null, mouse.x, mouse.y))
+                    }
                     onClicked: function(mouse) {
-                        if (dismissOnly) return
-                        root.selectCell(cell.row, cell.column, mouse.modifiers & Qt.ShiftModifier)
-                        if (!(mouse.modifiers & Qt.ShiftModifier) && cell.editableCell)
+                        if (dismissOnly || dragging) return
+                        if (!mouse.modifiers && cell.editableCell)
                             root.editSelected()
                     }
                 }
@@ -299,7 +321,9 @@ Surface {
                     plain: root.ui.closed
                     outlined: cell.expected
                     interactive: cell.editableCell
-                    onClicked: { root.selectCell(cell.row, cell.column, false); root.editSelected() }
+                    onPointerPressed: function(modifiers) { root.pointerSelect(cell.row, cell.column, modifiers) }
+                    onPointerDragged: function(position) { root.dragSelect(position) }
+                    onClicked: function(modifiers) { if (!modifiers) root.editSelected() }
                 }
                 Loader {
                     active: cell.column === 4
@@ -329,7 +353,9 @@ Surface {
                                             height: root.layoutInfo.badgeHeight
                                             plain: root.ui.closed
                                             interactive: cell.editableCell
-                                            onClicked: root.editInterruption(cell.row, modelData.item.target)
+                                            onPointerPressed: function(modifiers) { root.pointerSelect(cell.row, cell.column, modifiers) }
+                                            onPointerDragged: function(position) { root.dragSelect(position) }
+                                            onClicked: function(modifiers) { if (!modifiers) root.editInterruption(cell.row, modelData.item.target) }
                                         }
                                     }
                                 }
