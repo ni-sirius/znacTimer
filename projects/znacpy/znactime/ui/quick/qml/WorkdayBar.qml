@@ -6,6 +6,7 @@ Surface {
     id: root
     required property var controller
     required property var ui
+    required property var editSession
     signal editRequested(int row, int column)
     colors: ui.colors
     surfaceColor: colors.player.surface
@@ -27,6 +28,7 @@ Surface {
         }
         CellBadge {
             objectName: "todayBadge"
+            editSession: root.editSession
             colors: root.colors
             appearance: root.ui.todayBadge
             text: root.ui.todayBadge.texts ? root.ui.todayBadge.texts[0] : ""

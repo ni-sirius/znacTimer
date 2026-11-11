@@ -11,6 +11,7 @@ Rectangle {
     property bool interactive: true
     property bool hovered: mouse.containsMouse && interactive && !plain
     property bool fullWidth: false
+    property var editSession: null
     signal clicked()
     implicitWidth: Math.max(text === "+" ? 28 : 44, Math.ceil(label.implicitWidth) + 16)
     implicitHeight: metrics.height + 8
@@ -55,6 +56,8 @@ Rectangle {
         hoverEnabled: true
         enabled: badge.interactive && !badge.plain
         cursorShape: Qt.PointingHandCursor
-        onClicked: badge.clicked()
+        property bool dismissOnly: false
+        onPressed: dismissOnly = badge.editSession ? badge.editSession.finishActive() : false
+        onClicked: { if (!dismissOnly) badge.clicked() }
     }
 }

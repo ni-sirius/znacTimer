@@ -331,6 +331,40 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(self.window.controller.cellValue(0, 2), "08:00")
         self.assertEqual(self.window.controller.cellValue(0, 3), "--:--")
 
+    def test_badge_click_finishes_existing_edit_without_opening_next(self):
+        self.window.controller.editCell(0, 2, "08:00")
+        self.window.controller.editCell(0, 3, "17:00")
+        self.click(self.find("monthCell_0_2"))
+        self.type_text("09:15")
+        self.click(self.find("monthCell_0_3"))
+        self.assertEqual(self.window.controller.cellValue(0, 2), "09:15")
+        self.assertNotEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
+        self.click(self.find("monthCell_0_3"))
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.click(self.find("monthCell_0_2"))
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
+
+    def test_table_and_footer_badges_share_edit_exclusion(self):
+        self.click(self.find("monthCell_0_2"))
+        self.type_text("08:00")
+        self.click(self.find("todayBadge"))
+        self.assertEqual(self.window.controller.cellValue(0, 2), "08:00")
+        self.assertNotIn(self.window.window.activeFocusItem().objectName(), ("timeCellEditor", "specialCellEditor"))
+        self.click(self.find("todayBadge"))
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "specialCellEditor")
+
+    def test_interruption_fields_share_one_edit_session(self):
+        self.window.controller.editCell(0, 2, "08:00")
+        self.window.controller.editCell(0, 4, "12:00-12:30")
+        self.invoke(self.find("monthTableSurface"), "editInterruption", 0, {"action": "edit", "period_index": 0})
+        self.find("pauseStartEditor").setProperty("text", "12:15")
+        self.click(self.find("pauseEndEditor"))
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "pauseEndEditor")
+        self.click(self.find("monthCell_0_3"))
+        self.assertEqual(self.window.controller.cellValue(0, 4), "12:15-12:30")
+        self.assertNotEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
+
     def test_escape_cancels_time_edit(self):
         self.click(self.find("monthCell_0_2"))
         self.type_text("08:30")

@@ -7,6 +7,7 @@ Surface {
     id: root
     required property var controller
     required property var ui
+    required property var editSession
     dark: ui.dark
     radius: 10
     surfaceColor: colors.table.background
@@ -205,7 +206,10 @@ Surface {
 
                 MouseArea {
                     anchors.fill: parent
+                    property bool dismissOnly: false
+                    onPressed: dismissOnly = root.editSession.finishActive()
                     onClicked: function(mouse) {
+                        if (dismissOnly) return
                         root.selectCell(cell.row, cell.column, mouse.modifiers & Qt.ShiftModifier)
                         if (!(mouse.modifiers & Qt.ShiftModifier) && cell.editableCell)
                             root.editSelected()
@@ -284,6 +288,7 @@ Surface {
                     }
                 }
                 CellBadge {
+                    editSession: root.editSession
                     visible: cell.column > 0 && cell.column < 4 && !cell.editing
                     x: (cell.width - width) / 2; y: (cell.bodyHeight - height) / 2
                     width: cell.column === 1 ? cell.width - 10 : Math.max(implicitWidth, root.layoutInfo.timeBadgeWidth)
@@ -316,6 +321,7 @@ Surface {
                                         model: parent.modelData
                                         delegate: CellBadge {
                                             required property var modelData
+                                            editSession: root.editSession
                                             colors: root.colors
                                             appearance: modelData.item
                                             text: modelData.item.text
@@ -377,12 +383,21 @@ Surface {
                     color: root.colors.primary
                 }
                 TableView.editDelegate: Loader {
+                    id: cellEditorLoader
+                    property var session: root.editSession
                     focus: true
                     x: 5; width: parent.width - 10
                     y: (cell.bodyHeight - height) / 2
                     height: root.layoutInfo.badgeHeight + 2
                     sourceComponent: cell.column === 4 ? periodEditor : lineEditor
-                    onLoaded: Qt.callLater(item.focusStart)
+                    onLoaded: {
+                        session.begin(cellEditorLoader, function() {
+                            if (item) item.save()
+                            table.closeEditor()
+                        })
+                        Qt.callLater(item.focusStart)
+                    }
+                    Component.onDestruction: { if (session) session.end(cellEditorLoader) }
                     TableView.onCommit: { if (item) item.save() }
                     Component {
                         id: lineEditor

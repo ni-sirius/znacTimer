@@ -25,6 +25,21 @@ ApplicationWindow {
     palette.highlight: ui.colors.primary
     palette.highlightedText: ui.colors.on_primary
     font.pointSize: 10
+    QtObject {
+        id: badgeEditSession
+        property var owner: null
+        property var commit: null
+        function begin(editor, save) { owner = editor; commit = save }
+        function end(editor) { if (owner === editor) { owner = null; commit = null } }
+        function finishActive() {
+            if (!owner) return false
+            let save = commit
+            owner = null
+            commit = null
+            save()
+            return true
+        }
+    }
     Component.onCompleted: {
         width = ui.initialWidth
         height = ui.initialHeight
@@ -115,6 +130,7 @@ ApplicationWindow {
                 anchors.topMargin: 6; anchors.bottomMargin: 12
                 controller: window.controller
                 ui: window.ui
+                editSession: badgeEditSession
                 enabled: !window.ui.busy
                 onEditRequested: function(row, column) { cellEditor.edit(row, column) }
             }
@@ -122,6 +138,7 @@ ApplicationWindow {
         WorkdayBar {
             controller: window.controller
             ui: window.ui
+            editSession: badgeEditSession
             Layout.fillWidth: true
             Layout.preferredHeight: 53
             onEditRequested: function(row, column) { monthTable.editDayBadge(row) }

@@ -379,7 +379,7 @@ The assessment above records the original audit. Subsequent fixes are tracked he
 |---|---|---|
 | F01 | Fixed | Modal rollover and reloaded revision rejection; FR-072. |
 | F02 | Fixed | Tab followed by copy, paste, and Delete uses the actual current cell; FR-073. |
-| F03 | Pending | |
+| F03 | Fixed | Shared pointer-press edit exclusion across badges and interruption fields; FR-074. |
 | F04 | Pending | |
 | F05 | Pending | |
 | F06 | Pending | |
