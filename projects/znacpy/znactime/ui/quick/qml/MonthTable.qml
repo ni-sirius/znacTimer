@@ -69,7 +69,6 @@ Surface {
         interruptionTarget = target || {action: "add", period_index: null}
         table.edit(controller.monthModel.index(row, 4))
     }
-    function editDayBadge(row) { selectCell(row, 1, false); editSelected() }
     function showRow(row) {
         selectCell(row, 2, false)
     }
@@ -328,7 +327,9 @@ Surface {
                     interactive: cell.editableCell
                     onPointerPressed: function(modifiers) { root.pointerSelect(cell.row, cell.column, modifiers) }
                     onPointerDragged: function(position) { root.dragSelect(position) }
-                    onClicked: function(modifiers) { if (!modifiers) root.editSelected() }
+                    onClicked: function(modifiers) {
+                        if (!modifiers) { root.selectCell(cell.row, cell.column, false); root.editSelected() }
+                    }
                 }
                 Loader {
                     active: cell.column === 4

@@ -146,7 +146,6 @@ ApplicationWindow {
             editSession: badgeEditSession
             Layout.fillWidth: true
             Layout.preferredHeight: 53
-            onEditRequested: function(row, column) { monthTable.editDayBadge(row) }
         }
     }
 

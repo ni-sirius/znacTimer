@@ -9,6 +9,7 @@ Rectangle {
     property bool plain: false
     property bool outlined: false
     property bool interactive: true
+    property bool editing: false
     property bool hovered: mouse.containsMouse && interactive && !plain
     property bool fullWidth: false
     property var editSession: null
@@ -16,19 +17,31 @@ Rectangle {
     signal clicked(int modifiers)
     signal pointerPressed(int modifiers)
     signal pointerDragged(point scenePosition)
+    activeFocusOnTab: interactive && !plain && !editing
+    Accessible.role: interactive && !plain ? Accessible.Button : Accessible.StaticText
+    Accessible.name: text
+    Accessible.onPressAction: activate()
+    function activate() {
+        if (!interactive || plain || editing) return
+        if (editSession && editSession.finishActive()) return
+        clicked(Qt.NoModifier)
+    }
+    Keys.onReturnPressed: activate()
+    Keys.onEnterPressed: activate()
+    Keys.onSpacePressed: activate()
     implicitWidth: Math.max(text === "+" ? 28 : 44, Math.ceil(label.implicitWidth) + 16)
     implicitHeight: metrics.height + 8
     radius: 6
     color: plain ? "transparent" : hovered ? colors.primary : (appearance.fillColor || colors.table.empty_fill)
-    border.width: outlined && !plain ? 2 : 0
-    border.color: appearance.borderColor || colors.primary
+    border.width: (outlined || activeFocus) && !plain ? 2 : 0
+    border.color: activeFocus ? colors.primary : (appearance.borderColor || colors.primary)
     HoverHandler { id: tooltipHover }
     ToolTip.visible: tooltipHover.hovered && tooltipText !== ""
     ToolTip.text: tooltipText
     FontMetrics { id: metrics; font: label.font }
     Text {
         id: label
-        visible: badge.text !== "+"
+        visible: badge.text !== "+" && !badge.editing
         anchors.fill: parent
         anchors.leftMargin: 8; anchors.rightMargin: 8
         text: badge.text
@@ -41,7 +54,7 @@ Rectangle {
     }
     Item {
         objectName: "addInterruptionIcon"
-        visible: badge.text === "+"
+        visible: badge.text === "+" && !badge.editing
         x: (badge.width - width) / 2
         y: (badge.height - height) / 2
         width: 10; height: 10
@@ -60,7 +73,7 @@ Rectangle {
         id: mouse
         anchors.fill: parent
         hoverEnabled: true
-        enabled: badge.interactive && !badge.plain
+        enabled: badge.interactive && !badge.plain && !badge.editing
         cursorShape: Qt.PointingHandCursor
         property bool dismissOnly: false
         property point pressPosition

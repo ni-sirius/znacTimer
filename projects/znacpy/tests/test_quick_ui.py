@@ -375,9 +375,9 @@ class QuickUITest(unittest.TestCase):
         self.type_text("08:00")
         self.click(self.find("todayBadge"))
         self.assertEqual(self.window.controller.cellValue(0, 2), "08:00")
-        self.assertNotIn(self.window.window.activeFocusItem().objectName(), ("timeCellEditor", "specialCellEditor"))
+        self.assertNotIn(self.window.window.activeFocusItem().objectName(), ("timeCellEditor", "specialCellEditor", "todayBadgeEditor"))
         self.click(self.find("todayBadge"))
-        self.assertEqual(self.window.window.activeFocusItem().objectName(), "specialCellEditor")
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "todayBadgeEditor")
 
     def test_interruption_fields_share_one_edit_session(self):
         self.window.controller.editCell(0, 2, "08:00")
@@ -519,6 +519,37 @@ class QuickUITest(unittest.TestCase):
                 if item.property("tooltipText"):
                     tooltips.append(item.property("tooltipText"))
             self.assertCountEqual(tooltips, ["00:30/01:30", "01:00/01:30"])
+
+    def test_footer_badge_edits_in_place_and_shares_table_exclusion(self):
+        badge = self.find("todayBadge")
+        table = self.find("monthTable")
+        content_y = table.property("contentY")
+        badge.forceActiveFocus()
+        QTest.keyClick(self.window.window, Qt.Key_Space)
+        editor = self.window.window.activeFocusItem()
+        self.assertEqual(editor.objectName(), "todayBadgeEditor")
+        self.assertEqual(editor.mapToScene(QPointF()), badge.mapToScene(QPointF()))
+        self.assertEqual(table.property("contentY"), content_y)
+        self.type_text("Vacation")
+        self.click(self.find("monthCell_0_2"))
+        self.assertEqual(self.window.controller.cellValue(self.window.controller.state["todayRow"], 1).lower(), "vacation")
+        self.assertFalse(self.find("monthCell_0_2").property("editing"))
+        self.click(self.find("monthCell_0_2"))
+        self.assertTrue(self.find("monthCell_0_2").property("editing"))
+        QTest.keyClick(self.window.window, Qt.Key_Escape)
+        self.click(badge)
+        self.type_text("Sick")
+        QTest.keyClick(self.window.window, Qt.Key_Escape)
+        self.assertEqual(self.window.controller.cellValue(self.window.controller.state["todayRow"], 1).lower(), "vacation")
+
+    def test_footer_draft_commits_before_workday_button_action(self):
+        self.click(self.find("todayBadge"))
+        self.type_text("Vacation")
+        self.click(self.find("primaryWorkdayButton"))
+        self.assertEqual(self.window.controller.cellValue(self.window.controller.state["todayRow"], 1).lower(), "vacation")
+        self.assertEqual(self.window.controller.state["workState"], "working")
+        self.click(self.find("todayBadge"))
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "todayBadgeEditor")
 
     def test_escape_cancels_time_edit(self):
         self.click(self.find("monthCell_0_2"))

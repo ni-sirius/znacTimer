@@ -7,7 +7,32 @@ Surface {
     required property var controller
     required property var ui
     required property var editSession
-    signal editRequested(int row, int column)
+    property bool badgeEditing: false
+    property var badgeTarget: ({})
+    function editDayBadge() {
+        if (ui.closed || ui.busy || !ui.todayBadge.texts) return
+        badgeTarget = controller.beginCellEdit(ui.todayRow, 1)
+        dayEditor.text = controller.cellValue(ui.todayRow, 1)
+        badgeEditing = true
+        editSession.begin(dayEditor, finishDayBadge)
+        dayEditor.forceActiveFocus()
+        dayEditor.selectAll()
+    }
+    function finishDayBadge() {
+        if (!badgeEditing) return
+        const value = dayEditor.text
+        badgeEditing = false
+        editSession.end(dayEditor)
+        controller.commitCellEdit(badgeTarget, value)
+    }
+    function cancelDayBadge() {
+        badgeEditing = false
+        editSession.end(dayEditor)
+    }
+    onUiChanged: {
+        if (badgeEditing && (ui.closed || ui.busy || controller.beginCellEdit(ui.todayRow, 1).date !== badgeTarget.date))
+            cancelDayBadge()
+    }
     colors: ui.colors
     surfaceColor: colors.player.surface
     border.color: colors.player.border
@@ -27,6 +52,7 @@ Surface {
             elide: Text.ElideRight
         }
         CellBadge {
+            id: todayBadge
             objectName: "todayBadge"
             editSession: root.editSession
             colors: root.colors
@@ -35,11 +61,33 @@ Surface {
             plain: root.ui.closed
             visible: root.ui.todayBadge.texts !== undefined
             interactive: !root.ui.closed && !root.ui.busy
+            editing: root.badgeEditing
+            Accessible.name: "Today's day badge"
             Layout.preferredWidth: 170
             Layout.preferredHeight: 33
-            onClicked: root.editRequested(root.ui.todayRow, 1)
+            onClicked: root.editDayBadge()
             ToolTip.visible: hovered
             ToolTip.text: "Today's day badge · Click to edit"
+            ClockTextField {
+                id: dayEditor
+                objectName: "todayBadgeEditor"
+                visible: root.badgeEditing
+                anchors.fill: parent
+                timeOnly: false
+                selectByMouse: true
+                font.pointSize: 10; font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                color: root.colors.model.editing_text
+                background: Rectangle {
+                    radius: 6
+                    color: root.ui.todayBadge.fillColor || root.colors.table.empty_fill
+                    border.color: root.colors.primary; border.width: 2
+                }
+                Accessible.name: "Today's special day"
+                onAccepted: { root.finishDayBadge(); todayBadge.forceActiveFocus() }
+                Keys.onEscapePressed: { root.cancelDayBadge(); todayBadge.forceActiveFocus() }
+                onActiveFocusChanged: { if (!activeFocus && root.badgeEditing) root.finishDayBadge() }
+            }
         }
         Item { Layout.preferredWidth: 22 }
         AppButton {
