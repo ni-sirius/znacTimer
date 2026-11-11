@@ -8,6 +8,7 @@ from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from znactime.ui.quick.controller import ApplicationController
+from znactime.ui.quick.menu_keys import MenuAccessKeys
 
 
 QML_DIRECTORY = Path(__file__).with_name("qml")
@@ -22,16 +23,22 @@ class TimeTrackerApp:
         # Match native desktop text rendering for crisp small UI fonts.
         QQuickWindow.setTextRenderType(QQuickWindow.NativeTextRendering)
         self.controller = ApplicationController(repository, settings, clock=clock)
+        self.menu_access_keys = MenuAccessKeys(self.controller)
         self.engine = QQmlApplicationEngine()
         self._shutdown = False
         self.errors = []
         self.engine.warnings.connect(self._record_warnings)
-        self.engine.setInitialProperties({"controller": self.controller})
+        self.engine.setInitialProperties({
+            "controller": self.controller,
+            "menuAccessKeys": self.menu_access_keys,
+        })
         self.engine.load(QUrl.fromLocalFile(str(QML_DIRECTORY / "Main.qml")))
         if not self.engine.rootObjects():
             self.shutdown()
             raise RuntimeError("Could not load the QML interface:\n" + "\n".join(self.errors))
         self.window = self.engine.rootObjects()[0]
+        self.menu_access_keys.window = self.window
+        self.window.installEventFilter(self.menu_access_keys)
         state = self.controller.state
         if state["fitHeight"] and self.window.screen() is not None:
             layout = self.controller.tableLayout(self.window.width() - 34, 0, self.window.screen().devicePixelRatio())
@@ -52,6 +59,8 @@ class TimeTrackerApp:
         if self._shutdown:
             return
         self._shutdown = True
+        if self.menu_access_keys.window is not None:
+            self.menu_access_keys.window.removeEventFilter(self.menu_access_keys)
         self.controller.shutdown()
         for window in self.engine.rootObjects():
             window.close()

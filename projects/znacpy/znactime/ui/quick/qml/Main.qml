@@ -7,6 +7,10 @@ import QtCore
 ApplicationWindow {
     id: window
     required property var controller
+    required property var menuAccessKeys
+    property bool menuNavigationActive: mainMenuBar.activeFocus || dataMenu.visible
+                                       || approvalsMenu.visible || settingsMenu.visible || helpMenu.visible
+    onMenuNavigationActiveChanged: menuAccessKeys.updateNavigation(menuNavigationActive)
     property var ui: controller.state
     objectName: "mainWindow"
     title: ui.title
@@ -63,6 +67,7 @@ ApplicationWindow {
     }
 
     menuBar: MenuBar {
+        id: mainMenuBar
         implicitHeight: 40
         spacing: 4
         leftPadding: 10; rightPadding: 10
@@ -74,10 +79,19 @@ ApplicationWindow {
         delegate: MenuBarItem {
             id: menuItem
             topPadding: 6; bottomPadding: 6; leftPadding: 12; rightPadding: 12
-            contentItem: Text { text: menuItem.text.replace(/&/g, ""); font: menuItem.font; color: menuItem.highlighted ? window.ui.colors.primary : window.ui.colors.menu.text; verticalAlignment: Text.AlignVCenter }
+            contentItem: MenuMnemonicLabel {
+                objectName: "menuMnemonicLabel"
+                text: menuItem.text
+                mnemonicVisible: window.menuAccessKeys.visible
+                font: menuItem.font
+                color: menuItem.highlighted ? window.ui.colors.primary : window.ui.colors.menu.text
+                verticalAlignment: Text.AlignVCenter
+            }
             background: Rectangle { radius: 7; color: menuItem.highlighted ? window.ui.colors.menu.surface_hover : "transparent" }
         }
         AppMenu {
+            id: dataMenu
+            showMnemonics: window.menuAccessKeys.visible
             colors: window.ui.colors
             title: "&Data"
             enabled: !window.ui.busy
@@ -90,6 +104,8 @@ ApplicationWindow {
             Action { id: quitAction; text: "E&xit"; shortcut: window.controller.quitShortcuts[0]; onTriggered: window.close() }
         }
         AppMenu {
+            id: approvalsMenu
+            showMnemonics: window.menuAccessKeys.visible
             colors: window.ui.colors
             title: "&Approvals"
             enabled: !window.ui.busy
@@ -97,6 +113,8 @@ ApplicationWindow {
             Action { text: "&Reopen Month"; enabled: window.ui.closed; onTriggered: window.controller.reopenMonth() }
         }
         AppMenu {
+            id: settingsMenu
+            showMnemonics: window.menuAccessKeys.visible
             colors: window.ui.colors
             title: "&Settings"
             enabled: !window.ui.busy
@@ -104,6 +122,8 @@ ApplicationWindow {
             Action { text: "&Work schedule"; onTriggered: settingsDialog.showSection(1) }
         }
         AppMenu {
+            id: helpMenu
+            showMnemonics: window.menuAccessKeys.visible
             colors: window.ui.colors
             title: "&Help"
             Action { text: "&About znacTime"; onTriggered: aboutDialog.open() }

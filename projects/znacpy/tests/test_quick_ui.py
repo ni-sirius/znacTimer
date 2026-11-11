@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -8,8 +9,8 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
-from PySide6.QtCore import QObject, QPointF, QSettings, Qt, QMetaObject, QTimer, Q_ARG
-from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtCore import QObject, QPointF, QSettings, Qt, QEvent, QMetaObject, QTimer, Q_ARG
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
@@ -286,6 +287,178 @@ class QuickUITest(unittest.TestCase):
         QTest.keyClick(self.window.window, Qt.Key_Q, Qt.ControlModifier)
         self.app.processEvents()
         self.assertFalse(self.window.window.isVisible())
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Alt access-key hints")
+    def test_alt_reveals_underlined_access_keys_in_menu_bar_and_dropdowns(self):
+        window = self.window.window
+        window.requestActivate()
+        self.assertTrue(QTest.qWaitForWindowActive(window))
+
+        def mnemonic_label(item, visible=True):
+            label = item.property("contentItem")
+            self.assertEqual(label.property("mnemonicVisible"), visible)
+            self.assertEqual(label.property("text"), item.property("text"))
+            return label
+
+        pending = [window.contentItem()]
+        bar_items = []
+        while pending:
+            item = pending.pop()
+            pending.extend(item.childItems())
+            if item.inherits("QQuickMenuBarItem"):
+                bar_items.append(item)
+        self.assertEqual(len(bar_items), 4)
+        for item in bar_items:
+            mnemonic_label(item, False)
+
+        # Pointer-opened menus must also start without underlines.
+        self.click(bar_items[0])
+        menu = next(item for item in window.findChildren(QObject)
+                    if item.metaObject().className().startswith("AppMenu_")
+                    and item.property("title") == bar_items[0].property("text"))
+        self.assertTrue(menu.property("visible"))
+        self.assertFalse(menu.property("showMnemonics"))
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.app.processEvents()
+
+        QTest.keyPress(window, Qt.Key_Alt)
+        self.app.processEvents()
+        try:
+            for item in bar_items:
+                mnemonic_label(item)
+        finally:
+            QTest.keyRelease(window, Qt.Key_Alt)
+        self.app.processEvents()
+        for item in bar_items:
+            mnemonic_label(item)
+
+        # Each complete Alt press toggles once, including after key release.
+        for visible in (False, True, False, True):
+            QTest.keyPress(window, Qt.Key_Alt)
+            self.app.processEvents()
+            for item in bar_items:
+                mnemonic_label(item, visible)
+            # Holding Alt must not toggle again due to keyboard auto-repeat.
+            for event_type in (QEvent.KeyRelease, QEvent.KeyPress):
+                self.app.sendEvent(window, QKeyEvent(
+                    event_type, Qt.Key_Alt, Qt.AltModifier, "", True,
+                ))
+            self.app.processEvents()
+            for item in bar_items:
+                mnemonic_label(item, visible)
+            QTest.keyRelease(window, Qt.Key_Alt)
+            self.app.processEvents()
+            for item in bar_items:
+                mnemonic_label(item, visible)
+
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.app.processEvents()
+        for item in bar_items:
+            mnemonic_label(item, False)
+
+        for key, title in ((Qt.Key_D, "&Data"), (Qt.Key_A, "&Approvals"),
+                           (Qt.Key_S, "&Settings"), (Qt.Key_H, "&Help")):
+            QTest.keyClick(window, key, Qt.AltModifier)
+            self.app.processEvents()
+            menu = next(item for item in window.findChildren(QObject)
+                        if item.metaObject().className().startswith("AppMenu_")
+                        and item.property("title") == title)
+            self.assertTrue(menu.property("visible"), title)
+            pending = [menu.property("contentItem")]
+            labels = []
+            while pending:
+                item = pending.pop()
+                pending.extend(item.childItems())
+                if item.inherits("QQuickMenuItem"):
+                    labels.append(mnemonic_label(item))
+            self.assertTrue(labels, title)
+            QTest.keyClick(window, Qt.Key_Escape)
+            self.app.processEvents()
+            self.assertFalse(menu.property("visible"))
+            for item in bar_items:
+                mnemonic_label(item, False)
+
+        QTest.keyClick(window, Qt.Key_H, Qt.AltModifier)
+        self.app.processEvents()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
+                         QPointF(window.width() - 5, window.height() - 5).toPoint())
+        self.app.processEvents()
+        for item in bar_items:
+            mnemonic_label(item, False)
+
+        QTest.keyClick(window, Qt.Key_H, Qt.AltModifier)
+        self.app.processEvents()
+        QTest.keyClick(window, Qt.Key_A)
+        self.app.processEvents()
+        self.assertTrue(self.find("aboutDialog").property("visible"))
+        for item in bar_items:
+            mnemonic_label(item, False)
+        self.invoke(self.find("aboutDialog"), "accept")
+
+        # Losing the window while Alt is held must not leave stale hints.
+        QTest.keyPress(window, Qt.Key_Alt)
+        self.app.processEvents()
+        self.assertTrue(self.window.menu_access_keys.visible)
+        self.app.sendEvent(window, QEvent(QEvent.WindowDeactivate))
+        self.app.processEvents()
+        for item in bar_items:
+            mnemonic_label(item, False)
+        QTest.keyRelease(window, Qt.Key_Alt)
+
+    def test_menu_underlines_render_solid_pixels_in_the_text_color(self):
+        window = self.window.window
+
+        def labels_under(root):
+            pending = [root]
+            labels = []
+            while pending:
+                item = pending.pop()
+                pending.extend(item.childItems())
+                if item.objectName() == "menuMnemonicLabel" and item.isVisible():
+                    labels.append(item)
+            return labels
+
+        def assert_solid_underlines(labels):
+            self.assertTrue(labels)
+            QTest.qWait(30)
+            image = window.grabWindow()
+            ratio = window.devicePixelRatio()
+            for label in labels:
+                underline = label.findChild(QObject, "menuMnemonicUnderline")
+                self.assertTrue(underline.isVisible(), label.property("text"))
+                expected = label.property("color")
+                self.assertEqual(underline.property("color"), expected)
+                start = underline.mapToScene(QPointF()) * ratio
+                end = underline.mapToScene(QPointF(underline.width(), underline.height())) * ratio
+                coordinates = (start.x(), start.y(), end.x(), end.y())
+                for coordinate in coordinates:
+                    self.assertAlmostEqual(coordinate, round(coordinate), places=4,
+                                           msg=(label.property("text"), ratio, coordinates))
+                left, top, right, bottom = map(round, coordinates)
+                self.assertGreater(right - left, 1)
+                self.assertGreaterEqual(bottom - top, 1)
+                for y in range(top, bottom):
+                    for x in range(left, right):
+                        self.assertEqual(image.pixelColor(x, y), expected,
+                                         (label.property("text"), ratio, x, y))
+
+        for theme in ("dark", "light"):
+            self.window.controller.setTheme(theme)
+            QTest.keyClick(window, Qt.Key_Alt)
+            self.app.processEvents()
+            assert_solid_underlines(labels_under(window.contentItem()))
+            for key, title in ((Qt.Key_A, "&Approvals"), (Qt.Key_D, "&Data")):
+                QTest.keyClick(window, key, Qt.AltModifier)
+                QTest.keyClick(window, Qt.Key_Down)
+                self.app.processEvents()
+                menu = next(item for item in window.findChildren(QObject)
+                            if item.metaObject().className().startswith("AppMenu_")
+                            and item.property("title") == title)
+                self.assertTrue(menu.property("visible"))
+                content = menu.property("contentItem")
+                assert_solid_underlines(labels_under(content))
+                QTest.keyClick(window, Qt.Key_Escape)
+                self.app.processEvents()
 
     def test_time_and_interruption_badges_show_complete_numbers(self):
         self.window.controller.editCell(0, 2, "08:30")

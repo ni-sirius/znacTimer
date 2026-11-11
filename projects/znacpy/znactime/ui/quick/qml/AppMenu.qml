@@ -4,6 +4,7 @@ import QtQuick.Controls
 Menu {
     id: control
     required property var colors
+    property bool showMnemonics: false
     padding: 6
     implicitWidth: {
         let widest = 200
@@ -18,8 +19,10 @@ Menu {
         id: item
         implicitHeight: 31
         leftPadding: 12; rightPadding: 28
-        contentItem: Text {
-            text: item.text.replace(/&/g, "")
+        contentItem: MenuMnemonicLabel {
+            objectName: "menuMnemonicLabel"
+            text: item.text
+            mnemonicVisible: control.showMnemonics
             font: item.font
             color: !item.enabled ? control.colors.menu.muted : item.highlighted ? control.colors.primary : control.colors.menu.text
             verticalAlignment: Text.AlignVCenter
