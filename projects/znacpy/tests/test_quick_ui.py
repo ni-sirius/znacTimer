@@ -260,6 +260,31 @@ class QuickUITest(unittest.TestCase):
                 QMetaObject.invokeMethod(menu, "close")
             self.app.processEvents()
 
+    def test_menu_mnemonics_activate_actions_and_portable_quit(self):
+        menus = [item for item in self.window.window.findChildren(QObject)
+                 if item.metaObject().className().startswith("AppMenu_")]
+        for menu in menus:
+            QMetaObject.invokeMethod(menu, "open")
+            self.app.processEvents()
+            pending = [menu.property("contentItem")]
+            while pending:
+                item = pending.pop()
+                pending.extend(item.childItems())
+                if item.inherits("QQuickMenuItem"):
+                    self.assertIn("&", item.property("text"))
+            QMetaObject.invokeMethod(menu, "close")
+        help_menu = next(menu for menu in menus if menu.property("title") == "&Help")
+        QMetaObject.invokeMethod(help_menu, "open")
+        QTest.keyClick(self.window.window, Qt.Key_A)
+        self.app.processEvents()
+        self.assertTrue(self.find("aboutDialog").property("visible"))
+        self.invoke(self.find("aboutDialog"), "accept")
+        self.window.window.requestActivate()
+        self.app.processEvents()
+        QTest.keyClick(self.window.window, Qt.Key_Q, Qt.ControlModifier)
+        self.app.processEvents()
+        self.assertFalse(self.window.window.isVisible())
+
     def test_time_and_interruption_badges_show_complete_numbers(self):
         self.window.controller.editCell(0, 2, "08:30")
         self.window.controller.editCell(0, 3, "17:45")

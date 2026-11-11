@@ -7,7 +7,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, QObject, Property, QThread, QTimer, QUrl, Qt, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QKeySequence
 
 from znactime.config import APP_NAME, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
@@ -87,6 +87,14 @@ class ApplicationController(QObject):
     @Property(QObject, constant=True)
     def monthModel(self):
         return self._model
+
+    @Property("QStringList", constant=True)
+    def quitShortcuts(self):
+        bindings = QKeySequence.keyBindings(QKeySequence.StandardKey.Quit)
+        portable = QKeySequence("Ctrl+Q")
+        if portable not in bindings:
+            bindings.append(portable)
+        return [binding.toString(QKeySequence.PortableText) for binding in bindings]
 
     @Property("QVariantMap", notify=changed)
     def state(self):

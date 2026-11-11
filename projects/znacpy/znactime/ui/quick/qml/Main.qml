@@ -81,33 +81,38 @@ ApplicationWindow {
             colors: window.ui.colors
             title: "&Data"
             enabled: !window.ui.busy
-            Action { text: "Import CSV Data…"; onTriggered: importDialog.open() }
+            Action { text: "&Import CSV Data…"; onTriggered: importDialog.open() }
             MenuSeparator { }
-            Action { text: "Export Month CSV"; onTriggered: window.openExport("csv") }
-            Action { text: "Export PDF"; onTriggered: window.openExport("pdf") }
-            Action { text: "Back Up Database"; onTriggered: window.openExport("backup") }
+            Action { text: "Export Month &CSV"; onTriggered: window.openExport("csv") }
+            Action { text: "Export &PDF"; onTriggered: window.openExport("pdf") }
+            Action { text: "&Back Up Database"; onTriggered: window.openExport("backup") }
             MenuSeparator { }
-            Action { text: "Exit"; shortcut: StandardKey.Quit; onTriggered: window.close() }
+            Action { id: quitAction; text: "E&xit"; shortcut: window.controller.quitShortcuts[0]; onTriggered: window.close() }
         }
         AppMenu {
             colors: window.ui.colors
             title: "&Approvals"
             enabled: !window.ui.busy
-            Action { text: "Close Month"; enabled: !window.ui.closed; onTriggered: window.controller.closeMonth() }
-            Action { text: "Reopen Month"; enabled: window.ui.closed; onTriggered: window.controller.reopenMonth() }
+            Action { text: "&Close Month"; enabled: !window.ui.closed; onTriggered: window.controller.closeMonth() }
+            Action { text: "&Reopen Month"; enabled: window.ui.closed; onTriggered: window.controller.reopenMonth() }
         }
         AppMenu {
             colors: window.ui.colors
             title: "&Settings"
             enabled: !window.ui.busy
-            Action { text: "Appearance"; onTriggered: settingsDialog.showSection(0) }
-            Action { text: "Work schedule"; onTriggered: settingsDialog.showSection(1) }
+            Action { text: "&Appearance"; onTriggered: settingsDialog.showSection(0) }
+            Action { text: "&Work schedule"; onTriggered: settingsDialog.showSection(1) }
         }
         AppMenu {
             colors: window.ui.colors
             title: "&Help"
-            Action { text: "About znacTime"; onTriggered: aboutDialog.open() }
+            Action { text: "&About znacTime"; onTriggered: aboutDialog.open() }
         }
+    }
+
+    Shortcut {
+        sequences: window.controller.quitShortcuts.slice(1)
+        onActivated: quitAction.trigger()
     }
 
     ColumnLayout {
