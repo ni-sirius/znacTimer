@@ -254,6 +254,11 @@ class ApplicationController(QObject):
             return ""
         return self._model.data(self._model.index(row, column), Qt.ItemDataRole.EditRole) or ""
 
+    @Slot(int, int, result=str)
+    def initialCellValue(self, row, column):
+        value = self.cellValue(row, column)
+        return self._clock().strftime("%H:%M") if column in (2, 3) and value == UNSET_TIME else value
+
     @Slot(int, int, float, result="QVariantMap")
     def tableLayout(self, width, height, pixel_ratio):
         return month_layout(self._model, width, height, pixel_ratio)

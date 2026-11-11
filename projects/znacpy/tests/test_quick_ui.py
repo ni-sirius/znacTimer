@@ -414,6 +414,35 @@ class QuickUITest(unittest.TestCase):
         QTest.keyClick(self.window.window, Qt.Key_9)
         self.assertFalse(self.find("monthCell_0_2").property("editing"))
 
+    def test_unset_clock_defaults_to_controller_time_and_enter_saves_it(self):
+        self.window.controller._clock = lambda: datetime(2026, 11, 11, 9, 42, tzinfo=timezone.utc)
+        self.click(self.find("monthCell_0_2"))
+        self.assertEqual(self.window.window.activeFocusItem().property("text"), "09:42")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertEqual(self.window.controller.cellValue(0, 2), "09:42")
+
+    def test_clock_fields_filter_characters_and_invalid_paste(self):
+        self.click(self.find("monthCell_0_2"))
+        self.type_text("ab08:3x0 -.;/+")
+        field = self.window.window.activeFocusItem()
+        self.assertEqual(field.property("text"), "08:30")
+        QTest.keyClick(self.window.window, Qt.Key_A, Qt.ControlModifier)
+        self.app.clipboard().setText("09:45am")
+        QTest.keyClick(self.window.window, Qt.Key_V, Qt.ControlModifier)
+        self.assertEqual(field.property("text"), "08:30")
+        self.app.clipboard().setText("09:45")
+        QTest.keyClick(self.window.window, Qt.Key_V, Qt.ControlModifier)
+        self.assertEqual(field.property("text"), "09:45")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.window.controller.editCell(0, 4, "12:00-12:30")
+        self.invoke(self.find("monthTableSurface"), "editInterruption", 0, {"action": "edit", "period_index": 0})
+        self.type_text("a12:1x5")
+        self.assertEqual(self.find("pauseStartEditor").property("text"), "12:15")
+        QTest.keyClick(self.window.window, Qt.Key_Tab)
+        self.type_text("b12:3x0")
+        self.assertEqual(self.find("pauseEndEditor").property("text"), "12:30")
+        QTest.keyClick(self.window.window, Qt.Key_Escape)
+
     def test_escape_cancels_time_edit(self):
         self.click(self.find("monthCell_0_2"))
         self.type_text("08:30")

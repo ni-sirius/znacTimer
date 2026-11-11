@@ -437,9 +437,10 @@ Surface {
                     TableView.onCommit: { if (item) item.save() }
                     Component {
                         id: lineEditor
-                        TextField {
+                        ClockTextField {
                             objectName: cell.column === 1 ? "specialCellEditor" : "timeCellEditor"
-                            text: cell.editValue === "--:--" ? "" : cell.editValue
+                            timeOnly: cell.column !== 1
+                            Component.onCompleted: text = root.controller.initialCellValue(cell.row, cell.column)
                             selectByMouse: true
                             font.pointSize: 10; font.bold: true
                             horizontalAlignment: Text.AlignHCenter
@@ -447,7 +448,6 @@ Surface {
                             background: Rectangle { radius: 6; color: cell.cellBadge.fillColor || root.colors.table.empty_fill; border.color: root.colors.primary; border.width: 2 }
                             Accessible.name: cell.column === 1 ? "Special day" : cell.column === 2 ? "Start time" : "End time"
                             function focusStart() { forceActiveFocus(); selectAll() }
-                            function typeStart(value) { text = value; cursorPosition = text.length }
                             function save() { root.controller.editCell(cell.row, cell.column, text) }
                         }
                     }

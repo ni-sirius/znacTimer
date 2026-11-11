@@ -12,7 +12,7 @@ FocusScope {
     objectName: "inlineInterruptionEditor"
 
     function focusStart() { start.forceActiveFocus(); start.selectAll() }
-    function typeStart(value) { start.text = value; start.cursorPosition = start.text.length }
+    function typeStart(value) { start.typeStart(value) }
     function resolvedValue() {
         let parts = value.indexOf("-") >= 0 ? value.split(";") : []
         let index = target.period_index
@@ -40,7 +40,7 @@ FocusScope {
     RowLayout {
         anchors.fill: parent
         spacing: 4
-        TextField {
+        ClockTextField {
             id: start
             objectName: "pauseStartEditor"
             Layout.fillWidth: true
@@ -56,7 +56,7 @@ FocusScope {
             Accessible.name: "Pause start"
         }
         Label { text: "-"; color: editor.colors.table.interval_separator; font.bold: true }
-        TextField {
+        ClockTextField {
             id: end
             objectName: "pauseEndEditor"
             Layout.fillWidth: true

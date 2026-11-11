@@ -382,7 +382,7 @@ The assessment above records the original audit. Subsequent fixes are tracked he
 | F03 | Fixed | Shared pointer-press edit exclusion across badges and interruption fields; FR-074. |
 | F04 | Fixed | Ctrl/Shift and drag selections use the Qt selection model without editing; FR-075. |
 | F05 | Fixed | Printable-key editing preserves initiating and subsequent characters; FR-076. |
-| F06 | Pending | |
+| F06 | Fixed | Shared lexical clock filter and injected-clock defaults, including packaged component; FR-077. |
 | F07 | Pending | |
 | F08 | Pending | |
 | F09 | Pending | |
