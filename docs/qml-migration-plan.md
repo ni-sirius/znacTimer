@@ -231,3 +231,18 @@ active pause.
 Validation: all 47 QML interaction tests passed, including four new regression
 tests covering blank drafts, unchanged persisted revisions, partial input, and
 explicit removal. Whitespace checks passed.
+
+## Dialog keyboard follow-up
+
+The shared dialog forwards unhandled Enter/Return to the focused standard button
+or the dialog default. Notifications and About focus OK on opening; confirmations
+retain No as the default. Dropdowns and text fields handle their own keys first.
+Copy in notification, confirmation, and About windows uses the Widgets message-box
+format: title, full plain-text message, and button labels separated by rules.
+Long, scrolled, and Unicode messages are copied in full. Input dialogs retain
+ordinary copying of selected field text.
+
+Validation: all 50 QML interaction tests passed, including three new dialog-key
+regressions. The confirmation check also verifies that Enter from message content
+chooses No, while explicitly focusing Yes allows confirmation. Whitespace checks
+passed.

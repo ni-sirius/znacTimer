@@ -158,6 +158,9 @@ ApplicationWindow {
         ownerWindow: window
         property var messages: []
         property string message: ""
+        copyMessageEnabled: true
+        copyMessageText: message
+        onCopyRequested: function(text) { window.controller.copyText(text) }
         width: Math.min(590, window.width - 32)
         modal: true
         standardButtons: Dialog.Ok
@@ -174,6 +177,7 @@ ApplicationWindow {
             open()
         }
         onClosed: Qt.callLater(next)
+        onOpened: standardButton(Dialog.Ok).forceActiveFocus()
         contentItem: ScrollView {
             id: noticeScroll
             implicitHeight: Math.min(noticeText.implicitHeight, window.height - 180)
@@ -187,6 +191,9 @@ ApplicationWindow {
         ownerWindow: window
         property int token: -1
         property string message: ""
+        copyMessageEnabled: true
+        copyMessageText: message
+        onCopyRequested: function(text) { window.controller.copyText(text) }
         width: Math.min(610, window.width - 32)
         modal: true
         standardButtons: Dialog.Yes | Dialog.No
@@ -229,6 +236,10 @@ ApplicationWindow {
         objectName: "aboutDialog"
         ownerWindow: window
         title: "About znacTime"
+        copyMessageEnabled: true
+        copyMessageText: "znacTime " + window.ui.version + "\n\nTrack workdays, interruptions, and overtime.\n\nLicense: MIT\nBuilt with PySide6 / Qt Quick — LGPL v3\n\nznac.org\nznacompany@gmail.com"
+        onCopyRequested: function(text) { window.controller.copyText(text) }
+        onOpened: standardButton(Dialog.Ok).forceActiveFocus()
         width: Math.min(430, window.width - 32)
         modal: true
         standardButtons: Dialog.Ok

@@ -6,6 +6,13 @@ Dialog {
     required property Window ownerWindow
     readonly property QtObject dialogWindow: host
     signal nativeCloseRequested()
+    signal copyRequested(string text)
+    property bool copyMessageEnabled: false
+    property string copyMessageText: ""
+    property int defaultStandardButton: standardButtons & Dialog.No ? Dialog.No
+                                        : standardButtons & Dialog.Ok ? Dialog.Ok
+                                        : standardButtons & Dialog.Save ? Dialog.Save
+                                        : standardButtons & Dialog.Close ? Dialog.Close : Dialog.NoButton
 
     parent: host.contentItem
     popupType: Popup.Item
@@ -18,6 +25,39 @@ Dialog {
     palette: ownerWindow.palette
     // The operating system supplies the title bar.
     header: null
+
+    function messageButtons() {
+        let buttons = []
+        for (const kind of [Dialog.Ok, Dialog.Save, Dialog.Yes, Dialog.No, Dialog.Cancel, Dialog.Close]) {
+            const button = standardButton(kind)
+            if (button) buttons.push(button)
+        }
+        return buttons
+    }
+    function activateDefaultButton() {
+        const focused = messageButtons().find(button => button.activeFocus && button.enabled)
+        const button = focused || standardButton(defaultStandardButton)
+        if (button && button.enabled) button.clicked()
+    }
+    function fullMessageText() {
+        const separator = "---------------------------\n"
+        const buttons = messageButtons().map(button => button.text.replace(/&/g, "")).join("   ")
+        return separator + title + "\n" + separator + copyMessageText + "\n" + separator + buttons + "\n" + separator
+    }
+
+    Item {
+        id: keyboardHandler
+        parent: host.contentItem
+        Keys.onPressed: function(event) {
+            if (event.matches(StandardKey.Copy) && dialog.copyMessageEnabled) {
+                dialog.copyRequested(dialog.fullMessageText())
+                event.accepted = true
+            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !event.modifiers) {
+                dialog.activateDefaultButton()
+                event.accepted = true
+            } else event.accepted = false
+        }
+    }
 
     function syncHostSize() {
         // Release the old limits before resizing. Updating live fixed-size
@@ -37,6 +77,9 @@ Dialog {
     onHeightChanged: Qt.callLater(syncHostSize)
 
     onAboutToShow: {
+        // Content and footer share this popup item. Focused controls get the
+        // first chance to handle a key before it reaches the dialog fallback.
+        if (contentItem && contentItem.parent) contentItem.parent.Keys.forwardTo = [keyboardHandler]
         syncHostSize()
         // Position once per opening so moving the dialog or its owner does not
         // snap the dialog back to the centre.

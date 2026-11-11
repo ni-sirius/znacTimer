@@ -301,6 +301,10 @@ class ApplicationController(QObject):
             "\t".join(str(values.get((row, column), "")) for column in columns) for row in rows
         ))
 
+    @Slot(str)
+    def copyText(self, text):
+        QGuiApplication.clipboard().setText(text)
+
     @Slot(int, int, result=bool)
     def pasteCells(self, first_row, first_column):
         if self._busy or self._model.month_closed:
