@@ -233,6 +233,21 @@ class ApplicationController(QObject):
             return False
         return self._model.setData(self._model.index(row, column), value)
 
+    @Slot(int, int, result="QVariantMap")
+    def beginCellEdit(self, row, column):
+        if self._model.month_closed or not 0 <= row < self._model.rowCount() or column not in (1, 2, 3, 4):
+            return {}
+        entry = self._model.entries()[row]
+        return {"row": row, "column": column, "date": entry.date, "revision": entry.revision}
+
+    @Slot("QVariantMap", str, result=bool)
+    def commitCellEdit(self, target, value):
+        row, column = target.get("row", -1), target.get("column", -1)
+        if not target or target != self.beginCellEdit(row, column):
+            self.notification.emit("Edit expired", "The selected day changed while editing. Reopen the editor and try again.")
+            return False
+        return self.editCell(row, column, value)
+
     @Slot(int, int, result=str)
     def cellValue(self, row, column):
         if not 0 <= row < self._model.rowCount() or not 0 <= column < self._model.columnCount():

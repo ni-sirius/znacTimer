@@ -79,6 +79,18 @@ class QuickControllerTest(unittest.TestCase):
         self.assertTrue(all(entry.cw and entry.row_color for entry in resets[0]))
         self.assertEqual(states[0]["balance"], resets[0][-1].monthly_balance)
 
+    def test_edit_snapshot_rejects_reloaded_revision_and_allows_unchanged_day(self):
+        self.controller.editCell(16, 2, "08:00")
+        target = self.controller.beginCellEdit(16, 3)
+        self.controller.tick()
+        self.assertTrue(self.controller.commitCellEdit(target, "17:00"))
+        target = self.controller.beginCellEdit(16, 3)
+        self.controller.editCell(16, 2, "09:00")
+        self.controller.load_month()
+        self.assertFalse(self.controller.commitCellEdit(target, "18:00"))
+        self.assertEqual(self.controller.cellValue(16, 3), "17:00")
+        self.assertEqual(self.notices[-1][0], "Edit expired")
+
     def test_edits_persist_and_expected_end_is_never_saved(self):
         self.assertTrue(self.controller.editCell(16, 2, "08:00"))
         index = self.controller.monthModel.index(16, 3)

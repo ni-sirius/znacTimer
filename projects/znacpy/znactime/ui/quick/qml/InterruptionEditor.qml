@@ -7,6 +7,7 @@ AppDialog {
     required property var controller
     property int editRow: -1
     property int editColumn: 4
+    property var editTarget: ({})
     property var periods: []
     property bool loading: false
     objectName: "cellEditorDialog"
@@ -23,6 +24,7 @@ AppDialog {
         loading = true
         editRow = row
         editColumn = column
+        editTarget = controller.beginCellEdit(row, column)
         let value = controller.cellValue(row, column)
         special.currentIndex = Math.max(0, special.find(value))
         special.editText = value
@@ -53,7 +55,7 @@ AppDialog {
     onAccepted: {
         let value = editColumn === 1 ? special.editText
                                     : (mode.currentIndex === 1 ? periodText() : raw.text)
-        controller.editCell(editRow, editColumn, value)
+        controller.commitCellEdit(editTarget, value)
     }
 
     contentItem: ColumnLayout {

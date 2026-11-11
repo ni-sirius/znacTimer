@@ -129,3 +129,9 @@
 | FR-069 | Menu construction shall require callbacks for all five `Data` actions. | `znactime/ui/qt/menu.py`; `znactime/ui/qt/app.py` | `tests/test_menu.py::MenuBarTest.test_all_five_data_commands_are_required` |
 | FR-070 | Every top-level menu and submenu action shall define a mnemonic access key for keyboard navigation on platforms where Qt supports menu mnemonics. | `znactime/ui/qt/menu.py` | `tests/test_menu.py::MenuBarTest.test_menu_mnemonics_and_platform_quit_shortcut` |
 | FR-071 | The Exit action shall provide Qt's platform-standard Quit binding together with the portable `Ctrl+Q` sequence that maps to the corresponding native modifier on each supported platform. | `znactime/ui/qt/menu.py` | `tests/test_menu.py::MenuBarTest.test_menu_mnemonics_and_platform_quit_shortcut` |
+
+## QML interaction parity
+
+| ID | Functional requirement | Implementation module(s) | Automated test reference(s) |
+|---|---|---|---|
+| FR-072 | A modal cell edit shall retain its original day, field, and revision; saving after a changed month or loaded day revision shall reject the edit without writing to another target. | `znactime/ui/quick/controller.py`; `znactime/ui/quick/qml/InterruptionEditor.qml` | `tests/test_quick_ui.py::QuickUITest.test_modal_edit_cannot_retarget_after_month_rollover`; `tests/test_quick_controller.py::QuickControllerTest.test_edit_snapshot_rejects_reloaded_revision_and_allows_unchanged_day` |

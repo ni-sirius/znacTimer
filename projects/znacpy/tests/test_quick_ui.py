@@ -2,6 +2,7 @@ import os
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -342,6 +343,27 @@ class QuickUITest(unittest.TestCase):
             self.invoke(settings, "showSection", section)
             self.assertTrue(settings.property("visible"))
             self.invoke(settings, "accept")
+
+    def test_modal_edit_cannot_retarget_after_month_rollover(self):
+        controller = self.window.controller
+        now = [datetime(2026, 10, 31, 23, 59, tzinfo=timezone.utc)]
+        controller._clock = lambda: now[0]
+        controller._today = now[0].date()
+        for month in (11, 10):
+            controller.selectMonth(2026, month)
+            controller.editCell(0, 2, "08:00")
+            controller.editCell(0, 3, "17:00")
+            controller.editCell(0, 4, "00:30")
+        dialog = self.find("cellEditorDialog")
+        self.invoke(dialog, "edit", 0, 4)
+        self.find("interruptionInput").setProperty("text", "00:45")
+        now[0] = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        controller.tick()
+        self.app.processEvents()
+        self.invoke(dialog, "accept")
+        self.assertEqual(self.repo.load_month(2026, 10).days[0].break_duration_minutes, 30)
+        self.assertEqual(self.repo.load_month(2026, 11).days[0].break_duration_minutes, 30)
+        self.assertEqual(self.find("notificationDialog").property("title"), "Edit expired")
 
     def test_invalid_time_opens_qml_notification(self):
         self.click(self.find("monthCell_0_2"))
