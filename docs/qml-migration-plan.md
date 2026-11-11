@@ -217,3 +217,17 @@ pending display; explicit click, keyboard, and accessibility activation remains
 immediate. The shared timer applies to time, pause, date, and header/footer hints.
 Three targeted QML interaction checks passed for delay/cancellation, immediate
 activation, and the existing theme/animation behavior.
+
+## Blank pause drafts
+
+Closing an inline pause editor with both endpoints blank now discards the draft
+without warning or database writes. This also preserves an existing duration or
+period when both fields are cleared. The advanced editor skips empty period rows
+and blank duration drafts; saving unchanged pauses does not increment revisions.
+Explicit Remove actions still delete pauses, while partially entered invalid
+pauses still show validation messages. A start without an end remains a valid
+active pause.
+
+Validation: all 47 QML interaction tests passed, including four new regression
+tests covering blank drafts, unchanged persisted revisions, partial input, and
+explicit removal. Whitespace checks passed.

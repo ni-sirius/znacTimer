@@ -10,6 +10,8 @@ AppDialog {
     property var editTarget: ({})
     property var periods: []
     property bool loading: false
+    property bool periodsRemoved: false
+    property string originalValue: ""
     objectName: "cellEditorDialog"
     title: editColumn === 1 ? "Special day" : "Interruption"
     modal: true
@@ -26,10 +28,12 @@ AppDialog {
         editColumn = column
         editTarget = controller.beginCellEdit(row, column)
         let value = controller.cellValue(row, column)
+        originalValue = value
         special.currentIndex = Math.max(0, special.find(value))
         special.editText = value
         raw.text = value
         periods = []
+        periodsRemoved = false
         if (column === 4 && value.indexOf("-") >= 0) {
             periods = value.split(";").map(function(part) {
                 let ends = part.trim().split("-")
@@ -47,14 +51,18 @@ AppDialog {
         let result = []
         for (let i = 0; i < periodRows.count; ++i) {
             let item = periodRows.itemAt(i)
-            result.push(item.startValue.text.trim() + "-" + (item.endValue.text.trim() || "..."))
+            let start = item.startValue.text.trim()
+            let end = item.endValue.text.trim()
+            if (start === "" && end === "") continue
+            result.push(start + "-" + (end || "..."))
         }
-        return result.join(";")
+        return result.length ? result.join(";") : (periodsRemoved && periodRows.count === 0 ? "00:00" : null)
     }
 
     onAccepted: {
         let value = editColumn === 1 ? special.editText
                                     : (mode.currentIndex === 1 ? periodText() : raw.text)
+        if (editColumn === 4 && (value === null || value.trim() === "" || value === originalValue)) return
         controller.commitCellEdit(editTarget, value)
     }
 
@@ -73,6 +81,7 @@ AppDialog {
         AppComboBox {
             colors: dialog.controller.state.colors
             id: mode
+            objectName: "interruptionMode"
             visible: dialog.editColumn === 4
             Layout.fillWidth: true
             model: ["Duration or text", "Individual periods"]
@@ -118,6 +127,7 @@ AppDialog {
                         Accessible.name: "Pause end, or blank for an active pause"
                     }
                     AppButton {
+                        objectName: "removePausePeriod_" + periodRow.index
                         colors: dialog.controller.state.colors
                         text: "Remove"
                         Accessible.name: "Remove pause period"
@@ -128,12 +138,14 @@ AppDialog {
                                 if (i !== periodRow.index)
                                     values.push({start: item.startValue.text, end: item.endValue.text})
                             }
+                            dialog.periodsRemoved = true
                             dialog.periods = values
                         }
                     }
                 }
             }
             AppButton {
+                objectName: "addPausePeriod"
                 colors: dialog.controller.state.colors
                 text: "Add period"
                 onClicked: {

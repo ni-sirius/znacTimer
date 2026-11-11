@@ -14,6 +14,7 @@ FocusScope {
     function focusStart() { start.forceActiveFocus(); start.selectAll() }
     function typeStart(value) { start.typeStart(value) }
     function resolvedValue() {
+        if (!removed && start.text.trim() === "" && end.text.trim() === "") return null
         let parts = value.indexOf("-") >= 0 ? value.split(";") : []
         let index = target.period_index
         if (removed) {
@@ -72,6 +73,7 @@ FocusScope {
             Accessible.name: "Pause end, or blank for active pause"
         }
         AppButton {
+            objectName: "removeInlinePause"
             colors: editor.colors
             visible: editor.target.action === "edit" || editor.target.action === "replace"
             text: "−"

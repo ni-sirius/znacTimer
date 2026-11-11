@@ -467,7 +467,10 @@ Surface {
                             colors: root.colors
                             value: cell.editValue
                             target: root.interruptionTarget
-                            function save() { root.controller.editCell(cell.row, 4, resolvedValue()) }
+                            function save() {
+                                const value = resolvedValue()
+                                if (value !== null) root.controller.editCell(cell.row, 4, value)
+                            }
                             onFinishRequested: { save(); table.closeEditor() }
                         }
                     }

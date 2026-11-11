@@ -59,7 +59,8 @@ class QuickUITest(unittest.TestCase):
     def find(self, name):
         item = self.window.window.findChild(QObject, name)
         if item is None:
-            pending = [self.window.window.contentItem()]
+            pending = [self.window.window.contentItem(),
+                       *(host.contentItem() for host in self._dialog_windows if isValid(host))]
             while pending:
                 candidate = pending.pop()
                 if candidate.objectName() == name:
@@ -837,6 +838,93 @@ class QuickUITest(unittest.TestCase):
                             self.assertEqual(image.pixelColor(x, y + pixel), expected, context)
                         self.assertNotEqual(image.pixelColor(x, y - 1), colors[0], context)
                         self.assertNotEqual(image.pixelColor(x, y + pixels), colors[-1], context)
+
+    def test_blank_inline_pause_is_ignored_on_enter_badge_and_button_click(self):
+        notices = []
+        self.window.controller.notification.connect(lambda *args: notices.append(args))
+        for finish in ("enter", "badge", "button"):
+            self.click(self.find("monthCell_0_4"))
+            self.assertEqual(self.find("pauseStartEditor").property("text"), "")
+            self.assertEqual(self.find("pauseEndEditor").property("text"), "")
+            if finish == "enter":
+                QTest.keyClick(self.window.window, Qt.Key_Return)
+            elif finish == "badge":
+                self.click(self.find("monthCell_0_2"))
+                self.assertFalse(self.find("monthCell_0_2").property("editing"))
+            else:
+                self.click(self.find("todayButton"))
+            self.app.processEvents()
+            self.assertEqual(notices, [])
+            self.assertFalse(self.find("monthCell_0_4").property("editing"))
+            state = self.window.controller.state
+            self.assertIsNone(self.repo.load_month(state["year"], state["month"]))
+
+    def test_cleared_pause_endpoints_preserve_existing_duration_or_periods(self):
+        controller = self.window.controller
+        controller.editCell(0, 2, "08:00")
+        for value, target in (("00:45", {"action": "replace", "period_index": None}),
+                              ("12:00-12:30;14:00-14:15", {"action": "edit", "period_index": 0})):
+            controller.editCell(0, 4, value)
+            state = controller.state
+            before = self.repo.load_month(state["year"], state["month"])
+            self.invoke(self.find("monthTableSurface"), "editInterruption", 0, target)
+            self.find("pauseStartEditor").setProperty("text", " ")
+            self.find("pauseEndEditor").setProperty("text", " ")
+            QTest.keyClick(self.window.window, Qt.Key_Return)
+            self.app.processEvents()
+            self.assertEqual(controller.cellValue(0, 4), value)
+            self.assertEqual(self.repo.load_month(state["year"], state["month"]), before)
+            self.assertFalse(self.find("notificationDialog").property("visible"))
+        self.invoke(self.find("monthTableSurface"), "editInterruption", 0, {"action": "edit", "period_index": 0})
+        self.click(self.find("removeInlinePause"))
+        self.assertEqual(controller.cellValue(0, 4), "14:00-14:15")
+
+    def test_partially_filled_pause_still_validates_and_start_only_saves(self):
+        controller = self.window.controller
+        controller.editCell(0, 2, "08:00")
+        self.click(self.find("monthCell_0_4"))
+        self.find("pauseEndEditor").setProperty("text", "12:30")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(self.find("notificationDialog").property("title"), "Invalid interruption")
+        self.assertEqual(controller.cellValue(0, 4), "00:00")
+        self.invoke(self.find("notificationDialog"), "accept")
+        self.window.window.requestActivate()
+        self.app.processEvents()
+        self.click(self.find("monthCell_0_4"))
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "pauseStartEditor")
+        self.type_text("12:00")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(controller.cellValue(0, 4), "12:00-...")
+
+    def test_modal_pause_ignores_blank_rows_but_preserves_explicit_removal(self):
+        controller = self.window.controller
+        controller.editCell(0, 2, "08:00")
+        controller.editCell(0, 4, "12:00-12:30")
+        state = controller.state
+        before = self.repo.load_month(state["year"], state["month"])
+        dialog = self.find("cellEditorDialog")
+        self.dialog_window(dialog)
+        self.invoke(dialog, "edit", 0, 4)
+        self.invoke(self.find("addPausePeriod"), "clicked")
+        self.invoke(dialog, "accept")
+        self.assertEqual(controller.cellValue(0, 4), "12:00-12:30")
+        self.assertFalse(self.find("notificationDialog").property("visible"))
+        self.invoke(dialog, "edit", 0, 4)
+        self.find("interruptionMode").setProperty("currentIndex", 0)
+        self.find("interruptionInput").setProperty("text", " ")
+        self.invoke(dialog, "accept")
+        self.assertEqual(self.repo.load_month(state["year"], state["month"]), before)
+        self.invoke(dialog, "edit", 0, 4)
+        dialog.setProperty("periods", [{"start": " ", "end": " "}])
+        self.app.processEvents()
+        self.invoke(dialog, "accept")
+        self.assertEqual(self.repo.load_month(state["year"], state["month"]), before)
+        self.invoke(dialog, "edit", 0, 4)
+        self.invoke(self.find("removePausePeriod_0"), "clicked")
+        self.invoke(dialog, "accept")
+        self.assertEqual(controller.cellValue(0, 4), "00:00")
 
     def test_inline_interruption_editor_commits_selected_period(self):
         self.window.controller.editCell(0, 2, "08:00")
