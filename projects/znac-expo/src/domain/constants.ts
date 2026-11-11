@@ -18,8 +18,12 @@ export const VACATION_DAY = "Vacation";
 export const NO_DATA_DAY = "No data";
 
 export function isNormalDay(value: unknown): boolean {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  return normalized === "" || normalized === NORMAL_DAY.toLowerCase();
+  const normalized = String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  return ["", "normal day", "regular day", "filled regular day", "not filled regular day"].includes(normalized);
+}
+
+export function normalizeDayType(value: string): string {
+  return isNormalDay(value) ? NORMAL_DAY : value.trim();
 }
 
 export type DayStatus =

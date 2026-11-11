@@ -6,6 +6,7 @@ import type {
   ZnacRepository,
 } from "../../db/repository.types";
 import type { WorkSchedulePeriod } from "../../domain/models";
+import { useMonthStore } from "../monthStore";
 import { useSettingsStore } from "../settingsStore";
 
 vi.mock("../../db", () => ({
@@ -54,9 +55,10 @@ describe("useSettingsStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+    useMonthStore.setState({ selectedYear: 2026, selectedMonth: 10 });
   });
 
-  it("loads persisted app settings and the first schedule", async () => {
+  it("loads persisted app settings and the applicable schedule", async () => {
     const schedule = workSchedule();
     const repo = repositoryMock({
       getAppSettings: vi.fn().mockResolvedValue(
@@ -79,6 +81,21 @@ describe("useSettingsStore", () => {
       loading: false,
       error: null,
     });
+  });
+
+  it("selects the schedule for the viewed month instead of the seeded default or future period", async () => {
+    const current = workSchedule({ publicId: "october", effectiveFrom: "2026-10-01", effectiveTo: "2026-10-31" });
+    repositoryMock({
+      listWorkSchedules: vi.fn().mockResolvedValue([
+        workSchedule({ publicId: "default", effectiveFrom: "0001-01-01", effectiveTo: "2026-09-30" }),
+        current,
+        workSchedule({ publicId: "future", effectiveFrom: "2026-11-01" }),
+      ]),
+    });
+
+    await useSettingsStore.getState().load();
+
+    expect(useSettingsStore.getState().schedule).toEqual(current);
   });
 
   it("persists theme mode through repository settings", async () => {

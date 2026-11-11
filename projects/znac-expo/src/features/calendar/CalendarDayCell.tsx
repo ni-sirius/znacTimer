@@ -36,6 +36,7 @@ export function CalendarDayCell({ cell, onPress }: CalendarDayCellProps) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={cell.date + (cell.isToday ? ", Today" : "")}
       disabled={disabled}
       onPress={() => onPress(cell.date)}
       style={({ pressed }) => [
@@ -62,6 +63,7 @@ export function CalendarDayCell({ cell, onPress }: CalendarDayCellProps) {
             !cell.inSelectedMonth && styles.outsideMonthText,
           ]}
           numberOfLines={1}
+          adjustsFontSizeToFit
         >
           {cell.dayNumber}
         </Text>
@@ -78,8 +80,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   circle: {
-    width: 40,
-    height: 40,
+    width: "94%",
+    minHeight: 36,
+    aspectRatio: 1,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.radius.pill,

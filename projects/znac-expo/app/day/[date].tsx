@@ -1,8 +1,7 @@
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo } from "react";
-import { Alert, StyleSheet, Text } from "react-native";
+import { StyleSheet, Text } from "react-native";
 
-import { deriveWorkdayState } from "../../src/db/repository";
 import { recalculateDayRecords } from "../../src/domain/calculator";
 import { isNormalDay } from "../../src/domain/constants";
 import type { DayRecord, IsoDate, MonthRecord } from "../../src/domain/models";
@@ -34,10 +33,6 @@ export default function DayDetailsScreen() {
   const updateDay = useMonthStore((state) => state.updateDay);
 
   const today = useWorkdayStore((state) => state.today);
-  const startForDate = useWorkdayStore((state) => state.startForDate);
-  const resumeForDate = useWorkdayStore((state) => state.resumeForDate);
-  const stopForDate = useWorkdayStore((state) => state.stopForDate);
-  const workdayError = useWorkdayStore((state) => state.error);
 
   useEffect(() => {
     if (!date || !routeMonth) {
@@ -67,15 +62,7 @@ export default function DayDetailsScreen() {
   }, [month, today]);
 
   const day = date ? selectDayByIsoDate(calculatedMonth, date) : null;
-  const details = day ? selectDayDetails(day) : null;
-  const isToday = date === today;
-  const workdayState =
-    date && calculatedMonth
-      ? deriveWorkdayState(day, calculatedMonth.status, date)
-      : {
-          status: "unavailable" as const,
-          reason: "Day is unavailable",
-        };
+  const details = day ? selectDayDetails(day, today) : null;
   const actionsDisabled = calculatedMonth?.status === "closed" || !day;
   const canClearDay = day ? hasClearableDayData(day) : false;
 
@@ -101,32 +88,39 @@ export default function DayDetailsScreen() {
 
       {details && day && (
         <>
-          <DayIdentityPanel details={details} />
-          <Text style={styles.hintText}>Tap a value to edit.</Text>
-          <DayMetricsPanel
+          <DayIdentityPanel
+            key={day.workDate}
             day={day}
             details={details}
             disabled={actionsDisabled}
-            interruptionsDisabled={actionsDisabled}
-            onEditInterruptions={() =>
-              openInterruptionsEditor(date, day)
+            saveError={error}
+            onUpdate={(changes, expectedRevision) =>
+              updateDay(day.workDate, changes, expectedRevision)
             }
+          />
+          <Text style={styles.hintText}>
+            {calculatedMonth?.status === "closed"
+              ? "This month is closed. Reopen it in Calendar to edit."
+              : "Tap a value to edit."}
+          </Text>
+          <DayMetricsPanel
+            key={day.workDate + "-" + day.revision}
+            day={day}
+            details={details}
+            disabled={actionsDisabled}
+            today={today}
+            saveError={error}
+            onEditInterruption={(publicId) => router.push({
+              pathname: "/modals/break-editor",
+              params: { date, ...(publicId ? { breakId: publicId } : {}) },
+            })}
             onUpdate={(changes, expectedRevision) =>
               updateDay(day.workDate, changes, expectedRevision)
             }
           />
           <DayActionsPanel
-            state={workdayState}
             disabled={actionsDisabled}
-            isToday={isToday}
             canClear={canClearDay}
-            onPrimaryPress={() =>
-              handlePrimaryAction(date, workdayState, {
-                startForDate,
-                resumeForDate,
-              })
-            }
-            onStopPress={() => stopForDate(date, currentMinuteOfDay())}
             onClearDay={() =>
               router.push({
                 pathname: "/modals/delete-day",
@@ -143,43 +137,11 @@ export default function DayDetailsScreen() {
         </Text>
       )}
 
-      {(error || workdayError) && (
-        <Text style={styles.errorText}>{error ?? workdayError}</Text>
+      {error && (
+        <Text style={styles.errorText}>{error}</Text>
       )}
     </Screen>
   );
-}
-
-function openInterruptionsEditor(workDate: IsoDate, day: DayRecord) {
-  if (day.startMinute === null) {
-    Alert.alert(
-      "Cannot add interruptions",
-      "Start the day before adding interruptions.",
-    );
-    return;
-  }
-
-  router.push({
-    pathname: "/modals/break-editor",
-    params: { date: workDate },
-  });
-}
-
-function handlePrimaryAction(
-  workDate: IsoDate,
-  state: ReturnType<typeof deriveWorkdayState>,
-  actions: {
-    startForDate: (workDate: IsoDate, minute: number) => Promise<void>;
-    resumeForDate: (workDate: IsoDate, minute: number) => Promise<void>;
-  },
-) {
-  const minute = currentMinuteOfDay();
-
-  if (state.status === "idle") {
-    actions.startForDate(workDate, minute);
-  } else if (state.status === "paused") {
-    actions.resumeForDate(workDate, minute);
-  }
 }
 
 function hasClearableDayData(day: DayRecord): boolean {
@@ -211,12 +173,6 @@ function monthMatchesDate(month: MonthRecord | null, date: IsoDate): boolean {
   }
 
   return month.year === routeMonth.year && month.month === routeMonth.month;
-}
-
-function currentMinuteOfDay(): number {
-  const date = new Date();
-
-  return date.getHours() * 60 + date.getMinutes();
 }
 
 const styles = StyleSheet.create({

@@ -51,8 +51,14 @@ export type MonthClosePreview = {
   unresolvedDays: IsoDate[];
 };
 
+export type MonthExportPeriod = {
+  from: Pick<MonthRecord, "year" | "month">;
+  to: Pick<MonthRecord, "year" | "month">;
+};
+
 export type BackupTarget = {
   uri: string;
+  period?: MonthExportPeriod;
 };
 
 export type ZnacRepository = {
@@ -64,11 +70,15 @@ export type ZnacRepository = {
 
   listMonths(year?: number): Promise<MonthRecord[]>;
 
+  readCalendarYear(year: number): Promise<MonthRecord[]>;
+
   updateDay(
     workDate: IsoDate,
     changes: DayChanges,
     expectedRevision: number,
   ): Promise<DayRecord>;
+
+  clearDay(workDate: IsoDate, expectedRevision: number): Promise<DayRecord>;
 
   previewMonthClose(year: number, month: number): Promise<MonthClosePreview>;
 
@@ -108,7 +118,7 @@ export type ZnacRepository = {
     workDate: IsoDate,
     minute: number,
     now: string,
-    replaceDuration: boolean,
+    replaceDuration?: boolean,
   ): Promise<DayRecord>;
 
   resumeWorkday(
@@ -141,6 +151,7 @@ export type DayEntryRow = {
   expected_work_minutes: number;
   expected_minutes_overridden: number;
   revision: number;
+  local_input_revision: number;
   daily_overtime_minutes: number | null;
   running_balance_minutes: number | null;
 };

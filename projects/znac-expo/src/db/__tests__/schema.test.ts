@@ -1,78 +1,76 @@
+/// <reference types="node" />
+import { DatabaseSync } from "node:sqlite";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { migrateDatabase, schemaMatches } from "../migrations";
+import { createRepository } from "../repository";
+import { databaseFor } from "./sqliteTestDatabase";
 
-import { CREATE_SCHEMA_SQL, CURRENT_SCHEMA_VERSION } from "../schema";
+const python = resolve("../znacpy/.venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 
-describe("database schema", () => {
-  it("defines the initial schema version", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(1);
+describe("shared Python database contract", () => {
+  it("keeps the generated SQL, complete schema manifest and migrations identical to Python", () => {
+    expect(execFileSync(existsSync(python) ? python : "python", ["scripts/sync-python-schema.py", "--check"], { encoding: "utf8" })).toContain("match the Python reference");
   });
 
-  it("creates all tables required by the stage 3 storage layer", () => {
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "CREATE TABLE IF NOT EXISTS schema_migrations",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS datasets");
-    expect(CREATE_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS months");
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "CREATE TABLE IF NOT EXISTS day_entries",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "CREATE TABLE IF NOT EXISTS break_entries",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "CREATE TABLE IF NOT EXISTS work_schedule_periods",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "CREATE TABLE IF NOT EXISTS app_settings",
-    );
+  it("creates exactly the canonical STRICT tables, indexes, guards and version metadata", async () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      const adapter = databaseFor(db);
+      await migrateDatabase(adapter);
+      expect(await schemaMatches(adapter)).toBe(true);
+      expect(db.prepare("PRAGMA user_version").get()?.user_version).toBe(7);
+      expect(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='trigger'").get()?.count).toBe(23);
+      expect(db.prepare("SELECT app_version FROM schema_migrations").get()?.app_version).toBeTruthy();
+      expect(db.prepare("SELECT COUNT(*) AS count FROM work_schedule_periods").get()?.count).toBe(1);
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE name='app_settings'").get()).toBeUndefined();
+    } finally { db.close(); }
   });
 
-  it("seeds the default dataset for fresh installs", () => {
-    expect(CREATE_SCHEMA_SQL).toContain("INSERT OR IGNORE INTO datasets");
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "'00000000-0000-4000-8000-000000000001'",
-    );
-  });
-
-  it("keeps day dates attached to their parent month", () => {
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "day_entries_work_date_matches_month_insert",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "day_entries_work_date_matches_month_update",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "NEW.work_date LIKE printf('%04d-%02d-%%', months.year, months.month)",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "ZT:VALIDATION:DAY_PARENT_OR_DATE",
-    );
-  });
-
-  it("prevents mixed break duration and explicit break rows", () => {
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "break_entries_reject_duration_day_insert",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "day_entries_reject_duration_with_breaks_update",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "ZT:VALIDATION:BREAK_REPRESENTATION",
-    );
-  });
-
-  it("enforces important domain constraints", () => {
-    expect(CREATE_SCHEMA_SQL).toContain("UNIQUE (dataset_id, year, month)");
-    expect(CREATE_SCHEMA_SQL).toContain("UNIQUE (month_id, work_date)");
-    expect(CREATE_SCHEMA_SQL).toContain("UNIQUE (dataset_id, effective_from)");
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "idx_break_entries_single_open",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "CHECK (start_minute BETWEEN 0 AND 1439)",
-    );
-    expect(CREATE_SCHEMA_SQL).toContain(
-      "CHECK (expected_minutes_overridden IN (0, 1))",
-    );
+  it.skipIf(!existsSync(python))("opens and edits the same database with both real repositories", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "znactime-parity-"));
+    const file = join(directory, "shared.db");
+    let db = new DatabaseSync(file);
+    try {
+      await migrateDatabase(databaseFor(db));
+      let repo = createRepository(databaseFor(db));
+      const day = await repo.updateDay("2025-09-01", { startMinute: 540, endMinute: 1020 }, 0);
+      await repo.updateDay(day.workDate, { breakDurationMinutes: 30 }, day.revision);
+      const month = (await repo.loadMonth(2025, 9))!;
+      await repo.closeMonth(2025, 9, month.revision, true);
+      db.close();
+      const metadata = join(directory, "znactime-test.dist-info");
+      mkdirSync(metadata);
+      const appVersion = /^version\s*=\s*"([^"]+)"/m.exec(readFileSync(resolve("../znacpy/pyproject.toml"), "utf8"))![1];
+      writeFileSync(join(metadata, "METADATA"), `Metadata-Version: 2.1\nName: znactime\nVersion: ${appVersion}\n`);
+      const script = `import sys, json
+sys.path.insert(0, sys.argv[2])
+from datetime import date
+from znactime.storage.sqlite.repository import SQLiteRepository
+r=SQLiteRepository(sys.argv[1])
+m=r.load_month(2025,9)
+assert m.closing_balance_minutes == -30
+r.reopen_month(2025,9,expected_revision=m.revision)
+d=r.load_month(2025,9).days[0]
+r.update_day(date(2025,9,1),end_minute=1050,fields=frozenset(('end_minute',)),expected_revision=d.revision)
+r.close()
+print('python-read-write-ok')`;
+      expect(execFileSync(python, ["-c", script, file, directory], { cwd: resolve("../znacpy"), encoding: "utf8", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } })).toContain("python-read-write-ok");
+      db = new DatabaseSync(file);
+      repo = createRepository(databaseFor(db));
+      const reopened = (await repo.loadMonth(2025, 9))!;
+      expect(reopened).toMatchObject({ status: "open", closingBalanceMinutes: null });
+      expect(reopened.days[0]).toMatchObject({ startMinute: 540, endMinute: 1050, breakDurationMinutes: 30 });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM closed_day_results").get()?.count).toBe(0);
+      const closed = await repo.closeMonth(2025, 9, reopened.revision, true);
+      expect(closed.closingBalanceMinutes).toBe(0);
+      expect(await schemaMatches(databaseFor(db))).toBe(true);
+    } finally {
+      if (db.isOpen) db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

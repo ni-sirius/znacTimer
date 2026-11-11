@@ -2,6 +2,13 @@ import { deriveWorkdayState } from "../db/repository";
 import type { WorkdayState } from "../db/repository.types";
 import type { IsoDate, MonthRecord } from "../domain/models";
 
+export function selectTodayMonth(
+  state: { monthsByPeriod: Record<string, MonthRecord> },
+  today: IsoDate,
+): MonthRecord | null {
+  return state.monthsByPeriod[today.slice(0, 7)] ?? null;
+}
+
 export function selectDayByIsoDate(
   month: MonthRecord | null,
   workDate: IsoDate,

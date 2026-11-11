@@ -14,6 +14,7 @@ const ITEMS: { label: string; type: CalendarDayVisualType }[] = [
   { label: "Sick", type: "sick" },
   { label: "Vacation", type: "vacation" },
   { label: "Holiday", type: "holiday" },
+  { label: "No data", type: "missing" },
 ];
 
 export function DayTypeLegend() {
@@ -34,6 +35,14 @@ export function DayTypeLegend() {
             <Text style={styles.label}>{item.label}</Text>
           </View>
         ))}
+        <View style={styles.item}>
+          <View style={[styles.swatch, styles.today]} />
+          <Text style={styles.label}>Today · outline</Text>
+        </View>
+        <View style={styles.item}>
+          <View style={[styles.swatch, styles.outside]} />
+          <Text style={styles.label}>Adjacent month · dimmed</Text>
+        </View>
       </View>
     </Panel>
   );
@@ -66,4 +75,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
+  today: { borderWidth: 1, borderColor: theme.colors.primary },
+  outside: { backgroundColor: theme.colors.textMuted, opacity: 0.32 },
 });

@@ -14,6 +14,7 @@ type OverviewSummaryBarProps = {
   today: IsoDate;
   carryOverText: string;
   overtimeText: string;
+  showPreviousMonthWarning?: boolean;
   onPressPeriod: () => void;
 };
 
@@ -23,6 +24,7 @@ export function OverviewSummaryBar({
   today,
   carryOverText,
   overtimeText,
+  showPreviousMonthWarning = false,
   onPressPeriod,
 }: OverviewSummaryBarProps) {
   return (
@@ -50,6 +52,12 @@ export function OverviewSummaryBar({
         <SummaryMetric label="Carry over" value={carryOverText} />
         <SummaryMetric label="Overtime" value={overtimeText} />
       </View>
+      {showPreviousMonthWarning && (
+        <Text accessibilityRole="alert" style={styles.warning}>
+          Previous month is not closed. Carry over stays at 0 until it is closed.
+          {" "}Please close the previous month in Calendar.
+        </Text>
+      )}
     </View>
   );
 }
@@ -90,15 +98,23 @@ function todaySummary(today: IsoDate): string {
 }
 
 const styles = StyleSheet.create({
+  warning: {
+    width: "100%",
+    color: theme.colors.danger,
+    fontSize: 12,
+    lineHeight: 18,
+    paddingBottom: theme.spacing.sm,
+  },
   bar: {
-    minHeight: 72,
+    minHeight: 56,
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: theme.spacing.md,
   },
   period: {
     flex: 1,
-    minWidth: 0,
+    minWidth: 140,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing.sm,
@@ -130,7 +146,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: StyleSheet.hairlineWidth,
   },
   metric: {
-    minWidth: 78,
+    minWidth: 68,
     paddingLeft: theme.spacing.md,
   },
   metricLabel: {

@@ -14,6 +14,7 @@ type DayRow = {
   expected_work_minutes: number;
   expected_minutes_overridden: number;
   revision: number;
+  local_input_revision?: number;
   daily_overtime_minutes: number | null;
   running_balance_minutes: number | null;
 };
@@ -72,6 +73,7 @@ export function dayRecordFromRows(
     expectedWorkMinutes: dayRow.expected_work_minutes,
     expectedMinutesOverridden: dayRow.expected_minutes_overridden === 1,
     revision: dayRow.revision,
+    localInputRevision: dayRow.local_input_revision ?? 0,
     dailyOvertimeMinutes: dayRow.daily_overtime_minutes,
     runningBalanceMinutes: dayRow.running_balance_minutes,
   };

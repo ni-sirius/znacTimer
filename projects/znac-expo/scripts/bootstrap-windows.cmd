@@ -7,7 +7,7 @@ set "NODE_VERSION=not installed"
 call :check_node
 if not errorlevel 1 goto node_ready
 
-echo Node.js %NODE_VERSION% does not meet the Expo SDK 57 requirement.
+echo Node.js %NODE_VERSION% does not meet the Expo SDK 58 requirement.
 where winget.exe >nul 2>nul
 if errorlevel 1 goto node_manual_install
 

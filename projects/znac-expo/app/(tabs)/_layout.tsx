@@ -1,6 +1,6 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { Tabs } from "expo-router";
-import { NativeTabs } from "expo-router/unstable-native-tabs";
+import { NativeTabs } from "expo-router/native-tabs";
 import type { ComponentProps } from "react";
 import { Platform } from "react-native";
 
@@ -39,7 +39,11 @@ function IosNativeTabs() {
       }}
     >
       {MAIN_TABS.map((tab) => (
-        <NativeTabs.Trigger key={tab.name} name={tab.name}>
+        <NativeTabs.Trigger
+          key={tab.name}
+          name={tab.name}
+          disableAutomaticContentInsets={tab.name === "index"}
+        >
           <NativeTabs.Trigger.Icon
             sf={{
               default: tab.iosIcon.default,
@@ -78,7 +82,11 @@ function AndroidTabs() {
             tabBarIcon: ({ color, size }) => (
               <MaterialIcons
                 name={tab.androidIcon as MaterialIconName}
-                color={color}
+                color={
+                  typeof color === "number" || color == null
+                    ? darkTheme.colors.primary
+                    : color
+                }
                 size={size}
               />
             ),

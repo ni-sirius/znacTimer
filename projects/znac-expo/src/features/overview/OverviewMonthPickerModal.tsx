@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react-native";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getMobileTheme } from "../../theme";
+import { AppButton } from "../../ui";
 
 const theme = getMobileTheme("dark");
 const ACTIVE_SELECTION_COLOR = theme.colors.primary;
@@ -25,6 +26,7 @@ type OverviewMonthPickerModalProps = {
   visible: boolean;
   year: number;
   month: number;
+  selectedYear: number;
   onClose: () => void;
   onChangeYear: (year: number) => void;
   onSelect: (year: number, month: number) => void;
@@ -34,6 +36,7 @@ export function OverviewMonthPickerModal({
   visible,
   year,
   month,
+  selectedYear,
   onClose,
   onChangeYear,
   onSelect,
@@ -57,6 +60,7 @@ export function OverviewMonthPickerModal({
           <View style={styles.yearRow}>
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Previous year"
               onPress={() => onChangeYear(year - 1)}
               style={styles.yearButton}
             >
@@ -69,6 +73,7 @@ export function OverviewMonthPickerModal({
 
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Next year"
               onPress={() => onChangeYear(year + 1)}
               style={styles.yearButton}
             >
@@ -79,7 +84,7 @@ export function OverviewMonthPickerModal({
           <View style={styles.monthGrid}>
             {MONTHS.map((label, index) => {
               const value = index + 1;
-              const active = value === month;
+              const active = value === month && year === selectedYear;
 
               return (
                 <Pressable
@@ -100,6 +105,14 @@ export function OverviewMonthPickerModal({
               );
             })}
           </View>
+          <AppButton
+            title="Current month"
+            variant="secondary"
+            onPress={() => {
+              const now = new Date();
+              onSelect(now.getFullYear(), now.getMonth() + 1);
+            }}
+          />
         </Pressable>
       </Pressable>
     </Modal>

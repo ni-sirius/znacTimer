@@ -11,7 +11,8 @@ import { createRepository, getDatabase } from "../../db";
 import type { ZnacRepository } from "../../db/repository.types";
 import type { DayRecord, MonthRecord } from "../../domain/models";
 import { useMonthStore } from "../monthStore";
-import { selectTodayWorkdayState } from "../selectors";
+import { selectTodayMonth, selectTodayWorkdayState } from "../selectors";
+import { expectedEndText } from "../../features/overview/overviewFormat";
 import { useWorkdayStore } from "../workdayStore";
 
 vi.mock("../../db", () => ({
@@ -148,13 +149,13 @@ describe("useWorkdayStore", () => {
     vi.setSystemTime(new Date(2026, 6, 7, 12, 0));
     useWorkdayStore.setState({ today: "2026-07-07" });
 
-    await useWorkdayStore.getState().pause(720, true);
+    await useWorkdayStore.getState().pause(720);
 
     expect(repo.startPause).toHaveBeenCalledWith(
       "2026-07-07",
       720,
       expect.any(String),
-      true,
+      false,
     );
     expect(useWorkdayStore.getState()).not.toHaveProperty("pauseStartMinute");
     expect(useWorkdayStore.getState()).not.toHaveProperty("state");
@@ -207,5 +208,56 @@ describe("useWorkdayStore", () => {
       pauseStartMinute: 720,
       canStop: true,
     });
+  });
+
+  it("keeps the viewed month through all workday actions and derives the player from refreshed data", async () => {
+    vi.setSystemTime(new Date(2026, 6, 7, 9, 0));
+    useWorkdayStore.setState({ today: "2026-07-07" });
+    const june = monthRecord({ month: 6, days: [] });
+    useMonthStore.setState({ selectedYear: 2026, selectedMonth: 6, month: june });
+    let current = dayRecord();
+    repositoryMock({
+      viewMonth: vi.fn(async () => monthRecord({ days: [current] })),
+      startWorkday: vi.fn(async () => (current = dayRecord({ startMinute: 540 }))),
+      startPause: vi.fn(async () => (current = {
+        ...current,
+        breaks: [{ publicId: "pause", position: 0, startMinute: 720, endMinute: null, revision: 1 }],
+      })),
+      resumeWorkday: vi.fn(async () => (current = {
+        ...current,
+        breaks: [{ ...current.breaks[0], endMinute: 750 }],
+      })),
+      stopWorkday: vi.fn(async () => (current = { ...current, endMinute: 1050 })),
+    });
+    const playerState = () => selectTodayWorkdayState(selectTodayMonth(useMonthStore.getState(), "2026-07-07"), "2026-07-07");
+
+    await useWorkdayStore.getState().start(540);
+    expect(playerState().status).toBe("working");
+    expect(expectedEndText(current)).toBe("17:00");
+    await useWorkdayStore.getState().pause(720);
+    expect(playerState()).toMatchObject({ status: "paused", pauseStartMinute: 720 });
+    await useWorkdayStore.getState().resume(750);
+    expect(playerState().status).toBe("working");
+    expect(expectedEndText(current)).toBe("17:30");
+    await useWorkdayStore.getState().stop(1050);
+    expect(playerState().status).toBe("complete");
+    expect(expectedEndText(current)).toBeNull();
+    expect(useMonthStore.getState()).toMatchObject({ selectedYear: 2026, selectedMonth: 6, month: june });
+  });
+
+  it("refreshes a new local day without changing the viewed year or month", async () => {
+    vi.setSystemTime(new Date(2027, 0, 1, 0, 1));
+    useWorkdayStore.setState({ today: "2026-12-31" });
+    const december = monthRecord({ month: 12 });
+    useMonthStore.setState({ selectedYear: 2026, selectedMonth: 12, month: december });
+    const january = monthRecord({ year: 2027, month: 1, days: [dayRecord({ workDate: "2027-01-01" })] });
+    repositoryMock({ viewMonth: vi.fn().mockResolvedValue(january) });
+
+    await useWorkdayStore.getState().refresh();
+
+    expect(useWorkdayStore.getState().today).toBe("2027-01-01");
+    expect(useMonthStore.getState().month).toBe(december);
+    expect(useMonthStore.getState().selectedMonth).toBe(12);
+    expect(selectTodayMonth(useMonthStore.getState(), "2027-01-01")).toBe(january);
   });
 });

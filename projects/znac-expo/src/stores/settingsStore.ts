@@ -4,6 +4,14 @@ import { createRepository, getDatabase } from "../db";
 import type { ThemeMode } from "../db/repository.types";
 import type { WorkSchedulePeriod } from "../domain/models";
 import { storeErrorMessage } from "./storeErrors";
+import { useMonthStore } from "./monthStore";
+
+function selectedSchedule(schedules: WorkSchedulePeriod[]) {
+  const { selectedYear, selectedMonth } = useMonthStore.getState();
+  const date = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-01`;
+  return [...schedules].reverse().find((schedule) => schedule.effectiveFrom <= date &&
+    (schedule.effectiveTo === null || schedule.effectiveTo >= date)) ?? null;
+}
 
 type SettingsStoreState = {
   themeMode: ThemeMode;
@@ -41,7 +49,7 @@ export const useSettingsStore = create<SettingsStoreState>((set) => ({
       set({
         themeMode: settings.themeMode,
         showExpectedEnd: settings.showExpectedEnd,
-        schedule: schedules[0] ?? null,
+        schedule: selectedSchedule(schedules),
         loading: false,
         error: null,
       });
@@ -119,7 +127,7 @@ export const useSettingsStore = create<SettingsStoreState>((set) => ({
         set({
           themeMode: settings.themeMode,
           showExpectedEnd: settings.showExpectedEnd,
-          schedule: schedules[0] ?? null,
+          schedule: selectedSchedule(schedules),
           error: storeErrorMessage(error),
         });
         return;

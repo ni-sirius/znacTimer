@@ -1,9 +1,10 @@
+import { dayTimeIssues, durationText, totalBreakMinutes, workingMinutes } from "../../domain/dayTime";
 import { NORMAL_DAY } from "../../domain/constants";
 import {
   calendarWeekTagIso,
   parseIsoDate,
 } from "../../domain/calendar";
-import type { BreakRecord, DayRecord, IsoDate } from "../../domain/models";
+import type { DayRecord, IsoDate } from "../../domain/models";
 import { minuteToClockText, signedMinuteText } from "../../domain/time";
 import { dayTypeInfo } from "../overview/overviewFormat";
 
@@ -51,10 +52,11 @@ export type DayDetailsViewModel = {
   monthlyBalanceTone: "default" | "positive" | "negative";
 };
 
-export function selectDayDetails(day: DayRecord): DayDetailsViewModel {
+export function selectDayDetails(day: DayRecord, today?: IsoDate): DayDetailsViewModel {
   const dayType = dayTypeInfo(day);
   const totalBreak = totalBreakMinutes(day.breaks, day.breakDurationMinutes);
-  const workedMinutes = workingMinutes(day, totalBreak);
+  const workedMinutes = workingMinutes(day);
+  const invalid = dayTimeIssues(day, false, today).length > 0;
 
   return {
     workDate: day.workDate,
@@ -71,11 +73,11 @@ export function selectDayDetails(day: DayRecord): DayDetailsViewModel {
     workingTimeText:
       workedMinutes === null ? "--:--" : durationText(workedMinutes),
     dailyOvertimeText:
-      day.dailyOvertimeMinutes === null
+      day.dailyOvertimeMinutes === null || invalid
         ? "--:--"
         : signedMinuteText(day.dailyOvertimeMinutes),
     monthlyBalanceText:
-      day.runningBalanceMinutes === null
+      day.runningBalanceMinutes === null || invalid
         ? "--:--"
         : signedMinuteText(day.runningBalanceMinutes),
     dailyOvertimeTone: minuteTone(day.dailyOvertimeMinutes),
@@ -123,7 +125,7 @@ function dateText(value: IsoDate): string {
     return value;
   }
 
-  return `${parsed.getDate()} ${MONTHS[parsed.getMonth()]} ${parsed.getFullYear()}`;
+  return `${parsed.getDate()} ${MONTHS[parsed.getMonth()]} (${String(parsed.getMonth() + 1).padStart(2, "0")}) ${parsed.getFullYear()}`;
 }
 
 function interruptionsText(day: DayRecord): string {
@@ -141,44 +143,6 @@ function interruptionsText(day: DayRecord): string {
   }
 
   return durationText(day.breakDurationMinutes ?? 0);
-}
-
-function workingMinutes(day: DayRecord, totalBreak: number): number | null {
-  if (
-    day.startMinute === null ||
-    day.endMinute === null ||
-    day.endMinute <= day.startMinute
-  ) {
-    return null;
-  }
-
-  return Math.max(0, day.endMinute - day.startMinute - totalBreak);
-}
-
-function totalBreakMinutes(
-  breaks: BreakRecord[],
-  breakDurationMinutes: number | null,
-): number {
-  if (breaks.length > 0) {
-    return breaks.reduce((total, item) => {
-      if (item.endMinute === null || item.endMinute <= item.startMinute) {
-        return total;
-      }
-
-      return total + item.endMinute - item.startMinute;
-    }, 0);
-  }
-
-  return breakDurationMinutes ?? 0;
-}
-
-function durationText(value: number): string {
-  const absolute = Math.abs(value);
-  const hours = Math.floor(absolute / 60);
-  const minutes = absolute % 60;
-  const sign = value < 0 ? "-" : "";
-
-  return `${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function minuteTone(

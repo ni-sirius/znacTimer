@@ -1,8 +1,10 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Pause, Play, RotateCcw, Square } from "lucide-react-native";
-import { StyleSheet, Text, View } from "react-native";
+import { AppState, StyleSheet, Text, View } from "react-native";
 
 import type { WorkdayState } from "../../db/repository.types";
+import type { DayRecord } from "../../domain/models";
+import { workdayElapsedText } from "./overviewFormat";
 import { minuteToClockText } from "../../domain/time";
 import { AppButton, Panel } from "../../ui";
 import { getMobileTheme } from "../../theme";
@@ -11,22 +13,37 @@ const theme = getMobileTheme("dark");
 
 type ActiveWorkdayCardProps = {
   state: WorkdayState;
-  elapsedText: string;
+  day: DayRecord | null;
+  expectedEndText: string | null;
+  loading?: boolean;
   onPrimaryPress: () => void;
   onStopPress: () => void;
 };
 
 export function ActiveWorkdayCard({
   state,
-  elapsedText,
+  day,
+  expectedEndText,
+  loading = false,
   onPrimaryPress,
   onStopPress,
 }: ActiveWorkdayCardProps) {
+  const [, refreshClock] = useState(0);
+  const active = state.status === "working" || state.status === "paused";
+  useEffect(() => {
+    if (!active) return;
+    const tick = () => refreshClock((value) => value + 1);
+    const timer = setInterval(tick, 1000);
+    const subscription = AppState.addEventListener("change", (next) => { if (next === "active") tick(); });
+    return () => { clearInterval(timer); subscription.remove(); };
+  }, [active]);
   const content = workdayContent(state);
+  const elapsed = workdayElapsedText(day, state);
   const canUsePrimary =
     state.status === "idle" ||
     state.status === "working" ||
-    state.status === "paused";
+    state.status === "paused" ||
+    state.status === "complete";
   const canStop =
     state.status === "working" ||
     (state.status === "paused" && state.canStop);
@@ -34,20 +51,22 @@ export function ActiveWorkdayCard({
   return (
     <Panel style={styles.panel}>
       <View style={styles.topRow}>
-        <View>
-          <Text style={styles.caption}>{content.caption}</Text>
+        <View style={styles.description}>
+          <Text style={styles.caption}>{content.caption}{elapsed !== null ? ` · Elapsed ${elapsed}` : ""}</Text>
           <Text style={styles.title}>{content.title}</Text>
         </View>
-        <View style={styles.elapsed}>
-          <Text style={styles.caption}>Elapsed</Text>
-          <Text style={styles.elapsedValue}>{elapsedText}</Text>
-        </View>
+        {state.status === "working" && (
+          <View style={styles.finish}>
+            <Text style={styles.caption}>Expected end</Text>
+            <Text style={styles.finishValue}>{expectedEndText ?? "--:--"}</Text>
+          </View>
+        )}
       </View>
       <View style={styles.actions}>
         <AppButton
           title={content.primaryLabel}
           variant={state.status === "idle" ? "success" : "primary"}
-          disabled={!canUsePrimary}
+          disabled={loading || !canUsePrimary}
           icon={content.primaryIcon}
           onPress={onPrimaryPress}
           style={styles.actionButton}
@@ -55,7 +74,7 @@ export function ActiveWorkdayCard({
         <AppButton
           title="Stop day"
           variant="danger"
-          disabled={!canStop}
+          disabled={loading || !canStop}
           icon={
             <Square
               color={
@@ -100,7 +119,7 @@ function workdayContent(state: WorkdayState): {
 
   if (state.status === "paused") {
     return {
-      caption: `Working since ${minuteToClockText(state.startMinute)}`,
+      caption: `Paused since ${minuteToClockText(state.pauseStartMinute)}`,
       title: "Current day is paused",
       primaryLabel: "Resume",
       primaryIcon: <RotateCcw color={theme.colors.onPrimary} size={18} />,
@@ -111,8 +130,8 @@ function workdayContent(state: WorkdayState): {
     return {
       caption: `${minuteToClockText(state.startMinute)} - ${minuteToClockText(state.endMinute)}`,
       title: "Workday complete",
-      primaryLabel: "Resume",
-      primaryIcon: <RotateCcw color={theme.colors.textMuted} size={18} />,
+      primaryLabel: "Play",
+      primaryIcon: <Play color={theme.colors.onPrimary} size={18} />,
     };
   }
 
@@ -126,11 +145,17 @@ function workdayContent(state: WorkdayState): {
 
 const styles = StyleSheet.create({
   panel: {
-    borderWidth: 0,
-    borderRadius: 0,
-    backgroundColor: theme.colors.shell,
+    borderColor: theme.colors.tabBarBorder,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 24,
+    backgroundColor: theme.colors.surfaceRaised,
     gap: theme.spacing.md,
-    padding: 0,
+    padding: theme.spacing.lg,
+    shadowColor: theme.colors.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   topRow: {
     flexDirection: "row",
@@ -149,10 +174,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
-  elapsed: {
+  description: {
+    flex: 1,
+  },
+  finish: {
     alignItems: "flex-end",
   },
-  elapsedValue: {
+  finishValue: {
     marginTop: 2,
     color: theme.colors.success,
     fontSize: 18,

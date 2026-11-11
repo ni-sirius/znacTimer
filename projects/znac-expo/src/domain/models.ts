@@ -16,11 +16,12 @@ export type DayRecord = {
   specialDay: string;
   startMinute: MinuteOfDay | null;
   endMinute: MinuteOfDay | null;
-  breakDurationMinutes: number | null;
+  breakDurationMinutes: number | null; // Duration-only representation; null when intervals are stored.
   breaks: BreakRecord[];
   expectedWorkMinutes: number;
   expectedMinutesOverridden: boolean;
   revision: number;
+  localInputRevision?: number; // Python's counter of explicit day edits; automatic calendar updates do not increment it.
   dailyOvertimeMinutes: number | null;
   runningBalanceMinutes: number | null;
 };

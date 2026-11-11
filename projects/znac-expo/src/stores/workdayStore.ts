@@ -44,7 +44,7 @@ function isoYearMonth(value: IsoDate): [number, number] {
 async function reloadMonthForDate(workDate: IsoDate): Promise<void> {
   const [year, month] = isoYearMonth(workDate);
 
-  await useMonthStore.getState().load(year, month);
+  await useMonthStore.getState().refreshMonth(year, month);
 }
 
 export const useWorkdayStore = create<WorkdayStoreState>((set, get) => ({
@@ -60,25 +60,21 @@ export const useWorkdayStore = create<WorkdayStoreState>((set, get) => ({
     }
 
     set({ today });
-
-    const [year, month] = isoYearMonth(today);
-
-    useMonthStore.getState().load(year, month);
   },
 
   async refresh() {
+    if (get().loading) return;
     set({
       loading: true,
       error: null,
     });
 
     try {
-      get().syncToday();
-
-      const today = get().today;
+      const today = currentIsoDate();
+      set({ today });
       const [year, month] = isoYearMonth(today);
 
-      await useMonthStore.getState().load(year, month);
+      await useMonthStore.getState().refreshMonth(year, month);
 
       set({
         loading: false,
@@ -113,6 +109,8 @@ export const useWorkdayStore = create<WorkdayStoreState>((set, get) => ({
   },
 
   async startForDate(workDate, minute) {
+    if (get().loading) return;
+    set({ loading: true, error: null });
     try {
       const db = await getDatabase();
       const repo = createRepository(db);
@@ -124,10 +122,14 @@ export const useWorkdayStore = create<WorkdayStoreState>((set, get) => ({
       set({
         error: storeErrorMessage(error),
       });
+    } finally {
+      set({ loading: false });
     }
   },
 
   async pauseForDate(workDate, minute, replaceDuration = false) {
+    if (get().loading) return;
+    set({ loading: true, error: null });
     try {
       const db = await getDatabase();
       const repo = createRepository(db);
@@ -144,10 +146,14 @@ export const useWorkdayStore = create<WorkdayStoreState>((set, get) => ({
       set({
         error: storeErrorMessage(error),
       });
+    } finally {
+      set({ loading: false });
     }
   },
 
   async resumeForDate(workDate, minute) {
+    if (get().loading) return;
+    set({ loading: true, error: null });
     try {
       const db = await getDatabase();
       const repo = createRepository(db);
@@ -159,10 +165,14 @@ export const useWorkdayStore = create<WorkdayStoreState>((set, get) => ({
       set({
         error: storeErrorMessage(error),
       });
+    } finally {
+      set({ loading: false });
     }
   },
 
   async stopForDate(workDate, minute) {
+    if (get().loading) return;
+    set({ loading: true, error: null });
     try {
       const db = await getDatabase();
       const repo = createRepository(db);
@@ -174,6 +184,8 @@ export const useWorkdayStore = create<WorkdayStoreState>((set, get) => ({
       set({
         error: storeErrorMessage(error),
       });
+    } finally {
+      set({ loading: false });
     }
   },
 }));

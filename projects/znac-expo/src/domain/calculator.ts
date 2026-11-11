@@ -11,6 +11,7 @@ import {
   isoToDisplayDate,
 } from "./calendar";
 import type { DayEntryCompat, DayRecord, IsoDate } from "./models";
+import { workingMinutes } from "./dayTime";
 import {
   coerceInterruptionInput,
   hhmmToHours,
@@ -135,28 +136,9 @@ function calculateDayRecordOvertime(day: DayRecord): DailyCalculation {
     };
   }
 
-  const interruption = interruptionTextFromDayRecord(day);
-  const parsedInterruption = parseInterruptionInput(interruption);
-  const workedMinutes =
-    day.endMinute - day.startMinute - (parsedInterruption?.minutes ?? 0);
-  const interruptionIsInvalid =
-    parsedInterruption === null ||
-    parsedInterruption.hasIncomplete ||
-    interruptionHasOutsideWorkdayPeriod(
-      interruption,
-      minuteToClockText(day.startMinute),
-      minuteToClockText(day.endMinute),
-    ) ||
-    workedMinutes < 0;
-
-  if (interruptionIsInvalid) {
-    return { overtimeMinutes: 0, timeDataIsIncomplete: true };
-  }
-
-  return {
-    overtimeMinutes: workedMinutes - day.expectedWorkMinutes,
-    timeDataIsIncomplete: false,
-  };
+  const worked = workingMinutes(day);
+  if (worked === null) return { overtimeMinutes: 0, timeDataIsIncomplete: true };
+  return { overtimeMinutes: worked - day.expectedWorkMinutes, timeDataIsIncomplete: false };
 }
 
 function calculateCompatOvertime(
@@ -258,33 +240,4 @@ function normalizeCompatEntry(entry: DayEntryCompat): DayEntryCompat {
 
 function minuteCompatText(value: number | null): string {
   return value === null ? UNSET_TIME : minuteToClockText(value);
-}
-
-function interruptionTextFromDayRecord(day: DayRecord): string {
-  if (day.breaks.length > 0) {
-    return day.breaks
-      .slice()
-      .sort((left, right) => left.position - right.position)
-      .map((item) => {
-        const endText =
-          item.endMinute === null ? "..." : minuteToClockText(item.endMinute);
-
-        return `${minuteToClockText(item.startMinute)}-${endText}`;
-      })
-      .join(";");
-  }
-
-  if (day.breakDurationMinutes !== null) {
-    return durationMinuteText(day.breakDurationMinutes);
-  }
-
-  return ZERO_DURATION;
-}
-
-function durationMinuteText(value: number): string {
-  const hours = Math.floor(Math.abs(value) / 60);
-  const minutes = Math.abs(value) % 60;
-  const sign = value < 0 ? "-" : "";
-
-  return `${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }

@@ -1,6 +1,7 @@
+import { workingMinutes } from "../../domain/dayTime";
 import { SICK_DAY, VACATION_DAY, isNormalDay } from "../../domain/constants";
 import { isWeekendIso } from "../../domain/calendar";
-import type { BreakRecord, DayRecord, MonthRecord } from "../../domain/models";
+import type { MonthRecord } from "../../domain/models";
 
 export type MonthStatistics = {
   workingDays: number;
@@ -35,7 +36,7 @@ export function calculateMonthStatistics(month: MonthRecord): MonthStatistics {
   for (const day of month.days) {
     const special = String(day.specialDay ?? "").trim();
     const specialLower = special.toLowerCase();
-    const workedMinutes = validWorkedMinutes(day);
+    const workedMinutes = (workingMinutes(day) ?? 0);
 
     if (day.expectedWorkMinutes > 0 && isNormalDay(special)) {
       base.workingDays += 1;
@@ -70,36 +71,4 @@ export function calculateMonthStatistics(month: MonthRecord): MonthStatistics {
     month.closingBalanceMinutes ?? latestBalance ?? base.carryOverMinutes + base.overtimeMinutes;
 
   return base;
-}
-
-function validWorkedMinutes(day: DayRecord): number {
-  if (
-    day.startMinute === null ||
-    day.endMinute === null ||
-    day.endMinute <= day.startMinute
-  ) {
-    return 0;
-  }
-
-  return Math.max(
-    0,
-    day.endMinute - day.startMinute - totalBreakMinutes(day.breaks, day.breakDurationMinutes),
-  );
-}
-
-function totalBreakMinutes(
-  breaks: BreakRecord[],
-  breakDurationMinutes: number | null,
-): number {
-  if (breaks.length > 0) {
-    return breaks.reduce((total, item) => {
-      if (item.endMinute === null || item.endMinute <= item.startMinute) {
-        return total;
-      }
-
-      return total + item.endMinute - item.startMinute;
-    }, 0);
-  }
-
-  return breakDurationMinutes ?? 0;
 }

@@ -1,11 +1,13 @@
 import {
   HOLIDAY_DAY,
+  NO_DATA_DAY,
   SICK_DAY,
   VACATION_DAY,
   WEEKEND_DAY,
   isNormalDay,
 } from "../../domain/constants";
 import { isWeekendIso } from "../../domain/calendar";
+import { workingMinutes } from "../../domain/dayTime";
 import type { DayRecord } from "../../domain/models";
 import { getMobileTheme } from "../../theme";
 import type { StatusBadgeKind } from "../../ui";
@@ -22,6 +24,9 @@ export function dayTypeInfo(day: DayRecord): DayTypeInfo {
   const special = String(day.specialDay ?? "").trim();
 
   if (!isNormalDay(special)) {
+    if (special.toLowerCase() === NO_DATA_DAY.toLowerCase()) {
+      return { label: NO_DATA_DAY, badgeKind: "missing" };
+    }
     if (special.toLowerCase() === WEEKEND_DAY.toLowerCase()) {
       return { label: WEEKEND_DAY, badgeKind: "weekend" };
     }
@@ -41,7 +46,7 @@ export function dayTypeInfo(day: DayRecord): DayTypeInfo {
     return { label: special, badgeKind: "sick" };
   }
 
-  if (day.expectedWorkMinutes === 0 || isWeekendIso(day.workDate)) {
+  if (isWeekendIso(day.workDate)) {
     return { label: WEEKEND_DAY, badgeKind: "weekend" };
   }
 
@@ -55,7 +60,7 @@ export function regularDayBadgeKind(day: DayRecord): StatusBadgeKind {
     return dayType.badgeKind;
   }
 
-  return day.startMinute !== null && day.endMinute !== null
+  return workingMinutes(day) !== null
     ? "valid"
     : "normal";
 }

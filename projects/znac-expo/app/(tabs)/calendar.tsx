@@ -1,11 +1,11 @@
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { StyleSheet, Text } from "react-native";
+import { AppState, StyleSheet, Text, View } from "react-native";
 
 import { CalendarHeader } from "../../src/features/calendar/CalendarHeader";
-import { CalendarMonthGrid } from "../../src/features/calendar/CalendarMonthGrid";
 import { DayTypeLegend } from "../../src/features/calendar/DayTypeLegend";
-import { OverviewMonthPickerModal } from "../../src/features/overview/OverviewMonthPickerModal";
+import { CalendarYearView, type CalendarJump } from "../../src/features/calendar/CalendarYearView";
+import { useCalendarYear } from "../../src/features/calendar/useCalendarYear";
 import { useMonthStore } from "../../src/stores/monthStore";
 import { useWorkdayStore } from "../../src/stores/workdayStore";
 import { getMobileTheme } from "../../src/theme";
@@ -14,105 +14,51 @@ import { Screen } from "../../src/ui";
 const theme = getMobileTheme("dark");
 
 export default function CalendarScreen() {
-  const month = useMonthStore((state) => state.month);
   const selectedYear = useMonthStore((state) => state.selectedYear);
-  const selectedMonth = useMonthStore((state) => state.selectedMonth);
-  const loading = useMonthStore((state) => state.loading);
-  const error = useMonthStore((state) => state.error);
-  const loadMonth = useMonthStore((state) => state.load);
+  const monthError = useMonthStore((state) => state.error);
   const today = useWorkdayStore((state) => state.today);
   const syncToday = useWorkdayStore((state) => state.syncToday);
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [pickerYear, setPickerYear] = useState(selectedYear);
+  const [year, setYear] = useState(selectedYear);
+  const [jump, setJump] = useState<CalendarJump | null>(null);
+  const { months, loading, error } = useCalendarYear(year);
 
   useEffect(() => {
     syncToday();
-
     const interval = setInterval(syncToday, 60_000);
-
-    return () => clearInterval(interval);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") syncToday();
+    });
+    return () => { clearInterval(interval); subscription.remove(); };
   }, [syncToday]);
 
-  useEffect(() => {
-    if (!month) {
-      loadMonth();
-    }
-  }, [loadMonth, month]);
+  function goToToday() {
+    syncToday();
+    const date = useWorkdayStore.getState().today;
+    setYear(Number(date.slice(0, 4)));
+    setJump((previous) => ({ date, request: (previous?.request ?? 0) + 1 }));
+  }
 
-  const currentYear = month?.year ?? selectedYear;
-  const currentMonth = month?.month ?? selectedMonth;
+  function changeYear(next: number) {
+    setJump(null);
+    setYear(next);
+  }
 
   return (
-    <Screen>
-      <CalendarHeader
-        year={currentYear}
-        month={currentMonth}
-        onPrevious={() => {
-          const nextMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-          const nextYear = currentMonth === 1 ? currentYear - 1 : currentYear;
-          loadMonth(nextYear, nextMonth);
-        }}
-        onNext={() => {
-          const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
-          const nextYear = currentMonth === 12 ? currentYear + 1 : currentYear;
-          loadMonth(nextYear, nextMonth);
-        }}
-        onPressPeriod={() => {
-          setPickerYear(currentYear);
-          setPickerVisible(true);
-        }}
-      />
-
-      {month && (
-        <>
-          <CalendarMonthGrid
-            month={month}
-            today={today}
-            onDayPress={(date) =>
-              router.push({
-                pathname: "/day/[date]",
-                params: { date },
-              })
-            }
-          />
-
-          <DayTypeLegend />
-        </>
-      )}
-
-      {!month && (
-        <Text style={styles.emptyText}>
-          {loading ? "Loading..." : "No month loaded"}
-        </Text>
-      )}
-
-      {error && <Text style={styles.errorText}>{error}</Text>}
-
-      <OverviewMonthPickerModal
-        visible={pickerVisible}
-        year={pickerYear}
-        month={currentMonth}
-        onClose={() => setPickerVisible(false)}
-        onChangeYear={setPickerYear}
-        onSelect={(year, nextMonth) => {
-          setPickerVisible(false);
-          loadMonth(year, nextMonth);
-        }}
-      />
+    <Screen contentPadding={false} style={styles.screen}>
+      <View style={styles.header}>
+        <CalendarHeader year={year} onPrevious={() => changeYear(year - 1)} onNext={() => changeYear(year + 1)} onToday={goToToday} />
+        <DayTypeLegend />
+        {loading && <Text style={styles.caption}>Loading calendar…</Text>}
+        {(error || monthError) && <Text style={styles.error}>{error || monthError}</Text>}
+      </View>
+      <CalendarYearView key={year} months={months} today={today} jump={jump} loading={loading} onDayPress={(date) => router.push({ pathname: "/day/[date]", params: { date } })} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  emptyText: {
-    color: theme.colors.textMuted,
-    fontSize: 14,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  errorText: {
-    color: theme.colors.danger,
-    fontSize: 12,
-    fontWeight: "800",
-  },
+  screen: { paddingBottom: 0 },
+  header: { padding: theme.spacing.lg, gap: theme.spacing.sm },
+  caption: { color: theme.colors.textMuted, fontSize: 12 },
+  error: { color: theme.colors.danger, fontSize: 12 },
 });

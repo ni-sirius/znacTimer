@@ -3,11 +3,14 @@ import {
   calendarWeekTagIso,
   parseIsoDate,
 } from "../../domain/calendar";
-import type { BreakRecord, DayRecord, IsoDate, MonthRecord } from "../../domain/models";
+import type { DayRecord, IsoDate, MonthRecord } from "../../domain/models";
+import type { WorkdayState } from "../../db/repository.types";
 import { expectedEndMinute, minuteToClockText, signedMinuteText } from "../../domain/time";
+import { durationText, totalBreakMinutes } from "../../domain/dayTime";
+export { totalBreakMinutes } from "../../domain/dayTime";
 export { dayTypeInfo, type DayTypeInfo } from "../day/dayVisualState";
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = [
   "January",
   "February",
@@ -43,6 +46,12 @@ export function weekdayCalendarWeekText(day: DayRecord): string {
   return [weekday, week].filter(Boolean).join(" · ");
 }
 
+export function dayListDateText(value: IsoDate): string {
+  const parsed = parseIsoDate(value);
+
+  return parsed ? `${parsed.getDate()} — ${WEEKDAYS[parsed.getDay()]}` : value;
+}
+
 export function monthTitle(year: number, month: number): string {
   return `${MONTHS[month - 1] ?? "Month"} ${year}`;
 }
@@ -65,21 +74,14 @@ export function expectedEndText(day: DayRecord): string | null {
   return expected === null ? null : minuteToClockText(expected);
 }
 
-export function totalBreakMinutes(
-  breaks: BreakRecord[],
-  breakDurationMinutes: number | null,
-): number {
-  if (breaks.length > 0) {
-    return breaks.reduce((total, item) => {
-      if (item.endMinute === null) {
-        return total;
-      }
-
-      return total + Math.max(0, item.endMinute - item.startMinute);
-    }, 0);
-  }
-
-  return breakDurationMinutes ?? 0;
+export function workdayElapsedText(day: DayRecord | null, state: WorkdayState, now = new Date()): string | null {
+  if (!day || (state.status !== "working" && state.status !== "paused")) return null;
+  const minute = now.getHours() * 60 + now.getMinutes();
+  if (state.status === "paused") return durationText(Math.max(0, minute - state.pauseStartMinute));
+  const breaks = day.breaks.length ? day.breaks.reduce((sum, pause) => sum + Math.max(0,
+    Math.min(minute, pause.endMinute ?? minute) - Math.max(state.startMinute, pause.startMinute)), 0)
+    : day.breakDurationMinutes ?? 0;
+  return durationText(Math.max(0, minute - state.startMinute - breaks));
 }
 
 export function monthOvertimeText(days: DayRecord[]): string {

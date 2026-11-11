@@ -7,8 +7,11 @@ import type {
   MonthRecord,
   WorkSchedulePeriod,
 } from "../domain/models";
+import { dayTimeIssues } from "../domain/dayTime";
 import { recalculateDayRecords } from "../domain/calculator";
-import { isNormalDay } from "../domain/constants";
+import { NORMAL_DAY, NO_DATA_DAY, WEEKEND_DAY, isNormalDay, normalizeDayType } from "../domain/constants";
+import { isWeekendIso } from "../domain/calendar";
+import { specialDayTextProblem } from "../domain/validation";
 
 import {
   dayRecordFromRows,
@@ -38,83 +41,16 @@ import {
   InvalidWorkdayTransitionError,
 } from "./repository.errors";
 
+import { getAppSettings, updateAppSettings } from "./appPreferences";
+import { assertPublicId, createPublicId } from "./identity";
+
 import { writeTransaction } from "./transactions";
+import { monthTransaction } from "./monthTransaction";
 
-const DATASET_ID = 1;
-
-const DEFAULT_APP_SETTINGS: AppSettings = {
-  themeMode: "system",
-  showExpectedEnd: true,
-};
-
-async function getAppSettings(db: SQLite.SQLiteDatabase): Promise<AppSettings> {
-  const rows = await db.getAllAsync<{
-    key: string;
-    value: string;
-  }>(
-    `
-      SELECT key, value
-      FROM app_settings
-      WHERE key IN ('theme_mode', 'show_expected_end')
-    `,
-  );
-
-  const settings = { ...DEFAULT_APP_SETTINGS };
-
-  for (const row of rows) {
-    if (row.key === "theme_mode") {
-      if (
-        row.value === "system" ||
-        row.value === "light" ||
-        row.value === "dark"
-      ) {
-        settings.themeMode = row.value;
-      }
-    }
-
-    if (row.key === "show_expected_end") {
-      settings.showExpectedEnd = row.value === "true";
-    }
-  }
-
-  return settings;
-}
-
-async function updateAppSettings(
-  db: SQLite.SQLiteDatabase,
-  changes: Partial<AppSettings>,
-): Promise<AppSettings> {
-  await writeTransaction(db, async () => {
-    if (changes.themeMode !== undefined) {
-      await db.runAsync(
-        `
-          INSERT INTO app_settings (key, value, updated_at)
-          VALUES ('theme_mode', ?, ?)
-          ON CONFLICT(key) DO UPDATE SET
-            value = excluded.value,
-            updated_at = excluded.updated_at
-        `,
-        changes.themeMode,
-        new Date().toISOString(),
-      );
-    }
-
-    if (changes.showExpectedEnd !== undefined) {
-      await db.runAsync(
-        `
-          INSERT INTO app_settings (key, value, updated_at)
-          VALUES ('show_expected_end', ?, ?)
-          ON CONFLICT(key) DO UPDATE SET
-            value = excluded.value,
-            updated_at = excluded.updated_at
-        `,
-        String(changes.showExpectedEnd),
-        new Date().toISOString(),
-      );
-    }
-  });
-
-  return getAppSettings(db);
+async function datasetId(db: SQLite.SQLiteDatabase): Promise<number> {
+  const rows = await db.getAllAsync<{ id: number }>("SELECT id FROM datasets LIMIT 2");
+  if (rows.length !== 1) throw new RepositoryError("The database must contain exactly one dataset.");
+  return rows[0].id;
 }
 
 export function createRepository(db: SQLite.SQLiteDatabase): ZnacRepository {
@@ -135,12 +71,35 @@ export function createRepository(db: SQLite.SQLiteDatabase): ZnacRepository {
       return listMonths(db, year);
     },
 
+    async readCalendarYear(year) {
+      const saved = await listMonths(db, year);
+      const schedules = await listWorkSchedules(db);
+      const result: MonthRecord[] = [];
+      for (let month = 1; month <= 12; month += 1) {
+        result.push(saved.find((record) => record.month === month) ?? buildVirtualMonth(
+          year, month, schedules, await previousClosingBalance(db, year, month),
+        ));
+      }
+      return result;
+    },
+
     async updateDay(
       workDate: IsoDate,
       changes: DayChanges,
       expectedRevision: number,
     ): Promise<DayRecord> {
       return updateDay(db, workDate, changes, expectedRevision);
+    },
+
+    async clearDay(workDate, expectedRevision) {
+      return updateDay(db, workDate, {
+        specialDay: defaultDayType(workDate),
+        startMinute: null,
+        endMinute: null,
+        breaks: [],
+        breakDurationMinutes: null,
+        expectedMinutesOverridden: false,
+      }, expectedRevision);
     },
 
     async previewMonthClose(
@@ -204,7 +163,7 @@ export function createRepository(db: SQLite.SQLiteDatabase): ZnacRepository {
       workDate: IsoDate,
       minute: number,
       now: string,
-      replaceDuration: boolean,
+      replaceDuration = false,
     ): Promise<DayRecord> {
       return startPause(db, workDate, minute, now, replaceDuration);
     },
@@ -226,17 +185,18 @@ export function createRepository(db: SQLite.SQLiteDatabase): ZnacRepository {
     },
 
     async getAppSettings(): Promise<AppSettings> {
-      return getAppSettings(db);
+      return getAppSettings();
     },
 
     async updateAppSettings(
       changes: Partial<AppSettings>,
     ): Promise<AppSettings> {
-      return updateAppSettings(db, changes);
+      return updateAppSettings(changes);
     },
 
-    async backupTo(_target: BackupTarget): Promise<void> {
-      throw new RepositoryError("Backup is not implemented in phase 1.");
+    async backupTo(target: BackupTarget): Promise<void> {
+      const { backupTo } = await import("./databaseFiles");
+      await backupTo(db, target);
     },
   };
 }
@@ -247,236 +207,104 @@ async function getOrCreateMonth(
   month: number,
 ): Promise<MonthRecord> {
   const existingMonth = await loadMonth(db, year, month);
-
-  if (existingMonth) {
-    return existingMonth;
-  }
-
-  const schedule = await scheduleForMonth(db, year, month);
+  if (existingMonth) return viewMonth(db, year, month);
 
   await writeTransaction(db, async () => {
-    const now = new Date().toISOString();
-
-    await db.runAsync(
-      `
-        INSERT INTO months (
-          dataset_id,
-          year,
-          month,
-          status,
-          opening_balance_minutes,
-          closing_balance_minutes,
-          created_at,
-          updated_at,
-          revision
-        )
-        VALUES (?, ?, ?, 'open', 0, NULL, ?, ?, 1)
-      `,
-      DATASET_ID,
-      year,
-      month,
-      now,
-      now,
-    );
-
-    const monthRow = await db.getFirstAsync<{
-      id: number;
-    }>(
-      `
-        SELECT id
-        FROM months
-        WHERE dataset_id = ?
-          AND year = ?
-          AND month = ?
-      `,
-      DATASET_ID,
-      year,
-      month,
-    );
-
-    if (!monthRow) {
-      throw new MonthNotFoundError();
-    }
-
-    const daysInMonth = new Date(year, month, 0).getDate();
-
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const workDate = `${year}-${String(month).padStart(2, "0")}-${String(
-        day,
-      ).padStart(2, "0")}`;
-
-      const expectedWorkMinutes = expectedMinutesForDate(
-        workDate,
-        "",
-        schedule,
-      );
-
-      await db.runAsync(
-        `
-          INSERT INTO day_entries (
-            month_id,
-            work_date,
-            special_day,
-            start_minute,
-            end_minute,
-            break_duration_minutes,
-            expected_work_minutes,
-            expected_minutes_overridden,
-            created_at,
-            updated_at,
-            revision,
-            daily_overtime_minutes,
-            running_balance_minutes
-          )
-          VALUES (?, ?, '', NULL, NULL, NULL, ?, 0, ?, ?, 1, NULL, NULL)
-        `,
-        monthRow.id,
-        workDate,
-        expectedWorkMinutes,
-        now,
-        now,
-      );
-    }
+    if (!await loadMonth(db, year, month)) await insertMonth(db, year, month);
   });
-
   const result = await loadMonth(db, year, month);
-
-  if (!result) {
-    throw new MonthNotFoundError();
-  }
-
+  if (!result) throw new MonthNotFoundError();
   return result;
 }
 
-async function loadMonth(
-  db: SQLite.SQLiteDatabase,
-  year: number,
-  month: number,
-): Promise<MonthRecord | null> {
-  const monthRow = await db.getFirstAsync<MonthRow>(
-    `
-      SELECT
-        id,
-        year,
-        month,
-        status,
-        opening_balance_minutes,
-        closing_balance_minutes,
-        revision
-      FROM months
-      WHERE dataset_id = ?
-        AND year = ?
-        AND month = ?
-    `,
-    DATASET_ID,
-    year,
-    month,
-  );
-
-  if (!monthRow) {
-    return null;
+// The caller owns the transaction, including materialization during closing.
+async function insertMonth(db: SQLite.SQLiteDatabase, year: number, month: number): Promise<void> {
+  const opening = await previousClosingBalance(db, year, month);
+  const calendar = buildVirtualMonth(year, month, await listWorkSchedules(db), opening);
+  const now = new Date().toISOString();
+  const { lastInsertRowId } = await db.runAsync(`INSERT INTO months
+    (dataset_id, year, month, status, opening_balance_minutes, created_at, updated_at)
+    VALUES (?, ?, ?, 'open', ?, ?, ?)`, await datasetId(db), year, month, opening, now, now);
+  for (const day of calendar.days) {
+    await db.runAsync(`INSERT INTO day_entries
+      (month_id, work_date, special_day, expected_work_minutes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`, lastInsertRowId, day.workDate, day.specialDay, day.expectedWorkMinutes, now, now);
   }
-
-  const dayRows = await db.getAllAsync<{
-    id: number;
-    work_date: string;
-    special_day: string;
-    start_minute: number | null;
-    end_minute: number | null;
-    break_duration_minutes: number | null;
-    expected_work_minutes: number;
-    expected_minutes_overridden: number;
-    revision: number;
-    daily_overtime_minutes: number | null;
-    running_balance_minutes: number | null;
-  }>(
-    `
-      SELECT
-        id,
-        work_date,
-        special_day,
-        start_minute,
-        end_minute,
-        break_duration_minutes,
-        expected_work_minutes,
-        expected_minutes_overridden,
-        revision,
-        daily_overtime_minutes,
-        running_balance_minutes
-      FROM day_entries
-      WHERE month_id = (
-        SELECT id
-        FROM months
-        WHERE dataset_id = ?
-          AND year = ?
-          AND month = ?
-      )
-      ORDER BY work_date
-    `,
-    DATASET_ID,
-    year,
-    month,
-  );
-
-  const dayRecords: DayRecord[] = [];
-
-  for (const dayRow of dayRows) {
-    const breakRows = await db.getAllAsync<{
-      public_id: string;
-      position: number;
-      start_minute: number;
-      end_minute: number | null;
-      revision: number;
-    }>(
-      `
-        SELECT
-          public_id,
-          position,
-          start_minute,
-          end_minute,
-          revision
-        FROM break_entries
-        WHERE day_entry_id = ?
-        ORDER BY position
-      `,
-      dayRow.id,
-    );
-
-    dayRecords.push(dayRecordFromRows(dayRow, breakRows));
-  }
-
-  return monthRecordFromRows(monthRow, dayRecords);
 }
 
-async function viewMonth(
-  db: SQLite.SQLiteDatabase,
+async function previousClosingBalance(db: SQLite.SQLiteDatabase, year: number, month: number): Promise<number> {
+  const row = await db.getFirstAsync<{ closing_balance_minutes: number }>(`SELECT closing_balance_minutes FROM months
+    WHERE dataset_id = ? AND year = ? AND month = ? AND status = 'closed'`,
+    await datasetId(db), month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
+  return row?.closing_balance_minutes ?? 0;
+}
+
+async function loadMonth(db: SQLite.SQLiteDatabase, year: number, month: number): Promise<MonthRecord | null> {
+  const row = await db.getFirstAsync<MonthRow>("SELECT * FROM months WHERE dataset_id = ? AND year = ? AND month = ?", await datasetId(db), year, month);
+  if (!row) return null;
+  const rows = await db.getAllAsync<DayEntryRow>(`SELECT d.*, r.daily_overtime_minutes, r.running_balance_minutes
+    FROM day_entries d LEFT JOIN closed_day_results r ON r.day_entry_id = d.id WHERE d.month_id = ? ORDER BY d.work_date`, row.id);
+  const days: DayRecord[] = [];
+  for (const day of rows) days.push(dayRecordFromRows(day, await breakRows(db, day.id)));
+  return monthRecordFromRows(row, days);
+}
+
+async function breakRows(db: SQLite.SQLiteDatabase, dayId: number) {
+  return db.getAllAsync<{ public_id: string; position: number; start_minute: number; end_minute: number | null; revision: number }>(
+    "SELECT public_id, position, start_minute, end_minute, revision FROM break_periods WHERE day_entry_id = ? ORDER BY position", dayId);
+}
+
+async function viewMonth(db: SQLite.SQLiteDatabase, year: number, month: number): Promise<MonthRecord> {
+  const existing = await loadMonth(db, year, month);
+  if (!existing) return buildVirtualMonth(year, month, await listWorkSchedules(db), await previousClosingBalance(db, year, month));
+  const needsWeekendClassification = (day: DayRecord) => isWeekendIso(day.workDate) && ["", NORMAL_DAY.toLowerCase()].includes(day.specialDay.trim().toLowerCase());
+  if (existing.status === "closed" || (!existing.days.some(needsWeekendClassification) && existing.openingBalanceMinutes === await previousClosingBalance(db, year, month))) return existing;
+  return monthTransaction(db, async (tx) => {
+    const current = await loadMonth(tx, year, month);
+    if (!current) throw new MonthNotFoundError();
+    if (current.status === "closed") return current;
+    for (const day of current.days.filter(needsWeekendClassification)) {
+      const schedule = await scheduleForDate(tx, day.workDate);
+      await tx.runAsync(`UPDATE day_entries SET special_day = ?, expected_work_minutes = ?, expected_minutes_overridden = 0,
+        updated_at = ?, revision = revision + 1 WHERE work_date = ? AND month_id = (SELECT id FROM months WHERE dataset_id = ? AND year = ? AND month = ?)`,
+        WEEKEND_DAY, schedule.specialDayMinutes, new Date().toISOString(), day.workDate, await datasetId(tx), year, month);
+    }
+    const opening = await previousClosingBalance(tx, year, month);
+    if (opening !== current.openingBalanceMinutes) await tx.runAsync(`UPDATE months
+      SET opening_balance_minutes = ?, updated_at = ?, revision = revision + 1 WHERE id = (SELECT id FROM months WHERE dataset_id = ? AND year = ? AND month = ?)`,
+      opening, new Date().toISOString(), await datasetId(tx), year, month);
+    return (await loadMonth(tx, year, month))!;
+  });
+}
+
+function buildVirtualMonth(
   year: number,
   month: number,
-): Promise<MonthRecord> {
-  const existingMonth = await loadMonth(db, year, month);
-
-  if (existingMonth) {
-    return existingMonth;
-  }
-
+  schedules: WorkSchedulePeriod[],
+  openingBalanceMinutes: number,
+): MonthRecord {
   const days: DayRecord[] = [];
+  const orderedSchedules = [...schedules].reverse();
   const daysInMonth = new Date(year, month, 0).getDate();
-  const schedule = await scheduleForMonth(db, year, month);
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const workDate = `${year}-${String(month).padStart(2, "0")}-${String(
       day,
     ).padStart(2, "0")}`;
+    const schedule = orderedSchedules.find((item) => item.effectiveFrom <= workDate &&
+      (item.effectiveTo === null || item.effectiveTo >= workDate)) ?? defaultWorkSchedule(workDate);
+    const specialDay = defaultDayType(workDate);
     days.push({
       workDate,
-      specialDay: "",
+      specialDay,
       startMinute: null,
       endMinute: null,
       breakDurationMinutes: null,
       breaks: [],
-      expectedWorkMinutes: expectedMinutesForDate(workDate, "", schedule),
+      expectedWorkMinutes: expectedMinutesForDate(workDate, specialDay, schedule),
       expectedMinutesOverridden: false,
       revision: 0,
+      localInputRevision: 0,
       dailyOvertimeMinutes: null,
       runningBalanceMinutes: null,
     });
@@ -486,7 +314,7 @@ async function viewMonth(
     year,
     month,
     status: "open",
-    openingBalanceMinutes: 0,
+    openingBalanceMinutes,
     closingBalanceMinutes: null,
     revision: 0,
     days,
@@ -514,7 +342,7 @@ async function listMonths(
           WHERE dataset_id = ?
           ORDER BY year, month
         `,
-          DATASET_ID,
+          await datasetId(db),
         )
       : await db.getAllAsync<MonthRow>(
           `
@@ -531,7 +359,7 @@ async function listMonths(
             AND year = ?
           ORDER BY year, month
         `,
-          DATASET_ID,
+          await datasetId(db),
           year,
         );
 
@@ -548,98 +376,82 @@ async function listMonths(
   return result;
 }
 
-async function updateDay(
-  db: SQLite.SQLiteDatabase,
-  workDate: IsoDate,
-  changes: DayChanges,
-  expectedRevision: number,
-): Promise<DayRecord> {
+async function updateDay(db: SQLite.SQLiteDatabase, workDate: IsoDate, changes: DayChanges, expectedRevision: number): Promise<DayRecord> {
+  const specialDay = changes.specialDay === undefined ? undefined : normalizeDayType(changes.specialDay);
+  if (specialDay !== undefined) {
+    const problem = specialDayTextProblem(specialDay || NORMAL_DAY);
+    if (problem) throw new RepositoryError(problem);
+  }
   const { year, month } = parseWorkDate(workDate);
-  const existingMonth = await loadMonth(db, year, month);
-
-  await getOrCreateMonth(db, year, month);
-
-  const updated = await writeTransaction(db, async () => {
-    const row = await getEditableDayRow(db, workDate);
-
-    if (!row) {
-      throw new DayNotFoundError();
-    }
-
-    assertEditableDay(row, expectedRevision, existingMonth === null);
-
+  for (const minute of [changes.startMinute, changes.endMinute]) if (minute != null) assertMinuteOfDay(minute);
+  if (changes.breakDurationMinutes != null) assertDurationMinutes(changes.breakDurationMinutes);
+  if (changes.expectedWorkMinutes != null) assertDurationMinutes(changes.expectedWorkMinutes);
+  if (changes.breaks?.length && changes.breakDurationMinutes != null) throw new RepositoryError("Use either a total break duration or interruption intervals.");
+  return monthTransaction(db, async (tx) => {
+    const exists = await loadMonth(tx, year, month);
+    if (!exists) await insertMonth(tx, year, month);
+    const row = await getEditableDayRow(tx, workDate);
+    if (!row) throw new DayNotFoundError();
+    // A calendar card can still have revision 0 after another screen creates the
+    // month or a schedule refresh touches it. Python accepts that first edit only
+    // while the day has never received user input.
+    const virtualUntouched = expectedRevision === 0 && row.local_input_revision === 0 &&
+      row.special_day === defaultDayType(workDate) && row.start_minute === null && row.end_minute === null &&
+      (row.break_duration_minutes === null || row.break_duration_minutes === 0) &&
+      row.expected_minutes_overridden === 0 && (await breakRows(tx, row.id)).length === 0;
+    assertEditableDay(row, expectedRevision, virtualUntouched);
+    const start = changes.startMinute === undefined ? row.start_minute : changes.startMinute;
+    const end = changes.endMinute === undefined ? row.end_minute : changes.endMinute;
+    if (end !== null && start === null) throw new RepositoryError("Set Start before End.");
+    if (start !== null && end !== null && end <= start) throw new RepositoryError("End must be after Start.");
+    const nextType = specialDay ?? (row.special_day.trim().toLowerCase() === NO_DATA_DAY.toLowerCase() &&
+      (changes.startMinute != null || changes.endMinute != null) ? defaultDayType(workDate) : row.special_day);
+    const ordinaryEdit = ["specialDay", "startMinute", "endMinute", "breaks", "breakDurationMinutes"].some((key) => key in changes);
+    const expected = ordinaryEdit ? expectedMinutesForDate(workDate, nextType, await scheduleForDate(tx, workDate))
+      : changes.expectedWorkMinutes ?? row.expected_work_minutes;
+    const overridden = ordinaryEdit ? false : changes.expectedMinutesOverridden ?? row.expected_minutes_overridden === 1;
     const now = new Date().toISOString();
-
     if (changes.breaks !== undefined) {
-      await db.runAsync(
-        "DELETE FROM break_entries WHERE day_entry_id = ?",
-        row.id,
-      );
+      const old = await tx.getAllAsync<{ id: number; public_id: string; position: number; start_minute: number; end_minute: number | null; created_at: string; updated_at: string; revision: number }>(
+        "SELECT * FROM break_periods WHERE day_entry_id = ?", row.id);
+      const ordered = [...changes.breaks].sort((a, b) => a.startMinute - b.startMinute);
+      for (let index = 0; index < ordered.length; index++) {
+        const pause = ordered[index];
+        assertMinuteOfDay(pause.startMinute);
+        if (pause.publicId) assertPublicId(pause.publicId);
+        if (pause.endMinute !== null) {
+          assertMinuteOfDay(pause.endMinute);
+          if (pause.endMinute <= pause.startMinute) throw new RepositoryError("Interruption End must be after its Start.");
+        }
+        if (index && (ordered[index - 1].endMinute === null || pause.startMinute < ordered[index - 1].endMinute!)) throw new RepositoryError("Interruptions cannot overlap.");
+      }
+      if (new Set(changes.breaks.filter((pause) => pause.publicId).map((pause) => pause.publicId)).size !== changes.breaks.filter((pause) => pause.publicId).length) throw new RepositoryError("Interruption identities must be unique.");
+      // Clear the duration before inserting periods: Python makes the two representations exclusive.
+      await tx.runAsync("UPDATE day_entries SET break_duration_minutes = NULL WHERE id = ?", row.id);
+      await tx.runAsync("DELETE FROM break_periods WHERE day_entry_id = ?", row.id);
+      for (const pause of renumberBreaks(changes.breaks)) {
+        const prior = old.find((item) => item.public_id === pause.publicId);
+        if (prior && pause.revision !== prior.revision) throw new RevisionConflictError();
+        const changed = !prior || prior.start_minute !== pause.startMinute || prior.end_minute !== pause.endMinute || prior.position !== pause.position;
+        await tx.runAsync(`INSERT INTO break_periods (id, public_id, day_entry_id, position, start_minute, end_minute, created_at, updated_at, revision)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, prior?.id ?? null, prior?.public_id ?? (pause.publicId || createPublicId()), row.id, pause.position,
+          pause.startMinute, pause.endMinute, prior?.created_at ?? now, changed ? now : prior.updated_at, prior ? prior.revision + Number(changed) : 1);
+      }
     }
-
-    if (changes.breakDurationMinutes !== undefined) {
-      await db.runAsync(
-        "DELETE FROM break_entries WHERE day_entry_id = ?",
-        row.id,
-      );
-    }
-
-    const nextBreakDuration =
-      changes.breaks !== undefined
-        ? changes.breaks.length > 0
-          ? null
-          : (changes.breakDurationMinutes ?? null)
-        : changes.breakDurationMinutes !== undefined
-          ? changes.breakDurationMinutes
-          : row.break_duration_minutes;
-
-    await db.runAsync(
-      `
-        UPDATE day_entries
-        SET
-          special_day = ?,
-          start_minute = ?,
-          end_minute = ?,
-          break_duration_minutes = ?,
-          expected_work_minutes = ?,
-          expected_minutes_overridden = ?,
-          daily_overtime_minutes = ?,
-          running_balance_minutes = ?,
-          updated_at = ?,
-          revision = revision + 1
-        WHERE id = ?
-      `,
-      changes.specialDay ?? row.special_day,
-      changes.startMinute === undefined
-        ? row.start_minute
-        : changes.startMinute,
-      changes.endMinute === undefined ? row.end_minute : changes.endMinute,
-      nextBreakDuration,
-      changes.expectedWorkMinutes ?? row.expected_work_minutes,
-      booleanToSql(
-        changes.expectedMinutesOverridden ??
-          row.expected_minutes_overridden === 1,
-      ),
-      null,
-      null,
-      now,
-      row.id,
-    );
-
-    if (changes.breaks !== undefined && changes.breaks.length > 0) {
-      await insertBreaks(db, row.id, changes.breaks, now);
-    }
-
-    const day = await loadDay(db, workDate);
-
-    if (!day) {
-      throw new DayNotFoundError();
-    }
-
-    return day;
+    if (changes.breakDurationMinutes !== undefined && !changes.breaks?.length) await tx.runAsync("DELETE FROM break_periods WHERE day_entry_id = ?", row.id);
+    const duration = changes.breaks?.length ? null : changes.breakDurationMinutes !== undefined ? changes.breakDurationMinutes : changes.breaks !== undefined ? null : row.break_duration_minutes;
+    await tx.runAsync(`UPDATE day_entries SET special_day = ?, start_minute = ?, end_minute = ?, break_duration_minutes = ?,
+      expected_work_minutes = ?, expected_minutes_overridden = ?, updated_at = ?, revision = revision + 1,
+      local_input_revision = local_input_revision + 1 WHERE id = ?`, nextType, start, end, duration, expected, booleanToSql(overridden), now, row.id);
+    return (await loadDay(tx, workDate))!;
   });
+}
 
-  return updated;
+function assertMonthCanClose(year: number, month: number): void {
+  const now = new Date();
+  if (year > now.getFullYear() || (year === now.getFullYear() && month > now.getMonth() + 1)) {
+    throw new RepositoryError("Future months cannot be closed.");
+  }
 }
 
 async function previewMonthClose(
@@ -647,21 +459,18 @@ async function previewMonthClose(
   year: number,
   month: number,
 ): Promise<MonthClosePreview> {
-  const monthRecord = await loadMonth(db, year, month);
+  assertMonthCanClose(year, month);
+  const monthRecord = await loadMonth(db, year, month) ?? await viewMonth(db, year, month);
+  if (monthRecord.status === "closed") throw new ClosedMonthError();
+  validateMonthTimes(monthRecord.days);
 
-  if (!monthRecord) {
-    throw new MonthNotFoundError();
-  }
-
-  const calculated = calculateMonthSnapshot(monthRecord);
-  const lastDay = calculated.at(-1);
-
+  const openingBalanceMinutes = await previousClosingBalance(db, year, month);
+  const calculated = calculateMonthSnapshot({ ...monthRecord, openingBalanceMinutes });
   return {
     year,
     month,
-    openingBalanceMinutes: monthRecord.openingBalanceMinutes,
-    closingBalanceMinutes:
-      lastDay?.runningBalanceMinutes ?? monthRecord.openingBalanceMinutes,
+    openingBalanceMinutes,
+    closingBalanceMinutes: calculated.at(-1)?.runningBalanceMinutes ?? openingBalanceMinutes,
     unresolvedDays: findUnresolvedDays(monthRecord.days),
   };
 }
@@ -673,74 +482,72 @@ async function closeMonth(
   expectedRevision: number,
   markUnresolvedNoData: boolean,
 ): Promise<MonthRecord> {
-  const monthRecord = await loadMonth(db, year, month);
-
-  if (!monthRecord) {
-    throw new MonthNotFoundError();
-  }
-
-  if (monthRecord.revision !== expectedRevision) {
-    throw new RevisionConflictError();
-  }
-
-  const unresolvedDays = findUnresolvedDays(monthRecord.days);
-
-  if (unresolvedDays.length > 0 && !markUnresolvedNoData) {
-    throw new RepositoryError("Month contains unresolved days.");
-  }
-
-  const calculated = calculateMonthSnapshot(monthRecord);
-  const closingBalanceMinutes =
-    calculated.at(-1)?.runningBalanceMinutes ??
-    monthRecord.openingBalanceMinutes;
-
-  await writeTransaction(db, async () => {
-    const now = new Date().toISOString();
-
-    for (const day of calculated) {
-      await db.runAsync(
-        `
-          UPDATE day_entries
-          SET
-            daily_overtime_minutes = ?,
-            running_balance_minutes = ?,
-            updated_at = ?
-          WHERE work_date = ?
-        `,
-        day.dailyOvertimeMinutes,
-        day.runningBalanceMinutes,
-        now,
-        day.workDate,
-      );
+  return monthTransaction(db, async (transaction) => {
+    assertMonthCanClose(year, month);
+    let monthRecord = await loadMonth(transaction, year, month);
+    const materializedDuringClose = monthRecord === null;
+    if (!monthRecord) {
+      if (expectedRevision !== 0) throw new RevisionConflictError();
+      await insertMonth(transaction, year, month);
+      monthRecord = await loadMonth(transaction, year, month);
+    }
+    if (!monthRecord) throw new MonthNotFoundError();
+    if (monthRecord.status === "closed") throw new ClosedMonthError();
+    if (!materializedDuringClose && monthRecord.revision !== expectedRevision) {
+      throw new RevisionConflictError();
+    }
+    if (await previousClosingBalance(transaction, year, month) !== monthRecord.openingBalanceMinutes) {
+      throw new RepositoryError("The carry-over changed. Reload the month and review it before closing.");
     }
 
-    await db.runAsync(
-      `
-        UPDATE months
-        SET
-          status = 'closed',
-          closing_balance_minutes = ?,
-          updated_at = ?,
-          revision = revision + 1
-        WHERE dataset_id = ?
-          AND year = ?
-          AND month = ?
-      `,
-      closingBalanceMinutes,
-      now,
-      DATASET_ID,
-      year,
-      month,
+    validateMonthTimes(monthRecord.days);
+    const unresolved = new Set(findUnresolvedDays(monthRecord.days));
+    if (unresolved.size > 0 && !markUnresolvedNoData) {
+      throw new RepositoryError("Month contains days with planned work and no work times. Confirm marking them as No data.");
+    }
+
+    const now = new Date().toISOString();
+    for (const day of monthRecord.days) {
+      if (!unresolved.has(day.workDate)) continue;
+      const schedule = await scheduleForDate(transaction, day.workDate);
+      const expectedMinutes = expectedMinutesForDate(day.workDate, NO_DATA_DAY, schedule);
+      await transaction.runAsync(
+        `UPDATE day_entries SET special_day = ?, expected_work_minutes = ?,
+          expected_minutes_overridden = 0, updated_at = ?, revision = revision + 1, local_input_revision = local_input_revision + 1
+          WHERE work_date = ? AND month_id = (
+            SELECT id FROM months WHERE dataset_id = ? AND year = ? AND month = ?
+          )`,
+        NO_DATA_DAY, expectedMinutes, now, day.workDate, await datasetId(transaction), year, month,
+      );
+      day.specialDay = NO_DATA_DAY;
+      day.expectedWorkMinutes = expectedMinutes;
+      day.expectedMinutesOverridden = false;
+      day.revision += 1;
+    }
+    if (findUnresolvedDays(monthRecord.days).length > 0) {
+      throw new RepositoryError("No data still requires planned work under the special-day schedule. Enter work times or set special-day planned time to zero.");
+    }
+
+    const calculated = calculateMonthSnapshot(monthRecord);
+    const closingBalanceMinutes = calculated.at(-1)?.runningBalanceMinutes ?? monthRecord.openingBalanceMinutes;
+    for (const day of calculated) {
+      await transaction.runAsync(
+        `INSERT INTO closed_day_results(day_entry_id, daily_overtime_minutes, running_balance_minutes)
+          SELECT d.id, ?, ? FROM day_entries d JOIN months m ON m.id = d.month_id
+          WHERE d.work_date = ? AND m.dataset_id = ? AND m.year = ? AND m.month = ?`,
+        day.dailyOvertimeMinutes ?? 0, day.runningBalanceMinutes ?? monthRecord.openingBalanceMinutes, day.workDate, await datasetId(transaction), year, month,
+      );
+    }
+    const result = await transaction.runAsync(
+      `UPDATE months SET status = 'closed', closing_balance_minutes = ?, closed_at = ?, updated_at = ?, revision = revision + 1
+        WHERE dataset_id = ? AND year = ? AND month = ? AND status = 'open' AND revision = ?`,
+      closingBalanceMinutes, now, now, await datasetId(transaction), year, month, monthRecord.revision,
     );
+    if (result.changes !== 1) throw new RevisionConflictError();
+    const updated = await loadMonth(transaction, year, month);
+    if (!updated) throw new MonthNotFoundError();
+    return updated;
   });
-
-  const updated = await loadMonth(db, year, month);
-
-  if (!updated) {
-    throw new MonthNotFoundError();
-  }
-
-  return updated;
 }
 
 async function reopenMonth(
@@ -749,43 +556,23 @@ async function reopenMonth(
   month: number,
   expectedRevision: number,
 ): Promise<MonthRecord> {
-  const monthRecord = await loadMonth(db, year, month);
+  return monthTransaction(db, async (transaction) => {
+    const monthRecord = await loadMonth(transaction, year, month);
+    if (!monthRecord) throw new MonthNotFoundError();
+    if (monthRecord.status !== "closed") throw new RepositoryError("Month is already open.");
+    if (monthRecord.revision !== expectedRevision) throw new RevisionConflictError();
 
-  if (!monthRecord) {
-    throw new MonthNotFoundError();
-  }
-
-  if (monthRecord.revision !== expectedRevision) {
-    throw new RevisionConflictError();
-  }
-
-  await writeTransaction(db, async () => {
-    await db.runAsync(
-      `
-        UPDATE months
-        SET
-          status = 'open',
-          closing_balance_minutes = NULL,
-          updated_at = ?,
-          revision = revision + 1
-        WHERE dataset_id = ?
-          AND year = ?
-          AND month = ?
-      `,
-      new Date().toISOString(),
-      DATASET_ID,
-      year,
-      month,
+    const now = new Date().toISOString();
+    const result = await transaction.runAsync(
+      `UPDATE months SET status = 'open', closing_balance_minutes = NULL, closed_at = NULL, updated_at = ?, revision = revision + 1
+        WHERE dataset_id = ? AND year = ? AND month = ? AND status = 'closed' AND revision = ?`,
+      now, await datasetId(transaction), year, month, expectedRevision,
     );
+    if (result.changes !== 1) throw new RevisionConflictError();
+    const updated = await loadMonth(transaction, year, month);
+    if (!updated) throw new MonthNotFoundError();
+    return updated;
   });
-
-  const updated = await loadMonth(db, year, month);
-
-  if (!updated) {
-    throw new MonthNotFoundError();
-  }
-
-  return updated;
 }
 
 async function listWorkSchedules(
@@ -811,171 +598,42 @@ async function listWorkSchedules(
       WHERE dataset_id = ?
       ORDER BY effective_from
     `,
-    DATASET_ID,
+    await datasetId(db),
   );
 
   return rows.map(workScheduleFromRow);
 }
 
-async function replaceWorkSchedule(
-  db: SQLite.SQLiteDatabase,
-  schedule: WorkSchedulePeriod,
-  expectedRevision?: number,
-): Promise<WorkSchedulePeriod> {
-  const publicId = schedule.publicId || makePublicId();
-  const effectiveMonth = parseWorkDate(schedule.effectiveFrom);
-  const selectedMonth = await loadMonth(
-    db,
-    effectiveMonth.year,
-    effectiveMonth.month,
-  );
-
-  if (selectedMonth?.status === "closed") {
-    throw new ClosedMonthError();
-  }
-
-  const updated = await writeTransaction(db, async () => {
-    const existing = await db.getFirstAsync<WorkScheduleRow>(
-      `
-        SELECT
-          id,
-          public_id,
-          effective_from,
-          effective_to,
-          monday_minutes,
-          tuesday_minutes,
-          wednesday_minutes,
-          thursday_minutes,
-          friday_minutes,
-          saturday_minutes,
-          sunday_minutes,
-          special_day_minutes,
-          revision
-        FROM work_schedule_periods
-        WHERE dataset_id = ?
-          AND public_id = ?
-      `,
-      DATASET_ID,
-      publicId,
-    );
-
-    if (
-      existing &&
-      expectedRevision !== undefined &&
-      existing.revision !== expectedRevision
-    ) {
-      throw new RevisionConflictError();
-    }
-
+async function replaceWorkSchedule(db: SQLite.SQLiteDatabase, schedule: WorkSchedulePeriod, expectedRevision?: number): Promise<WorkSchedulePeriod> {
+  parseWorkDate(schedule.effectiveFrom);
+  schedule.weekdayMinutes.forEach(assertDurationMinutes);
+  assertDurationMinutes(schedule.specialDayMinutes);
+  return monthTransaction(db, async (tx) => {
+    const selected = await loadMonth(tx, Number(schedule.effectiveFrom.slice(0, 4)), Number(schedule.effectiveFrom.slice(5, 7)));
+    if (selected?.status === "closed") throw new ClosedMonthError();
+    const dataset = await datasetId(tx);
+    const active = await tx.getFirstAsync<WorkScheduleRow>(`SELECT * FROM work_schedule_periods WHERE dataset_id = ? AND effective_from <= ?
+      AND (effective_to IS NULL OR effective_to >= ?) ORDER BY effective_from DESC LIMIT 1`, dataset, schedule.effectiveFrom, schedule.effectiveFrom);
+    if (schedule.publicId && (!active || active.public_id !== schedule.publicId || active.revision !== (expectedRevision ?? schedule.revision))) throw new RevisionConflictError();
+    const exact = await tx.getFirstAsync<WorkScheduleRow>("SELECT * FROM work_schedule_periods WHERE dataset_id = ? AND effective_from = ?", dataset, schedule.effectiveFrom);
     const now = new Date().toISOString();
-
-    if (existing) {
-      await db.runAsync(
-        `
-          UPDATE work_schedule_periods
-          SET
-            effective_from = ?,
-            effective_to = ?,
-            monday_minutes = ?,
-            tuesday_minutes = ?,
-            wednesday_minutes = ?,
-            thursday_minutes = ?,
-            friday_minutes = ?,
-            saturday_minutes = ?,
-            sunday_minutes = ?,
-            special_day_minutes = ?,
-            updated_at = ?,
-            revision = revision + 1
-          WHERE id = ?
-        `,
-        schedule.effectiveFrom,
-        schedule.effectiveTo,
-        schedule.weekdayMinutes[0],
-        schedule.weekdayMinutes[1],
-        schedule.weekdayMinutes[2],
-        schedule.weekdayMinutes[3],
-        schedule.weekdayMinutes[4],
-        schedule.weekdayMinutes[5],
-        schedule.weekdayMinutes[6],
-        schedule.specialDayMinutes,
-        now,
-        existing.id,
-      );
-    } else {
-      await db.runAsync(
-        `
-          INSERT INTO work_schedule_periods (
-            public_id,
-            dataset_id,
-            effective_from,
-            effective_to,
-            monday_minutes,
-            tuesday_minutes,
-            wednesday_minutes,
-            thursday_minutes,
-            friday_minutes,
-            saturday_minutes,
-            sunday_minutes,
-            special_day_minutes,
-            created_at,
-            updated_at,
-            revision
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-        `,
-        publicId,
-        DATASET_ID,
-        schedule.effectiveFrom,
-        schedule.effectiveTo,
-        schedule.weekdayMinutes[0],
-        schedule.weekdayMinutes[1],
-        schedule.weekdayMinutes[2],
-        schedule.weekdayMinutes[3],
-        schedule.weekdayMinutes[4],
-        schedule.weekdayMinutes[5],
-        schedule.weekdayMinutes[6],
-        schedule.specialDayMinutes,
-        now,
-        now,
-      );
-    }
-
-    const row = await db.getFirstAsync<WorkScheduleRow>(
-      `
-        SELECT
-          id,
-          public_id,
-          effective_from,
-          effective_to,
-          monday_minutes,
-          tuesday_minutes,
-          wednesday_minutes,
-          thursday_minutes,
-          friday_minutes,
-          saturday_minutes,
-          sunday_minutes,
-          special_day_minutes,
-          revision
-        FROM work_schedule_periods
-        WHERE dataset_id = ?
-          AND public_id = ?
-      `,
-      DATASET_ID,
-      publicId,
-    );
-
-    if (!row) {
-      throw new RepositoryError("Work schedule was not saved.");
-    }
-
-    const updatedSchedule = workScheduleFromRow(row);
-
-    await applyScheduleToMaterializedOpenMonths(db, updatedSchedule, now);
-
-    return updatedSchedule;
+    const priorDate = new Date(schedule.effectiveFrom + "T12:00:00");
+    priorDate.setDate(priorDate.getDate() - 1);
+    const until = `${priorDate.getFullYear()}-${String(priorDate.getMonth() + 1).padStart(2, "0")}-${String(priorDate.getDate()).padStart(2, "0")}`;
+    await tx.runAsync("DELETE FROM work_schedule_periods WHERE dataset_id = ? AND effective_from >= ?", dataset, schedule.effectiveFrom);
+    await tx.runAsync(`UPDATE work_schedule_periods SET effective_to = ?, updated_at = ?, revision = revision + 1
+      WHERE dataset_id = ? AND effective_from < ? AND (effective_to IS NULL OR effective_to >= ?)`, until, now, dataset, schedule.effectiveFrom, schedule.effectiveFrom);
+    const identity = exact?.public_id ?? createPublicId();
+    await tx.runAsync(`INSERT INTO work_schedule_periods
+      (id, public_id, dataset_id, effective_from, effective_to, monday_minutes, tuesday_minutes, wednesday_minutes,
+       thursday_minutes, friday_minutes, saturday_minutes, sunday_minutes, special_day_minutes, created_at, updated_at, revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, exact?.id ?? null, identity, dataset,
+      schedule.effectiveFrom, schedule.effectiveTo, ...schedule.weekdayMinutes, schedule.specialDayMinutes, now, now, exact ? exact.revision + 1 : 1);
+    const row = (await tx.getFirstAsync<WorkScheduleRow>("SELECT * FROM work_schedule_periods WHERE public_id = ?", identity))!;
+    const updated = workScheduleFromRow(row);
+    await applyScheduleToMaterializedOpenMonths(tx, updated, now);
+    return updated;
   });
-
-  return updated;
 }
 
 async function setDayWorkLimit(
@@ -997,12 +655,10 @@ async function setDayWorkLimit(
   );
 }
 
-async function scheduleForMonth(
+async function scheduleForDate(
   db: SQLite.SQLiteDatabase,
-  year: number,
-  month: number,
+  workDate: IsoDate,
 ): Promise<WorkSchedulePeriod> {
-  const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
   const row = await db.getFirstAsync<WorkScheduleRow>(
     `
       SELECT
@@ -1026,12 +682,12 @@ async function scheduleForMonth(
       ORDER BY effective_from DESC
       LIMIT 1
     `,
-    DATASET_ID,
-    monthStart,
-    monthStart,
+    await datasetId(db),
+    workDate,
+    workDate,
   );
 
-  return row ? workScheduleFromRow(row) : defaultWorkSchedule(monthStart);
+  return row ? workScheduleFromRow(row) : defaultWorkSchedule(workDate);
 }
 
 async function applyScheduleToMaterializedOpenMonths(
@@ -1056,10 +712,9 @@ async function applyScheduleToMaterializedOpenMonths(
       WHERE months.dataset_id = ?
         AND months.status = 'open'
         AND day_entries.work_date >= ?
-        AND day_entries.expected_minutes_overridden = 0
       ORDER BY day_entries.work_date
     `,
-    DATASET_ID,
+    await datasetId(db),
     schedule.effectiveFrom,
   );
 
@@ -1077,8 +732,7 @@ async function applyScheduleToMaterializedOpenMonths(
         UPDATE day_entries
         SET
           expected_work_minutes = ?,
-          daily_overtime_minutes = NULL,
-          running_balance_minutes = NULL,
+          expected_minutes_overridden = 0,
           updated_at = ?,
           revision = revision + 1
         WHERE id = ?
@@ -1105,6 +759,12 @@ async function applyScheduleToMaterializedOpenMonths(
     );
   }
 }
+
+function defaultDayType(workDate: IsoDate): string {
+  return isWeekendIso(workDate) ? WEEKEND_DAY : NORMAL_DAY;
+}
+
+
 
 function expectedMinutesForDate(
   workDate: string,
@@ -1144,6 +804,17 @@ async function startWorkday(
   const day = await ensureEditableDayForAction(db, workDate);
   const state = deriveWorkdayState(day, "open", workDate);
 
+  if (state.status === "complete") {
+    return monthTransaction(db, async (tx) => {
+      const current = await getEditableDayRow(tx, workDate);
+      if (!current) throw new DayNotFoundError();
+      assertEditableDay(current, day.revision, false);
+      await tx.runAsync(`UPDATE day_entries SET end_minute = NULL, updated_at = ?, revision = revision + 1,
+        local_input_revision = local_input_revision + 1 WHERE id = ?`, new Date().toISOString(), current.id);
+      return (await loadDay(tx, workDate))!;
+    });
+  }
+
   if (state.status !== "idle") {
     throw new InvalidWorkdayTransitionError("Workday is already started.");
   }
@@ -1154,8 +825,6 @@ async function startWorkday(
     {
       startMinute: minute,
       endMinute: null,
-      breakDurationMinutes: null,
-      breaks: [],
     },
     day.revision,
   );
@@ -1166,7 +835,7 @@ async function startPause(
   workDate: IsoDate,
   minute: number,
   _now: string,
-  replaceDuration: boolean,
+  replaceDuration = false,
 ): Promise<DayRecord> {
   assertMinuteOfDay(minute);
 
@@ -1185,17 +854,14 @@ async function startPause(
     );
   }
 
-  if (day.breakDurationMinutes !== null && !replaceDuration) {
-    throw new InvalidWorkdayTransitionError(
-      "Existing duration break must be replaced first.",
-    );
+  if ((day.breakDurationMinutes ?? 0) > 0 && !replaceDuration) {
+    throw new RepositoryError("The interruption is stored as a duration. Confirm replacing it before recording pause intervals.");
   }
 
   return updateDay(
     db,
     workDate,
     {
-      breakDurationMinutes: null,
       breaks: [
         ...day.breaks,
         {
@@ -1233,7 +899,7 @@ async function resumeWorkday(
       ? day.breaks.filter((item) => item.publicId !== openBreak.publicId)
       : day.breaks.map((item) =>
           item.publicId === openBreak.publicId
-            ? { ...item, endMinute: minute, revision: item.revision + 1 }
+            ? { ...item, endMinute: minute, revision: item.revision }
             : item,
         );
 
@@ -1264,10 +930,19 @@ async function stopWorkday(
     );
   }
 
-  if (day.startMinute === null || minute <= day.startMinute) {
+  if (day.startMinute === null || minute < day.startMinute) {
     throw new InvalidWorkdayTransitionError(
       "End time must be after start time.",
     );
+  }
+
+  if (minute === day.startMinute) {
+    return updateDay(db, workDate, {
+      startMinute: null,
+      endMinute: null,
+      breaks: [],
+      breakDurationMinutes: day.breakDurationMinutes,
+    }, day.revision);
   }
 
   return updateDay(
@@ -1301,94 +976,24 @@ function closeOpenBreaksForStop(
         {
           ...item,
           endMinute: minute,
-          revision: item.revision + 1,
+          revision: item.revision,
         },
       ];
     }),
   );
 }
 
-async function loadDay(
-  db: SQLite.SQLiteDatabase,
-  workDate: IsoDate,
-): Promise<DayRecord | null> {
-  const row = await db.getFirstAsync<DayEntryRow>(
-    `
-      SELECT
-        id,
-        month_id,
-        work_date,
-        special_day,
-        start_minute,
-        end_minute,
-        break_duration_minutes,
-        expected_work_minutes,
-        expected_minutes_overridden,
-        revision,
-        daily_overtime_minutes,
-        running_balance_minutes
-      FROM day_entries
-      WHERE work_date = ?
-    `,
-    workDate,
-  );
-
-  if (!row) {
-    return null;
-  }
-
-  const breakRows = await db.getAllAsync<{
-    public_id: string;
-    position: number;
-    start_minute: number;
-    end_minute: number | null;
-    revision: number;
-  }>(
-    `
-      SELECT
-        public_id,
-        position,
-        start_minute,
-        end_minute,
-        revision
-      FROM break_entries
-      WHERE day_entry_id = ?
-      ORDER BY position
-    `,
-    row.id,
-  );
-
-  return dayRecordFromRows(row, breakRows);
+async function loadDay(db: SQLite.SQLiteDatabase, workDate: IsoDate): Promise<DayRecord | null> {
+  const row = await db.getFirstAsync<DayEntryRow>(`SELECT d.*, r.daily_overtime_minutes, r.running_balance_minutes
+    FROM day_entries d JOIN months m ON m.id = d.month_id LEFT JOIN closed_day_results r ON r.day_entry_id = d.id
+    WHERE d.work_date = ? AND m.dataset_id = ?`, workDate, await datasetId(db));
+  return row ? dayRecordFromRows(row, await breakRows(db, row.id)) : null;
 }
 
-async function getEditableDayRow(
-  db: SQLite.SQLiteDatabase,
-  workDate: IsoDate,
-): Promise<EditableDayRow | null> {
-  return db.getFirstAsync<EditableDayRow>(
-    `
-      SELECT
-        day_entries.id,
-        day_entries.month_id,
-        day_entries.work_date,
-        day_entries.special_day,
-        day_entries.start_minute,
-        day_entries.end_minute,
-        day_entries.break_duration_minutes,
-        day_entries.expected_work_minutes,
-        day_entries.expected_minutes_overridden,
-        day_entries.revision,
-        day_entries.daily_overtime_minutes,
-        day_entries.running_balance_minutes,
-        months.status AS month_status
-      FROM day_entries
-      JOIN months ON months.id = day_entries.month_id
-      WHERE day_entries.work_date = ?
-        AND months.dataset_id = ?
-    `,
-    workDate,
-    DATASET_ID,
-  );
+async function getEditableDayRow(db: SQLite.SQLiteDatabase, workDate: IsoDate): Promise<EditableDayRow | null> {
+  return db.getFirstAsync<EditableDayRow>(`SELECT d.*, m.status AS month_status,
+    r.daily_overtime_minutes, r.running_balance_minutes FROM day_entries d JOIN months m ON m.id = d.month_id
+    LEFT JOIN closed_day_results r ON r.day_entry_id = d.id WHERE d.work_date = ? AND m.dataset_id = ?`, workDate, await datasetId(db));
 }
 
 async function ensureEditableDayForAction(
@@ -1418,44 +1023,7 @@ async function ensureEditableDayForAction(
   return day;
 }
 
-async function insertBreaks(
-  db: SQLite.SQLiteDatabase,
-  dayEntryId: number,
-  breaks: BreakRecord[],
-  now: string,
-): Promise<void> {
-  for (const item of renumberBreaks(breaks)) {
-    assertMinuteOfDay(item.startMinute);
 
-    if (item.endMinute !== null) {
-      assertMinuteOfDay(item.endMinute);
-    }
-
-    await db.runAsync(
-      `
-        INSERT INTO break_entries (
-          day_entry_id,
-          public_id,
-          position,
-          start_minute,
-          end_minute,
-          created_at,
-          updated_at,
-          revision
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      dayEntryId,
-      item.publicId || makePublicId(),
-      item.position,
-      item.startMinute,
-      item.endMinute,
-      now,
-      now,
-      item.revision || 1,
-    );
-  }
-}
 
 function assertEditableDay(
   row: EditableDayRow,
@@ -1484,18 +1052,17 @@ function calculateMonthSnapshot(monthRecord: MonthRecord): DayRecord[] {
 
 function findUnresolvedDays(days: DayRecord[]): IsoDate[] {
   return days
-    .filter((day) => {
-      if (day.expectedWorkMinutes === 0) {
-        return false;
-      }
-
-      return (
-        day.startMinute === null ||
-        day.endMinute === null ||
-        day.breaks.some((item) => item.endMinute === null)
-      );
-    })
+    .filter((day) => day.startMinute === null && day.endMinute === null && day.expectedWorkMinutes > 0)
     .map((day) => day.workDate);
+}
+
+function validateMonthTimes(days: DayRecord[]): void {
+  for (const day of days) {
+    const issue = dayTimeIssues(day, true)[0];
+    if (issue) throw new RepositoryError(
+      `Complete or correct work times and pauses for ${day.workDate} before closing the month. ${issue.message}`,
+    );
+  }
 }
 
 function parseWorkDate(workDate: IsoDate): { year: number; month: number } {
@@ -1535,16 +1102,11 @@ function renumberBreaks(breaks: BreakRecord[]): BreakRecord[] {
 }
 
 function currentIsoDate(): IsoDate {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-function makePublicId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
+function makePublicId(): string { return createPublicId(); }
 
 export function deriveWorkdayState(
   day: DayRecord | null,

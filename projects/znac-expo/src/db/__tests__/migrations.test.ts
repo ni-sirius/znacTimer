@@ -1,144 +1,66 @@
-import { describe, expect, it } from "vitest";
+/// <reference types="node" />
+import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { migrateDatabase, schemaMatches, verifyIntegrityLight } from "../migrations";
+import { databaseFor, testId } from "./sqliteTestDatabase";
+import { PYTHON_INITIAL_V6_SQL, PYTHON_V6_SQL } from "../schema";
+import { createRepository } from "../repository";
+import { IntegrityCheckError, UnsupportedSchemaVersionError } from "../errors";
 
-import {
-  getSchemaVersion,
-  migrateDatabase,
-  recordMigration,
-  verifyIntegrityLight,
-} from "../migrations";
-import { CREATE_SCHEMA_SQL, CURRENT_SCHEMA_VERSION } from "../schema";
-import {
-  IntegrityCheckError,
-  UnsupportedSchemaVersionError,
-} from "../errors";
+describe("canonical database initialization", () => {
+  let db: DatabaseSync;
+  beforeEach(() => { db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys=ON;"); });
+  afterEach(() => db.close());
 
-type FakeRow = Record<string, unknown>;
-
-class FakeDatabase {
-  hasMigrationsTable = false;
-  version: number | null = null;
-  integrityCheck = "ok";
-  foreignKeyErrors: FakeRow[] = [];
-  execSql: string[] = [];
-  runCalls: { sql: string; args: unknown[] }[] = [];
-  transactionCount = 0;
-
-  async getFirstAsync<T>(sql: string): Promise<T | null> {
-    if (sql.includes("sqlite_master")) {
-      return (this.hasMigrationsTable ? { name: "schema_migrations" } : null) as
-        | T
-        | null;
-    }
-
-    if (sql.includes("MAX(version)")) {
-      return { version: this.version } as T;
-    }
-
-    if (sql.includes("PRAGMA integrity_check")) {
-      return { integrity_check: this.integrityCheck } as T;
-    }
-
-    return null;
-  }
-
-  async getAllAsync(sql: string): Promise<FakeRow[]> {
-    if (sql.includes("PRAGMA foreign_key_check")) {
-      return this.foreignKeyErrors;
-    }
-
-    return [];
-  }
-
-  async runAsync(sql: string, ...args: unknown[]): Promise<void> {
-    this.runCalls.push({ sql, args });
-
-    if (sql.includes("INSERT INTO schema_migrations")) {
-      this.hasMigrationsTable = true;
-      this.version = args[0] as number;
-    }
-  }
-
-  async execAsync(sql: string): Promise<void> {
-    this.execSql.push(sql);
-
-    if (sql === CREATE_SCHEMA_SQL) {
-      this.hasMigrationsTable = true;
-    }
-  }
-
-  async withTransactionAsync(operation: () => Promise<void>): Promise<void> {
-    this.transactionCount += 1;
-    await operation();
-  }
-}
-
-describe("database migrations", () => {
-  it("returns version 0 before schema_migrations exists", async () => {
-    const db = new FakeDatabase();
-
-    await expect(getSchemaVersion(db as never)).resolves.toBe(0);
+  it("initializes once and preserves an existing canonical database", async () => {
+    const adapter = databaseFor(db);
+    await migrateDatabase(adapter);
+    const before = db.prepare("SELECT * FROM datasets").all();
+    await migrateDatabase(adapter);
+    expect(db.prepare("SELECT * FROM datasets").all()).toEqual(before);
+    await expect(verifyIntegrityLight(adapter)).resolves.toBeUndefined();
   });
 
-  it("records schema migration versions", async () => {
-    const db = new FakeDatabase();
-
-    await recordMigration(db as never, CURRENT_SCHEMA_VERSION);
-
-    expect(db.runCalls).toHaveLength(1);
-    expect(db.runCalls[0].args[0]).toBe(CURRENT_SCHEMA_VERSION);
-    expect(db.version).toBe(CURRENT_SCHEMA_VERSION);
+  it("recreates only the recognized pre-production Expo schema", async () => {
+    db.exec(readFileSync(new URL("./fixtures/legacyExpoSchema.sql", import.meta.url), "utf8"));
+    await migrateDatabase(databaseFor(db));
+    expect(await schemaMatches(databaseFor(db))).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM months").get()?.count).toBe(0);
   });
 
-  it("creates schema and records current version on fresh install", async () => {
-    const db = new FakeDatabase();
-
-    await migrateDatabase(db as never);
-
-    expect(db.transactionCount).toBe(1);
-    expect(db.execSql).toEqual([CREATE_SCHEMA_SQL]);
-    expect(db.version).toBe(CURRENT_SCHEMA_VERSION);
+  it("refuses foreign files without creating schema tables or deleting their data", async () => {
+    db.exec("CREATE TABLE notes(content TEXT); INSERT INTO notes VALUES('keep');");
+    await expect(migrateDatabase(databaseFor(db))).rejects.toBeInstanceOf(IntegrityCheckError);
+    expect(db.prepare("SELECT * FROM notes").all()).toEqual([{ content: "keep" }]);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name='months'").get()).toBeUndefined();
   });
 
-  it("does not recreate schema when current version is already installed", async () => {
-    const db = new FakeDatabase();
-    db.hasMigrationsTable = true;
-    db.version = CURRENT_SCHEMA_VERSION;
-
-    await migrateDatabase(db as never);
-
-    expect(db.execSql).toEqual([]);
-    expect(db.runCalls).toEqual([]);
+  it("refuses newer versions and tampered schemas without resetting them", async () => {
+    const adapter = databaseFor(db);
+    await migrateDatabase(adapter);
+    db.exec("INSERT INTO schema_migrations VALUES(8,'seed','new'); PRAGMA user_version=8;");
+    await expect(migrateDatabase(adapter)).rejects.toBeInstanceOf(UnsupportedSchemaVersionError);
+    db.exec("DELETE FROM schema_migrations WHERE version=8; PRAGMA user_version=7; DROP TRIGGER day_guard_update;");
+    await expect(migrateDatabase(adapter)).rejects.toBeInstanceOf(IntegrityCheckError);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM datasets").get()?.count).toBe(1);
   });
 
-  it("rejects databases created by a newer app version", async () => {
-    const db = new FakeDatabase();
-    db.hasMigrationsTable = true;
-    db.version = CURRENT_SCHEMA_VERSION + 1;
-
-    await expect(migrateDatabase(db as never)).rejects.toBeInstanceOf(
-      UnsupportedSchemaVersionError,
-    );
-  });
-
-  it("fails integrity-light checks on foreign key violations", async () => {
-    const db = new FakeDatabase();
-    db.hasMigrationsTable = true;
-    db.version = CURRENT_SCHEMA_VERSION;
-    db.foreignKeyErrors = [{ table: "break_entries" }];
-
-    await expect(verifyIntegrityLight(db as never)).rejects.toBeInstanceOf(
-      IntegrityCheckError,
-    );
-  });
-
-  it("fails integrity-light checks when SQLite reports corruption", async () => {
-    const db = new FakeDatabase();
-    db.hasMigrationsTable = true;
-    db.version = CURRENT_SCHEMA_VERSION;
-    db.integrityCheck = "database disk image is malformed";
-
-    await expect(verifyIntegrityLight(db as never)).rejects.toBeInstanceOf(
-      IntegrityCheckError,
-    );
+  it.each(["initial", "amended"])("upgrades Python v6 (%s) with its own migration and keeps dataset identity and day input", async (variant) => {
+    db.exec(variant === "initial" ? PYTHON_INITIAL_V6_SQL : PYTHON_V6_SQL);
+    db.prepare("INSERT INTO datasets(id,public_id,created_at) VALUES(17,?,'seed')").run(testId("dataset"));
+    db.prepare(`INSERT INTO work_schedule_periods(public_id,dataset_id,effective_from,monday_minutes,tuesday_minutes,wednesday_minutes,
+      thursday_minutes,friday_minutes,saturday_minutes,sunday_minutes,created_at,updated_at)
+      VALUES(?,17,'0001-01-01',480,480,480,480,480,0,0,'seed','seed')`).run(testId("schedule"));
+    db.exec(`INSERT INTO schema_migrations VALUES(6,'seed','desktop'); PRAGMA user_version=6;
+      INSERT INTO months(id,dataset_id,year,month,status,created_at,updated_at) VALUES(1,17,2025,1,'open','seed','seed');
+      INSERT INTO day_entries(month_id,work_date,special_day,start_minute,end_minute,expected_work_minutes,created_at,updated_at)
+      VALUES(1,'2025-01-01','Normal day',540,1020,480,'seed','seed');`);
+    await migrateDatabase(databaseFor(db));
+    expect(await schemaMatches(databaseFor(db))).toBe(true);
+    expect(db.prepare("SELECT id, public_id FROM datasets").get()).toEqual({ id: 17, public_id: testId("dataset") });
+    const repo = createRepository(databaseFor(db));
+    const day = (await repo.loadMonth(2025, 1))!.days[0];
+    expect(await repo.updateDay(day.workDate, { endMinute: 1050 }, day.revision)).toMatchObject({ startMinute: 540, endMinute: 1050 });
   });
 });

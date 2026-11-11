@@ -4,6 +4,7 @@ import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ThemeMode } from "../../src/db/repository.types";
 import type { WorkSchedulePeriod } from "../../src/domain/models";
+import { DatabaseSection } from "../../src/features/settings/DatabaseSection";
 import { useMonthStore } from "../../src/stores/monthStore";
 import { useSettingsStore } from "../../src/stores/settingsStore";
 import { getMobileTheme } from "../../src/theme";
@@ -89,15 +90,7 @@ export default function SettingsScreen() {
         </View>
       </SettingsSection>
 
-      <SettingsSection title="Data">
-        <MetricRow label="Storage" value="Local SQLite" />
-        <MetricRow
-          label="Export"
-          value="Ready for API/storage layer"
-          divider={false}
-          valueStyle={styles.longValue}
-        />
-      </SettingsSection>
+      <DatabaseSection />
 
       <SettingsSection title="Application">
         <Text style={styles.label}>Theme</Text>

@@ -3,7 +3,6 @@ import { Trash2, X } from "lucide-react-native";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { isWeekendIso } from "../../src/domain/calendar";
 import type { IsoDate } from "../../src/domain/models";
 import { selectDayByIsoDate } from "../../src/stores/selectors";
 import { useMonthStore } from "../../src/stores/monthStore";
@@ -16,7 +15,7 @@ export default function DeleteDay() {
   const { date } = useLocalSearchParams<{ date?: string }>();
   const workDate = String(date ?? "") as IsoDate;
   const month = useMonthStore((state) => state.month);
-  const updateDay = useMonthStore((state) => state.updateDay);
+  const resetDay = useMonthStore((state) => state.clearDay);
   const error = useMonthStore((state) => state.error);
   const [saving, setSaving] = useState(false);
 
@@ -31,21 +30,8 @@ export default function DeleteDay() {
     setSaving(true);
 
     try {
-      await updateDay(
-        day.workDate,
-        {
-          specialDay: "",
-          startMinute: null,
-          endMinute: null,
-          breakDurationMinutes: null,
-          breaks: [],
-          expectedWorkMinutes: isWeekendIso(day.workDate) ? 0 : 480,
-          expectedMinutesOverridden: false,
-        },
-        day.revision,
-      );
-
-      router.back();
+      const saved = await resetDay(day.workDate, day.revision);
+      if (saved) router.back();
     } finally {
       setSaving(false);
     }
@@ -71,9 +57,14 @@ export default function DeleteDay() {
 
           <Text style={styles.title}>Clear day</Text>
           <Text style={styles.text}>
-            This will clear entered times, interruptions, and day type.
+            This will delete all entered times, interruptions, additional break,
+            day type, and manual planned time. The day will return to its default
+            state using the work schedule for this date.
           </Text>
-          <Text style={styles.text}>The day row will stay in the database.</Text>
+          <Text style={styles.text}>
+            If this is today, any active work or pause will be reset and the
+            player will return to its initial state.
+          </Text>
           <Text style={styles.dateText}>Date {workDate}</Text>
 
           {error && <Text style={styles.errorText}>{error}</Text>}

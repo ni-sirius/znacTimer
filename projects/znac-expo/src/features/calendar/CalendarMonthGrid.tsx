@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import {
@@ -23,28 +24,40 @@ type CalendarMonthGridProps = {
   month: MonthRecord;
   today: IsoDate;
   onDayPress: (date: IsoDate) => void;
+  onTodayLayout?: (y: number, height: number) => void;
 };
 
 export function CalendarMonthGrid({
   month,
   today,
   onDayPress,
+  onTodayLayout,
 }: CalendarMonthGridProps) {
   const cells = buildCalendarCells(month, today);
+  const rows = chunkCells(cells);
+  const [gridY, setGridY] = useState(0);
+  const [rowFrames, setRowFrames] = useState<Record<number, { y: number; height: number }>>({});
+  const todayRow = rowFrames[rows.findIndex((row) => row.some((cell) => cell.isToday && cell.inSelectedMonth))];
+  useEffect(() => {
+    if (todayRow) onTodayLayout?.(gridY + todayRow.y, todayRow.height);
+  }, [gridY, today, todayRow, onTodayLayout]);
 
   return (
     <Panel style={styles.panel}>
       <View style={styles.weekdayRow}>
         {WEEKDAYS.map((weekday) => (
-          <Text key={weekday} style={styles.weekday}>
+          <Text key={weekday} style={styles.weekday} numberOfLines={1} adjustsFontSizeToFit>
             {weekday}
           </Text>
         ))}
       </View>
 
-      <View style={styles.grid}>
-        {chunkCells(cells).map((row) => (
-          <View key={row[0]?.date} style={styles.dayRow}>
+      <View style={styles.grid} onLayout={(event) => setGridY(event.nativeEvent.layout.y)}>
+        {rows.map((row, index) => (
+          <View key={row[0]?.date} style={styles.dayRow} onLayout={(event) => {
+            const { y, height } = event.nativeEvent.layout;
+            setRowFrames((old) => old[index]?.y === y && old[index]?.height === height ? old : { ...old, [index]: { y, height } });
+          }}>
             {row.map((cell) => (
               <CalendarDayCell
                 key={cell.date}

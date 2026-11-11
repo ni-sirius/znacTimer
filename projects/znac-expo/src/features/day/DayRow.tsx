@@ -3,7 +3,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { DayRecord } from "../../domain/models";
 import { dayTypeInfo, regularDayBadgeKind } from "./dayVisualState";
-import { expectedEndText, formatShortDate, weekdayCalendarWeekText } from "../overview/overviewFormat";
+import { dayListDateText, expectedEndText } from "../overview/overviewFormat";
+import { calendarWeekTagIso } from "../../domain/calendar";
 import { minuteToClockText } from "../../domain/time";
 import { getMobileTheme } from "../../theme";
 import { Panel, StatusBadge } from "../../ui";
@@ -27,9 +28,9 @@ export function DayRow({ day, isToday = false, onPress }: DayRowProps) {
     <Pressable onPress={() => onPress(day.workDate)}>
       <Panel style={[styles.card, isToday && styles.todayCard]}>
         <View style={styles.header}>
-          <View>
-            <Text style={styles.date}>{formatShortDate(day.workDate)}</Text>
-            <Text style={styles.week}>{weekdayCalendarWeekText(day)}</Text>
+          <View style={styles.identity}>
+            <Text style={styles.date}>{dayListDateText(day.workDate)}</Text>
+            <Text style={styles.week}>{calendarWeekTagIso(day.workDate)}</Text>
           </View>
           <StatusBadge
             label={dayType.label}
@@ -94,19 +95,25 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: theme.spacing.md,
   },
   date: {
     color: theme.colors.text,
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "800",
   },
   dayTypeBadge: {
-    width: "50%",
+    maxWidth: "100%",
     minHeight: 34,
     alignItems: "center",
+  },
+  identity: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 140,
   },
   dayTypeBadgeText: {
     fontSize: 13,

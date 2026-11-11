@@ -1,102 +1,33 @@
-import {
-  CalendarDays,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react-native";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ChevronLeft, ChevronRight } from "lucide-react-native";
+import { StyleSheet, Text, View } from "react-native";
 
-import { monthTitle } from "../overview/overviewFormat";
 import { getMobileTheme } from "../../theme";
-import { IconButton } from "../../ui";
+import { AppButton, IconButton } from "../../ui";
 
 const theme = getMobileTheme("dark");
 
-type CalendarHeaderProps = {
+type Props = {
   year: number;
-  month: number;
-  onPrevious: () => void;
-  onNext: () => void;
-  onPressPeriod: () => void;
+  onPrevious(): void;
+  onNext(): void;
+  onToday(): void;
 };
 
-export function CalendarHeader({
-  year,
-  month,
-  onPrevious,
-  onNext,
-  onPressPeriod,
-}: CalendarHeaderProps) {
+export function CalendarHeader({ year, onPrevious, onNext, onToday }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.switcher}>
-        <IconButton
-          accessibilityLabel="Previous month"
-          icon={<ChevronLeft color={theme.colors.primary} size={24} />}
-          onPress={onPrevious}
-          style={styles.iconButton}
-        />
-
-        <Pressable
-          accessibilityRole="button"
-          onPress={onPressPeriod}
-          style={styles.periodButton}
-        >
-          <CalendarDays color={theme.colors.textMuted} size={22} />
-          <Text style={styles.period} numberOfLines={1}>
-            {shortMonthTitle(year, month)}
-          </Text>
-          <ChevronDown color={theme.colors.textMuted} size={16} />
-        </Pressable>
-
-        <IconButton
-          accessibilityLabel="Next month"
-          icon={<ChevronRight color={theme.colors.primary} size={24} />}
-          onPress={onNext}
-          style={styles.iconButton}
-        />
+        <IconButton accessibilityLabel="Previous year" disabled={year <= 100} icon={<ChevronLeft color={theme.colors.primary} size={24} />} onPress={onPrevious} />
+        <Text accessibilityRole="header" style={styles.year}>{year}</Text>
+        <IconButton accessibilityLabel="Next year" disabled={year >= 9999} icon={<ChevronRight color={theme.colors.primary} size={24} />} onPress={onNext} />
       </View>
+      <AppButton title="Today" variant="secondary" onPress={onToday} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    gap: theme.spacing.md,
-  },
-  switcher: {
-    minHeight: 52,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing.xs,
-  },
-  iconButton: {
-    width: 36,
-    height: 36,
-    backgroundColor: "transparent",
-  },
-  period: {
-    color: theme.colors.text,
-    fontSize: 17,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  periodButton: {
-    minWidth: 172,
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing.sm,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: theme.colors.surfaceMuted,
-    paddingHorizontal: theme.spacing.md,
-  },
+  container: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: theme.spacing.sm },
+  switcher: { flexDirection: "row", alignItems: "center", gap: theme.spacing.sm },
+  year: { color: theme.colors.text, fontSize: 20, fontWeight: "800" },
 });
-
-function shortMonthTitle(year: number, month: number): string {
-  return monthTitle(year, month).slice(0, 3) + ` ${year}`;
-}
