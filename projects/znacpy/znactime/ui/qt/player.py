@@ -6,6 +6,7 @@ from znactime.ui.qt import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSize,
     QTimer,
     Signal,
     Qt,
@@ -17,6 +18,7 @@ from znactime.ui.qt.color_scheme import (
     theme_color,
 )
 from znactime.ui.qt.day_badge import TodayBadgeView
+from znactime.ui.qt.theme_assets import themed_workday_icon
 
 
 class WorkdayState:
@@ -70,6 +72,8 @@ class WorkdayBar(QWidget):
         self.stop_button = QPushButton("Stop day", self)
         self.stop_button.setObjectName("stopWorkdayButton")
         self.stop_button.clicked.connect(self.stopClicked.emit)
+        for button in (self.primary_button, self.stop_button):
+            button.setIconSize(QSize(18, 18))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
@@ -113,11 +117,16 @@ class WorkdayBar(QWidget):
             self.primary_button.setText("Resume")
             self.primary_button.setEnabled(True)
             self.stop_button.setEnabled(True)
+        elif state == WorkdayState.COMPLETE:
+            self.primary_button.setText("Reopen day")
+            self.primary_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
         else:
             self.primary_button.setText("Start day")
             self.primary_button.setEnabled(False)
             self.stop_button.setEnabled(False)
 
+        self._refresh_icons()
         if message is not None:
             self.status_label.setText(message)
         else:
@@ -145,8 +154,19 @@ class WorkdayBar(QWidget):
                 f"Workday complete · {self._start}–{self._end}"
             )
 
+    def _refresh_icons(self):
+        dark = is_dark_theme()
+        action = {
+            WorkdayState.WORKING: "pause",
+            WorkdayState.PAUSED: "resume",
+            WorkdayState.COMPLETE: "reopen",
+        }.get(self._state, "start")
+        self.primary_button.setIcon(themed_workday_icon(action, dark))
+        self.stop_button.setIcon(themed_workday_icon("stop", dark))
+
     def apply_theme(self):
         self.day_badge.viewport().update()
+        self._refresh_icons()
         dark = is_dark_theme()
         surface = theme_color("player.surface", dark)
         border = theme_color("player.border", dark)
