@@ -35,7 +35,7 @@ Button {
         colors: control.colors
         objectName: control.objectName + "Tooltip"
         text: control.message
-        visible: control.hovered
+        hoverRequested: control.hovered
         timeout: 20000
     }
 }

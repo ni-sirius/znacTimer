@@ -108,7 +108,7 @@ Surface {
             HoverHandler { id: carryHover }
             AppToolTip {
                 colors: root.colors
-                visible: carryHover.hovered && root.ui.previousUnclosed && !carryInfo.hovered
+                hoverRequested: carryHover.hovered && root.ui.previousUnclosed && !carryInfo.hovered
                 text: "Close last month to carry its time balance over to this month."
             }
         }
@@ -131,7 +131,7 @@ Surface {
             onClicked: root.ui.closed ? root.controller.reopenMonth() : root.controller.closeMonth()
             AppToolTip {
                 colors: root.colors
-                visible: monthAction.hovered
+                hoverRequested: monthAction.hovered
                 text: root.ui.carryDiscontinuity ? "The previous closing balance changed. This closed month's opening balance is preserved."
                                                : root.ui.closed ? "This month is closed. Click to reopen it for corrections." : "This month is open. Click to review and close it."
             }

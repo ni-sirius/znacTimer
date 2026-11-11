@@ -264,7 +264,7 @@ Surface {
                             AppToolTip {
                                 colors: root.colors
                                 text: cell.editValue
-                                visible: dateHover.hovered && !dayInfo.hovered
+                                hoverRequested: dateHover.hovered && !dayInfo.hovered
                             }
                             Rectangle {
                                 id: dateGlow

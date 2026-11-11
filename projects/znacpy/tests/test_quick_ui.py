@@ -499,6 +499,45 @@ class QuickUITest(unittest.TestCase):
         QTest.keyClick(self.window.window, Qt.Key_Space)
         self.assertTrue(carry_info.property("informationPopup").property("visible"))
 
+    def test_hover_tooltips_wait_and_cancel_when_pointer_leaves(self):
+        controller = self.window.controller
+        controller.selectMonth(2024, 6)
+        controller.editCell(0, 2, "08:00")
+        controller.editCell(0, 4, "12:00-12:30")
+        self.app.processEvents()
+        pending = [self.find("monthCell_0_4")]
+        pause_badge = None
+        while pending:
+            item = pending.pop()
+            pending.extend(item.childItems())
+            if item.property("tooltipText"):
+                pause_badge = item
+                break
+        self.assertIsNotNone(pause_badge)
+        info = self.find("dateInfoIcon_0")
+        away = QPointF(2, 2).toPoint()
+        for source, tip in ((info, info.property("informationPopup")),
+                            (pause_badge, pause_badge.property("tooltipPopup"))):
+            QTest.mouseMove(self.window.window, away)
+            QTest.qWait(120)
+            position = source.mapToScene(QPointF(source.width()/2, source.height()/2)).toPoint()
+            QTest.mouseMove(self.window.window, position)
+            QTest.qWait(100)
+            self.assertFalse(tip.property("visible"))
+            QTest.mouseMove(self.window.window, away)
+            QTest.qWait(550)
+            self.assertFalse(tip.property("visible"))
+            QTest.mouseMove(self.window.window, position)
+            QTest.qWait(100)
+            self.assertFalse(tip.property("visible"))
+            QTest.qWait(500)
+            self.assertTrue(tip.property("visible"))
+            QTest.mouseMove(self.window.window, away)
+            QTest.qWait(120)
+            self.assertFalse(tip.property("visible"))
+        self.click(info)
+        self.assertTrue(info.property("informationPopup").property("visible"))
+
     def test_tooltips_animate_use_theme_surfaces_and_wrap_long_text(self):
         controller = self.window.controller
         QTest.mouseMove(self.window.window, QPointF(2, 2).toPoint())

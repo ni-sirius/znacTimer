@@ -4,6 +4,14 @@ import QtQuick.Controls
 ToolTip {
     id: control
     required property var colors
+    property bool hoverRequested: false
+    property int hoverDelay: 500
+    onHoverRequestedChanged: { if (!hoverRequested) close() }
+    Timer {
+        interval: control.hoverDelay
+        running: control.hoverRequested
+        onTriggered: control.open()
+    }
     popupType: Popup.Item
     implicitWidth: Math.min(420, implicitContentWidth + leftPadding + rightPadding)
     leftPadding: 12; rightPadding: 12

@@ -41,7 +41,7 @@ Rectangle {
         id: badgeTip
         colors: badge.colors
         text: badge.tooltipText
-        visible: tooltipHover.hovered && text !== "" && !badge.editing
+        hoverRequested: tooltipHover.hovered && text !== "" && !badge.editing
     }
     FontMetrics { id: metrics; font: label.font }
     Text {

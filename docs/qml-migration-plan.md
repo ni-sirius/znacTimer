@@ -211,3 +211,9 @@ reviewed under `projects/znacpy/build/qml-tooltip-style/`.
 
 Validation: 68 QML interaction and packaging tests passed. The release-source
 allowlist and whitespace checks passed.
+
+Hover tooltips now wait 500 ms before opening. Leaving the target cancels the
+pending display; explicit click, keyboard, and accessibility activation remains
+immediate. The shared timer applies to time, pause, date, and header/footer hints.
+Three targeted QML interaction checks passed for delay/cancellation, immediate
+activation, and the existing theme/animation behavior.
