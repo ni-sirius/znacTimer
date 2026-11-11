@@ -72,6 +72,12 @@ Surface {
     function showRow(row) {
         selectCell(row, 2, false)
     }
+    function revealToday() {
+        if (!ui.currentMonth) return
+        table.forceLayout()
+        table.positionViewAtCell(Qt.point(0, ui.todayRow), TableView.Contain)
+    }
+    Component.onCompleted: Qt.callLater(revealToday)
 
     Rectangle {
         x: 1; y: 1; width: parent.width - 2; height: 36
@@ -469,5 +475,6 @@ Surface {
     Connections {
         target: root.controller
         function onChanged() { Qt.callLater(table.forceLayout) }
+        function onMonthLoaded() { Qt.callLater(root.revealToday) }
     }
 }

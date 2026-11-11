@@ -386,4 +386,12 @@ The assessment above records the original audit. Subsequent fixes are tracked he
 | F07 | Fixed | Action mnemonics and deduplicated native/portable Quit bindings; FR-070/071. |
 | F08 | Fixed | Shared period/total tooltips, full-date hover, and pointer/keyboard/accessibility information controls; FR-078/079. |
 | F09 | Fixed | Footer hosts its own keyboard-accessible revision-bound editor and shares edit exclusion; FR-080. |
-| F10 | Pending | |
+| F10 | Fixed | Today revealed after startup/month layout; edit and resize scroll preservation; FR-081. |
+
+Post-remediation verification: **524 tests run, 2 skipped, no failures**
+(248.673 seconds), including 17 added regression tests. Three additional isolated
+checks passed for rapid subsequent badge clicks, Ctrl+Enter opening the advanced
+editor, and footer editing across month rollover. Light/dark dashboard previews
+were generated and inspected; the source release allowlist and whitespace checks
+passed. Preview artifacts are under `projects/znacpy/build/qml-parity-fixes/`.
+No release executable was rebuilt, and native macOS checks remain outstanding.

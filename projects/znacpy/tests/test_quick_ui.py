@@ -17,6 +17,7 @@ from shiboken6 import isValid
 from znactime.storage.legacy_csv_import import LegacyImportCancelled
 from znactime.storage.sqlite.repository import SQLiteRepository
 from znactime.ui.quick.app import TimeTrackerApp
+from znactime.ui.qt.settings import FIT_STARTUP_HEIGHT_KEY, INITIAL_HEIGHT_KEY
 
 
 class QuickUITest(unittest.TestCase):
@@ -550,6 +551,39 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(self.window.controller.state["workState"], "working")
         self.click(self.find("todayBadge"))
         self.assertEqual(self.window.window.activeFocusItem().objectName(), "todayBadgeEditor")
+
+    def test_current_month_reveals_today_on_startup_and_load_but_not_edits(self):
+        self.window.shutdown()
+        self.settings.setValue(FIT_STARTUP_HEIGHT_KEY, False)
+        self.settings.setValue(INITIAL_HEIGHT_KEY, 500)
+        self.window = TimeTrackerApp(self.repo, self.settings,
+                                     clock=lambda: datetime(2026, 11, 30, 12, tzinfo=timezone.utc))
+        self.window.show()
+        QTest.qWait(60)
+        for reload in (False, True):
+            if reload:
+                self.window.controller.selectMonth(2026, 10)
+                self.app.processEvents()
+                self.window.controller.selectMonth(2026, 11)
+                QTest.qWait(30)
+            table = self.find("monthTable")
+            today = self.find("monthCell_29_0")
+            top = today.mapToItem(table, QPointF()).y()
+            self.assertGreater(table.property("contentY"), 0)
+            self.assertGreaterEqual(top, -1)
+            self.assertLessEqual(top + today.height(), table.height() + 1)
+        table.setProperty("contentY", 350)
+        QTest.qWait(20)
+        before = table.property("contentY")
+        self.click(self.find("monthCell_12_2"))
+        self.type_text("08:30")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        QTest.qWait(20)
+        self.assertEqual(table.property("contentY"), before)
+        self.window.window.setHeight(550)
+        QTest.qWait(20)
+        self.assertEqual(table.property("contentY"), before)
+        self.assertEqual(self.window.controller.cellValue(12, 2), "08:30")
 
     def test_escape_cancels_time_edit(self):
         self.click(self.find("monthCell_0_2"))

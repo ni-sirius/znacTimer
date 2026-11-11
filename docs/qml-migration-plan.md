@@ -171,3 +171,30 @@ window decoration and dragging still require validation on a Mac.
 
 The rebuilt Windows executable passed every packaged smoke check with empty
 stderr; report: `projects/znacpy/build/qml-validation/dialog-windows-smoke-report.json`.
+
+## Interaction parity fixes — 2026-11-11
+
+The ten behavioral findings in the
+[QML / Widgets parity audit](QML_WIDGETS_PARITY_AUDIT_2026-11-11.md) were addressed
+in separate commits, with regression coverage and requirement traceability.
+Modal edits retain day identity and revision. The Qt selection model supplies
+the current cell and selected ranges, including after Tab, Ctrl/Shift clicks,
+and dragging. A shared edit session consumes the badge gesture that finishes an
+existing edit, and the workday badge now edits in place through that same session.
+
+Printable-key editing, current-time defaults, lexical clock filtering, action
+mnemonics, native/portable Quit bindings, interruption duration tooltips, and
+keyboard-accessible information controls are restored. Current-month loads reveal
+today after layout while ordinary edits and resizing preserve scroll position.
+Shared tooltip formatting lives outside the frontend-specific packages. New
+clock and information components are included in the packaging asset list.
+
+FR-070/071 now trace both frontends; FR-072–081 document the interaction contracts.
+Native macOS validation remains a platform follow-up. These source changes do
+not imply a rebuilt release executable or removal of the retained Widgets UI.
+
+Validation: **524 tests run, 2 skipped, no failures**, including 17 added
+regression tests. Additional rapid-click, advanced-editor keyboard, and footer
+rollover checks passed. Light/dark previews were generated and dashboard renders
+reviewed in `projects/znacpy/build/qml-parity-fixes/`. The release-source allowlist
+and whitespace checks passed.

@@ -47,6 +47,7 @@ class ApplicationController(QObject):
     notification = Signal(str, str)
     confirmation = Signal(str, str, int)
     scrollToToday = Signal(int)
+    monthLoaded = Signal()
 
     def __init__(self, repository, settings, parent=None, *, clock=None):
         super().__init__(parent)
@@ -134,6 +135,7 @@ class ApplicationController(QObject):
         return {
             "title": f"{APP_NAME} v{VERSION}", "version": VERSION,
             "year": self.year, "month": self.month,
+            "currentMonth": (self.year, self.month) == (now.year, now.month),
             "monthName": calendar.month_name[self.month],
             "months": list(calendar.month_name)[1:],
             "calendarWeek": build_calendar_week_text(self.year, self.month, today=now.date()),
@@ -174,6 +176,7 @@ class ApplicationController(QObject):
             )
             self._model.load_calculated_month(record, self._clock().date())
             self.changed.emit()
+            self.monthLoaded.emit()
             return True
         except StorageError as error:
             self.notification.emit("Database error", str(error))
