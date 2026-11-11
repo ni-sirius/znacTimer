@@ -499,6 +499,48 @@ class QuickUITest(unittest.TestCase):
         QTest.keyClick(self.window.window, Qt.Key_Space)
         self.assertTrue(carry_info.property("informationPopup").property("visible"))
 
+    def test_tooltips_animate_use_theme_surfaces_and_wrap_long_text(self):
+        controller = self.window.controller
+        QTest.mouseMove(self.window.window, QPointF(2, 2).toPoint())
+        QTest.qWait(120)
+        controller.selectMonth(2024, 6)
+        controller.editCell(0, 2, "08:00")
+        controller.editCell(0, 4, "12:00-12:30")
+        for theme in ("light", "dark"):
+            controller.setTheme(theme)
+            self.app.processEvents()
+            info = self.find("dateInfoIcon_0")
+            info.setProperty("message", "A long explanation of the workday and recorded pause. " * 8)
+            info_tip = info.property("informationPopup")
+            pending = [self.find("monthCell_0_4")]
+            pause_badge = None
+            while pending:
+                item = pending.pop()
+                pending.extend(item.childItems())
+                if item.property("tooltipText"):
+                    pause_badge = item
+                    break
+            self.assertIsNotNone(pause_badge)
+            for tip in (info_tip, pause_badge.property("tooltipPopup")):
+                self.invoke(tip, "open")
+                opacity_samples = [tip.property("opacity")]
+                for _ in range(10):
+                    QTest.qWait(20)
+                    opacity_samples.append(tip.property("opacity"))
+                self.assertTrue(any(0 <= opacity < 1 for opacity in opacity_samples))
+                self.assertEqual(tip.property("opacity"), 1)
+                background = tip.property("background")
+                content = tip.property("contentItem")
+                colors = controller.state["colors"]["tokens"]
+                self.assertEqual(background.property("color"), QColor(colors["panel_surface"]))
+                self.assertEqual(content.property("color"), QColor(colors["panel_text"]))
+                self.assertGreater(background.property("radius"), 0)
+                self.assertLessEqual(tip.property("width"), 420)
+                self.assertGreaterEqual(content.height(), content.implicitHeight())
+                self.invoke(tip, "close")
+                QTest.qWait(120)
+                self.assertFalse(tip.property("visible"))
+
     def test_interruption_tooltips_include_period_and_total_in_open_and_closed_months(self):
         controller = self.window.controller
         controller.selectMonth(2024, 6)

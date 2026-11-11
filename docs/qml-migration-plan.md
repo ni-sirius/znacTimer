@@ -198,3 +198,16 @@ regression tests. Additional rapid-click, advanced-editor keyboard, and footer
 rollover checks passed. Light/dark previews were generated and dashboard renders
 reviewed in `projects/znacpy/build/qml-parity-fixes/`. The release-source allowlist
 and whitespace checks passed.
+
+## Tooltip appearance follow-up
+
+Time information, pause durations, dates, and header/footer hints now share
+`AppToolTip.qml`. It uses the theme's panel surface, text, and border colors with
+10-pixel corners and wrapped plain text. Opening fades and scales in over
+140 ms; closing fades out over 90 ms. The shared component is included in the
+packaging asset list. Runtime checks cover both themes, animation completion,
+long-message wrapping, and repeated closing. Light/dark popup previews were
+reviewed under `projects/znacpy/build/qml-tooltip-style/`.
+
+Validation: 68 QML interaction and packaging tests passed. The release-source
+allowlist and whitespace checks passed.

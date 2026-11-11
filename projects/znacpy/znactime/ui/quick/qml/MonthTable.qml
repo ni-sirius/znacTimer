@@ -261,8 +261,11 @@ Surface {
                             property alias infoButton: dayInfo
                             anchors.fill: parent
                             HoverHandler { id: dateHover }
-                            ToolTip.visible: dateHover.hovered && !dayInfo.hovered
-                            ToolTip.text: cell.editValue
+                            AppToolTip {
+                                colors: root.colors
+                                text: cell.editValue
+                                visible: dateHover.hovered && !dayInfo.hovered
+                            }
                             Rectangle {
                                 id: dateGlow
                                 visible: cell.dayState !== ""

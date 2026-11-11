@@ -14,6 +14,7 @@ Rectangle {
     property bool fullWidth: false
     property var editSession: null
     property string tooltipText: ""
+    readonly property QtObject tooltipPopup: badgeTip
     signal clicked(int modifiers)
     signal pointerPressed(int modifiers)
     signal pointerDragged(point scenePosition)
@@ -36,8 +37,12 @@ Rectangle {
     border.width: (outlined || activeFocus) && !plain ? 2 : 0
     border.color: activeFocus ? colors.primary : (appearance.borderColor || colors.primary)
     HoverHandler { id: tooltipHover }
-    ToolTip.visible: tooltipHover.hovered && tooltipText !== ""
-    ToolTip.text: tooltipText
+    AppToolTip {
+        id: badgeTip
+        colors: badge.colors
+        text: badge.tooltipText
+        visible: tooltipHover.hovered && text !== "" && !badge.editing
+    }
     FontMetrics { id: metrics; font: label.font }
     Text {
         id: label

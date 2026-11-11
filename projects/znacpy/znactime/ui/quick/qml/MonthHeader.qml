@@ -96,6 +96,7 @@ Surface {
                     elide: Text.ElideRight
                 }
                 InfoButton {
+                    id: carryInfo
                     objectName: "carryOverInfo"
                     visible: root.ui.previousUnclosed
                     colors: root.colors
@@ -105,8 +106,11 @@ Surface {
                 }
             }
             HoverHandler { id: carryHover }
-            ToolTip.visible: carryHover.hovered && root.ui.previousUnclosed
-            ToolTip.text: "Close last month to carry its time balance over to this month."
+            AppToolTip {
+                colors: root.colors
+                visible: carryHover.hovered && root.ui.previousUnclosed && !carryInfo.hovered
+                text: "Close last month to carry its time balance over to this month."
+            }
         }
         AppButton {
             id: monthAction
@@ -125,9 +129,12 @@ Surface {
                 Label { id: warning; visible: root.ui.carryDiscontinuity; text: root.width < 1100 ? "!" : "carry-over discontinuity"; color: root.colors.tokens.danger_text }
             }
             onClicked: root.ui.closed ? root.controller.reopenMonth() : root.controller.closeMonth()
-            ToolTip.visible: hovered
-            ToolTip.text: root.ui.carryDiscontinuity ? "The previous closing balance changed. This closed month's opening balance is preserved."
-                                                   : root.ui.closed ? "This month is closed. Click to reopen it for corrections." : "This month is open. Click to review and close it."
+            AppToolTip {
+                colors: root.colors
+                visible: monthAction.hovered
+                text: root.ui.carryDiscontinuity ? "The previous closing balance changed. This closed month's opening balance is preserved."
+                                               : root.ui.closed ? "This month is closed. Click to reopen it for corrections." : "This month is open. Click to review and close it."
+            }
         }
     }
 }

@@ -30,11 +30,11 @@ Button {
         border.width: control.activeFocus ? 2 : 1.2
         border.color: control.activeFocus ? control.colors.primary : control.colors.model.overtime_negative
     }
-    ToolTip {
+    AppToolTip {
         id: informationTip
+        colors: control.colors
         objectName: control.objectName + "Tooltip"
         text: control.message
-        contentItem: Label { text: informationTip.text; textFormat: Text.PlainText; wrapMode: Text.WordWrap }
         visible: control.hovered
         timeout: 20000
     }

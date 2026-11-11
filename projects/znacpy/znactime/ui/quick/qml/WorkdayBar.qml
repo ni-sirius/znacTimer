@@ -66,8 +66,7 @@ Surface {
             Layout.preferredWidth: 170
             Layout.preferredHeight: 33
             onClicked: root.editDayBadge()
-            ToolTip.visible: hovered
-            ToolTip.text: "Today's day badge · Click to edit"
+            tooltipText: "Today's day badge · Click to edit"
             ClockTextField {
                 id: dayEditor
                 objectName: "todayBadgeEditor"
