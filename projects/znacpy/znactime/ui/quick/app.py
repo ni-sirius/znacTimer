@@ -8,6 +8,7 @@ from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from znactime.ui.quick.controller import ApplicationController
+from znactime.ui.quick.focus_navigation import FocusNavigation
 from znactime.ui.quick.menu_keys import MenuAccessKeys
 
 
@@ -24,6 +25,7 @@ class TimeTrackerApp:
         QQuickWindow.setTextRenderType(QQuickWindow.NativeTextRendering)
         self.controller = ApplicationController(repository, settings, clock=clock)
         self.menu_access_keys = MenuAccessKeys(self.controller)
+        self.focus_navigation = FocusNavigation(self.controller)
         self.engine = QQmlApplicationEngine()
         self._shutdown = False
         self.errors = []
@@ -31,6 +33,7 @@ class TimeTrackerApp:
         self.engine.setInitialProperties({
             "controller": self.controller,
             "menuAccessKeys": self.menu_access_keys,
+            "focusNavigation": self.focus_navigation,
         })
         self.engine.load(QUrl.fromLocalFile(str(QML_DIRECTORY / "Main.qml")))
         if not self.engine.rootObjects():
@@ -39,6 +42,7 @@ class TimeTrackerApp:
         self.window = self.engine.rootObjects()[0]
         self.menu_access_keys.window = self.window
         self.window.installEventFilter(self.menu_access_keys)
+        self.window.installEventFilter(self.focus_navigation)
         state = self.controller.state
         if state["fitHeight"] and self.window.screen() is not None:
             layout = self.controller.tableLayout(self.window.width() - 34, 0, self.window.screen().devicePixelRatio())
@@ -61,6 +65,7 @@ class TimeTrackerApp:
         self._shutdown = True
         if self.menu_access_keys.window is not None:
             self.menu_access_keys.window.removeEventFilter(self.menu_access_keys)
+            self.menu_access_keys.window.removeEventFilter(self.focus_navigation)
         self.controller.shutdown()
         for window in self.engine.rootObjects():
             window.close()

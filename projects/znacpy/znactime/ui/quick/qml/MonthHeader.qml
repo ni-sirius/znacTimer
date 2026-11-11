@@ -6,6 +6,8 @@ Surface {
     id: root
     required property var controller
     required property var ui
+    readonly property list<Item> tabStops: [yearSelector, monthSelector, todayButton, monthAction]
+    readonly property bool popupVisible: monthSelector.popup.visible
     colors: ui.colors
     objectName: "monthHeader"
     implicitHeight: 69
@@ -24,6 +26,7 @@ Surface {
             RowLayout {
                 spacing: 6
                 AppSpinBox {
+                    id: yearSelector
                     objectName: "yearSelector"
                     colors: root.colors
                     from: 2000; to: 2100; value: root.ui.year
@@ -36,6 +39,7 @@ Surface {
                     onValueModified: root.controller.selectMonth(value, root.ui.month)
                 }
                 AppComboBox {
+                    id: monthSelector
                     objectName: "monthSelector"
                     colors: root.colors
                     Layout.fillWidth: true
@@ -64,6 +68,7 @@ Surface {
             }
         }
         AppButton {
+            id: todayButton
             objectName: "todayButton"
             colors: root.colors
             tone: "badge"

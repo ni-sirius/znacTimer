@@ -8,6 +8,10 @@ ApplicationWindow {
     id: window
     required property var controller
     required property var menuAccessKeys
+    required property var focusNavigation
+    readonly property bool focusNavigationEnabled: !ui.busy && !menuNavigationActive
+        && !monthHeader.popupVisible && !settingsDialog.visible && !cellEditor.visible
+        && !notificationDialog.visible && !confirmationDialog.visible && !taskDialog.visible && !aboutDialog.visible
     property bool menuNavigationActive: mainMenuBar.activeFocus || dataMenu.visible
                                        || approvalsMenu.visible || settingsMenu.visible || helpMenu.visible
     onMenuNavigationActiveChanged: menuAccessKeys.updateNavigation(menuNavigationActive)
@@ -29,6 +33,45 @@ ApplicationWindow {
     palette.highlight: ui.colors.primary
     palette.highlightedText: ui.colors.on_primary
     font.pointSize: 10
+    function containsFocus(item, focused) {
+        for (let current = focused; current; current = current.parent) {
+            if (current === item) return true
+        }
+        return false
+    }
+    function navigateFocus(reverse) {
+        const focused = activeFocusItem
+        const inTable = containsFocus(monthTable, focused)
+        if (inTable && monthTable.advanceEditorField(reverse)) return
+        const position = inTable ? monthTable.navigationPosition() : null
+        badgeEditSession.finishActive()
+        if (!focusNavigationEnabled) return
+        if (inTable && monthTable.navigateTab(reverse, position)) return
+
+        const header = monthHeader.tabStops.filter(item => item.visible && item.enabled)
+        const footer = workdayBar.tabStops.filter(item => item.visible && item.enabled
+            && (item !== workdayBar.tabStops[0] || item.interactive))
+        let target = null
+        if (inTable) {
+            target = reverse ? header[header.length - 1] : footer[0]
+            if (!target) target = reverse ? footer[footer.length - 1] : header[0]
+        } else {
+            const stops = header.concat([monthTable.focusItem], footer)
+            const current = stops.findIndex(item => containsFocus(item, focused))
+            const next = current < 0 ? (reverse ? stops.length - 1 : 0)
+                : (current + (reverse ? -1 : 1) + stops.length) % stops.length
+            target = stops[next]
+        }
+        if (target === monthTable.focusItem) monthTable.enterTab(reverse)
+        else if (target) {
+            monthTable.cancelPendingFocus()
+            target.forceActiveFocus(reverse ? Qt.BacktabFocusReason : Qt.TabFocusReason)
+        }
+    }
+    Connections {
+        target: window.focusNavigation
+        function onTabPressed(reverse) { window.navigateFocus(reverse) }
+    }
     QtObject {
         id: badgeEditSession
         property var owner: null
@@ -141,6 +184,7 @@ ApplicationWindow {
         anchors.topMargin: 14; anchors.bottomMargin: 16
         spacing: 10
         MonthHeader {
+            id: monthHeader
             controller: window.controller
             ui: window.ui
             Layout.fillWidth: true
@@ -161,6 +205,7 @@ ApplicationWindow {
             }
         }
         WorkdayBar {
+            id: workdayBar
             controller: window.controller
             ui: window.ui
             editSession: badgeEditSession

@@ -21,6 +21,12 @@ Surface {
     property bool changingSelection: false
     property var interruptionTarget: ({action: "add", period_index: null})
     property string initialEditText: ""
+    readonly property alias focusItem: table
+    readonly property int tabRow: ui.currentMonth ? Math.min(ui.todayRow, table.rows - 1) : 0
+    property int navigationPauseIndex: 0
+    property var activeEditor: null
+    property var focusedBadge: null
+    property int focusRequest: 0
     property color ink: colors.model.text
     property color muted: colors.header.muted
     signal editRequested(int row, int column)
@@ -35,6 +41,9 @@ Surface {
         return Math.round((sceneY + viewportY) * ratio) / ratio - sceneY
     }
     function selectCell(row, column, extend, toggle = false) {
+        setCurrentCell(row, column, extend, toggle, true)
+    }
+    function setCurrentCell(row, column, extend, toggle, takeFocus) {
         row = Math.max(0, Math.min(table.rows - 1, row))
         column = Math.max(0, Math.min(6, column))
         changingSelection = true
@@ -43,7 +52,128 @@ Surface {
         controller.selectCells(selection, anchorRow, anchorColumn, row, column, toggle)
         changingSelection = false
         table.positionViewAtCell(Qt.point(selectedColumn, selectedRow), TableView.Contain)
-        table.forceActiveFocus()
+        if (takeFocus) focusTable()
+    }
+    function focusTable(reverse = false) {
+        // A focus scope otherwise restores its previously focused child badge.
+        for (let item = focusedBadge; item && item !== table; item = item.parent)
+            item.focus = false
+        focusedBadge = null
+        table.forceActiveFocus(reverse ? Qt.BacktabFocusReason : Qt.TabFocusReason)
+    }
+    function pauseBadges(row) {
+        const cell = table.itemAtCell(Qt.point(4, row))
+        return cell ? cell.navigationBadges() : []
+    }
+    function badgeFocused(badge, row, column, pauseIndex = 0) {
+        focusedBadge = badge
+        navigationPauseIndex = Math.max(0, pauseIndex)
+        setCurrentCell(row, column, false, false, false)
+    }
+    function focusPosition(row, column, pauseIndex = 0, add = false, reverse = false) {
+        setCurrentCell(row, column, false, false, false)
+        const request = ++focusRequest
+        function applyFocus(retry) {
+            if (request !== root.focusRequest) return
+            const cell = table.itemAtCell(Qt.point(column, row))
+            const badges = cell ? cell.navigationBadges() : []
+            const index = add ? badges.length - 1 : Math.min(pauseIndex, badges.length - 1)
+            if (column > 0 && column < 5 && index >= 0) {
+                root.navigationPauseIndex = index
+                badges[index].forceActiveFocus(reverse ? Qt.BacktabFocusReason : Qt.TabFocusReason)
+            } else if (column > 0 && column < 5 && retry) {
+                Qt.callLater(function() { applyFocus(false) })
+            } else root.focusTable(reverse)
+        }
+        applyFocus(true)
+    }
+    function enterTab(reverse) {
+        if (reverse) focusPosition(tabRow, 4, 0, true, true)
+        else focusPosition(tabRow, 0)
+    }
+    function cancelPendingFocus() { ++focusRequest }
+    function navigationPosition() {
+        const pauses = pauseBadges(selectedRow)
+        let index = navigationPauseIndex
+        if (activeEditor && selectedColumn === 4) {
+            const edited = pauses.findIndex(badge => badge.editTarget.action === interruptionTarget.action
+                && badge.editTarget.period_index === interruptionTarget.period_index)
+            if (edited >= 0) index = edited
+        }
+        return { row: selectedRow, column: selectedColumn, pauseIndex: index,
+                 add: selectedColumn === 4 && pauses[index] && pauses[index].text === "+" }
+    }
+    function advanceEditorField(reverse) {
+        return activeEditor && typeof activeEditor.advanceField === "function" && activeEditor.advanceField(reverse)
+    }
+    function navigateTab(reverse, position) {
+        if (position.row !== tabRow) {
+            focusPosition(tabRow, 1, 0, false, reverse)
+            return true
+        }
+        const column = position.column
+        if (column === 0 && reverse) return false
+        if (column === 4) {
+            const count = pauseBadges(tabRow).length
+            const index = position.pauseIndex + (reverse ? -1 : 1)
+            if (index >= 0 && index < count) focusPosition(tabRow, 4, index, false, reverse)
+            else if (reverse) focusPosition(tabRow, 3, 0, false, true)
+            else return false
+        } else if (column > 4) {
+            if (reverse) focusPosition(tabRow, 4, 0, true, true)
+            else return false
+        } else focusPosition(tabRow, column + (reverse ? -1 : 1), 0, false, reverse)
+        return true
+    }
+    function navigateArrow(key, modifiers) {
+        const horizontal = key === Qt.Key_Left || key === Qt.Key_Right
+        const delta = key === Qt.Key_Left || key === Qt.Key_Up ? -1 : 1
+        if (modifiers & Qt.ShiftModifier) {
+            selectCell(selectedRow + (horizontal ? 0 : delta), selectedColumn + (horizontal ? delta : 0), true)
+            return
+        }
+        const position = navigationPosition()
+        if (!horizontal) {
+            const row = Math.max(0, Math.min(table.rows - 1, position.row + delta))
+            focusPosition(row, position.column, position.pauseIndex, position.add)
+        } else if (position.column === 4) {
+            const index = position.pauseIndex + delta
+            if (index < 0) focusPosition(position.row, 3)
+            else if (index < pauseBadges(position.row).length) focusPosition(position.row, 4, index)
+        } else if (position.column > 4) {
+            if (delta < 0) focusPosition(position.row, 4, 0, true)
+        } else {
+            focusPosition(position.row, Math.max(0, position.column + delta))
+        }
+    }
+    function handleTableKey(event) {
+        if (activeEditor && [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down].indexOf(event.key) >= 0) {
+            event.accepted = true
+            return
+        }
+        if (event.matches(StandardKey.Copy)) {
+            controller.copySelection(selection)
+        } else if (event.matches(StandardKey.Paste)) {
+            controller.pasteCells(selectedRow, selectedColumn)
+        } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && event.modifiers & Qt.ControlModifier && selectedColumn === 4) {
+            editRequested(selectedRow, 4)
+        } else if (selectedColumn === 0 && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
+            const dateCell = table.itemAtCell(Qt.point(0, selectedRow))
+            if (dateCell && dateCell.dateInfo && dateCell.dateInfo.visible) dateCell.dateInfo.showInfo()
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_F2) {
+            editSelected()
+        } else if ([Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down].indexOf(event.key) >= 0) {
+            navigateArrow(event.key, event.modifiers)
+        } else if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) {
+            controller.editCell(selectedRow, selectedColumn, "")
+        } else if (event.text.length > 0 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+                   && !ui.closed && selectedColumn >= 1 && selectedColumn <= 4) {
+            editSelected(event.text)
+        } else {
+            event.accepted = false
+            return
+        }
+        event.accepted = true
     }
     function pointerSelect(row, column, modifiers) {
         selectCell(row, column, !!(modifiers & Qt.ShiftModifier), !!(modifiers & Qt.ControlModifier))
@@ -58,7 +188,9 @@ Surface {
             return
         if (selectedColumn === 4) {
             let value = controller.cellValue(selectedRow, 4)
-            interruptionTarget = value.indexOf("-") >= 0 ? {action: "edit", period_index: 0}
+            const badges = pauseBadges(selectedRow)
+            interruptionTarget = badges[navigationPauseIndex] ? badges[navigationPauseIndex].editTarget
+                                : value.indexOf("-") >= 0 ? {action: "edit", period_index: 0}
                                 : {action: value === "00:00" || value === "" ? "add" : "replace", period_index: null}
         }
         initialEditText = initialText
@@ -140,7 +272,7 @@ Surface {
             pixelAligned: true
             editTriggers: TableView.EditKeyPressed | TableView.AnyKeyPressed
             keyNavigationEnabled: false
-            activeFocusOnTab: root.selectedColumn !== 4
+            activeFocusOnTab: false
             ScrollBar.vertical: ScrollBar {
                 id: scrollbar
                 objectName: "monthScrollBar"
@@ -162,41 +294,7 @@ Surface {
             onRowsChanged: {
                 root.anchorRow = Math.min(root.anchorRow, Math.max(0, rows - 1))
             }
-            Keys.onPressed: function(event) {
-                if (event.matches(StandardKey.Copy)) {
-                    root.controller.copySelection(selection)
-                } else if (event.matches(StandardKey.Paste)) {
-                    root.controller.pasteCells(root.selectedRow, root.selectedColumn)
-                } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && event.modifiers & Qt.ControlModifier && root.selectedColumn === 4) {
-                    root.editRequested(root.selectedRow, 4)
-                } else if (root.selectedColumn === 0 && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
-                    const dateCell = table.itemAtCell(Qt.point(0, root.selectedRow))
-                    if (dateCell && dateCell.dateInfo && dateCell.dateInfo.visible) dateCell.dateInfo.showInfo()
-                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_F2) {
-                    root.editSelected()
-                } else if (event.key === Qt.Key_Left) {
-                    root.selectCell(root.selectedRow, root.selectedColumn - 1, event.modifiers & Qt.ShiftModifier)
-                } else if (event.key === Qt.Key_Tab) {
-                    root.selectCell(root.selectedRow + (root.selectedColumn === 6 ? 1 : 0), (root.selectedColumn + 1) % 7, false)
-                } else if (event.key === Qt.Key_Backtab) {
-                    root.selectCell(root.selectedRow - (root.selectedColumn === 0 ? 1 : 0), (root.selectedColumn + 6) % 7, false)
-                } else if (event.key === Qt.Key_Right) {
-                    root.selectCell(root.selectedRow, root.selectedColumn + 1, event.modifiers & Qt.ShiftModifier)
-                } else if (event.key === Qt.Key_Up) {
-                    root.selectCell(root.selectedRow - 1, root.selectedColumn, event.modifiers & Qt.ShiftModifier)
-                } else if (event.key === Qt.Key_Down) {
-                    root.selectCell(root.selectedRow + 1, root.selectedColumn, event.modifiers & Qt.ShiftModifier)
-                } else if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) {
-                    root.controller.editCell(root.selectedRow, root.selectedColumn, "")
-                } else if (event.text.length > 0 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
-                           && !root.ui.closed && root.selectedColumn >= 1 && root.selectedColumn <= 4) {
-                    root.editSelected(event.text)
-                } else {
-                    event.accepted = false
-                    return
-                }
-                event.accepted = true
-            }
+            Keys.onPressed: function(event) { root.handleTableKey(event) }
             delegate: Rectangle {
                 id: cell
                 required property int row
@@ -219,6 +317,10 @@ Surface {
                 property bool expected: cellBadge.state === "expected"
                 property bool pooled: false
                 property var dateInfo: dateLoader.item ? dateLoader.item.infoButton : null
+                function navigationBadges() {
+                    if (column > 0 && column < 4) return cell.editing ? [] : [mainBadge]
+                    return column === 4 && pauseLoader.item ? pauseLoader.item.navigationBadges() : []
+                }
                 TableView.onPooled: pooled = true
                 TableView.onReused: pooled = false
                 objectName: "monthCell_" + row + "_" + column
@@ -323,6 +425,10 @@ Surface {
                     }
                 }
                 CellBadge {
+                    id: mainBadge
+                    objectName: "tableBadge_" + cell.row + "_" + cell.column
+                    tableNavigation: root
+                    onActiveFocusChanged: if (activeFocus) root.badgeFocused(mainBadge, cell.row, cell.column)
                     editSession: root.editSession
                     visible: cell.column > 0 && cell.column < 4 && !cell.editing
                     x: (cell.width - width) / 2; y: (cell.bodyHeight - height) / 2
@@ -341,6 +447,7 @@ Surface {
                     }
                 }
                 Loader {
+                    id: pauseLoader
                     active: cell.column === 4
                     visible: !cell.editing
                     width: cell.width
@@ -348,18 +455,36 @@ Surface {
                     y: (cell.bodyHeight - height) / 2
                     sourceComponent: Component {
                         Column {
+                            id: pauseRows
+                            function navigationBadges() {
+                                let badges = []
+                                for (let row = 0; row < pauseRowRepeater.count; ++row) {
+                                    const line = pauseRowRepeater.itemAt(row)
+                                    for (let index = 0; index < line.chips.count; ++index)
+                                        badges.push(line.chips.itemAt(index))
+                                }
+                                return badges
+                            }
                             width: cell.width
                             spacing: 4
                             Repeater {
+                                id: pauseRowRepeater
                                 model: cell.rowLayout.badges
                                 delegate: Row {
                                     required property var modelData
+                                    property alias chips: pauseBadgeRepeater
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     spacing: 4
                                     Repeater {
+                                        id: pauseBadgeRepeater
                                         model: parent.modelData
                                         delegate: CellBadge {
+                                            id: pauseBadge
                                             required property var modelData
+                                            readonly property var editTarget: modelData.item.target || ({action: "readonly", period_index: null})
+                                            objectName: "pauseBadge_" + cell.row + "_" + editTarget.action + "_" + (editTarget.period_index ?? "new")
+                                            tableNavigation: root
+                                            onActiveFocusChanged: if (activeFocus) root.badgeFocused(pauseBadge, cell.row, 4, pauseRows.navigationBadges().indexOf(pauseBadge))
                                             editSession: root.editSession
                                             colors: root.colors
                                             appearance: modelData.item
@@ -388,6 +513,15 @@ Surface {
                     font.pointSize: 10; font.bold: true
                     color: cell.display.indexOf("-") === 0 ? root.colors.model.overtime_negative
                            : cell.display !== "00:00" && cell.display !== "" ? root.colors.model.overtime_positive : root.colors.model.read_only_text
+                }
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.bottomMargin: cell.rowLayout.gap
+                    visible: cell.column === 0 && table.activeFocus && root.selectedRow === cell.row && root.selectedColumn === 0
+                    color: "transparent"
+                    radius: 6
+                    border.width: 2
+                    border.color: root.colors.primary
                 }
                 // Draw one continuous rule per loaded row outside the moving
                 // content. Snap after its scroll/scene transforms, so fractional
@@ -433,6 +567,7 @@ Surface {
                     height: root.layoutInfo.badgeHeight + 2
                     sourceComponent: cell.column === 4 ? periodEditor : lineEditor
                     onLoaded: {
+                        root.activeEditor = item
                         session.begin(cellEditorLoader, function() {
                             if (item) item.save()
                             table.closeEditor()
@@ -443,7 +578,10 @@ Surface {
                             root.initialEditText = ""
                         }
                     }
-                    Component.onDestruction: { if (session) session.end(cellEditorLoader) }
+                    Component.onDestruction: {
+                        if (root.activeEditor === item) root.activeEditor = null
+                        if (session) session.end(cellEditorLoader)
+                    }
                     TableView.onCommit: { if (item) item.save() }
                     Component {
                         id: lineEditor

@@ -7,6 +7,7 @@ Surface {
     required property var controller
     required property var ui
     required property var editSession
+    readonly property list<Item> tabStops: [todayBadge, primaryButton, stopButton]
     property bool badgeEditing: false
     property var badgeTarget: ({})
     function editDayBadge() {
@@ -90,6 +91,7 @@ Surface {
         }
         Item { Layout.preferredWidth: 22 }
         AppButton {
+            id: primaryButton
             objectName: "primaryWorkdayButton"
             colors: root.colors
             dark: root.ui.dark
@@ -101,6 +103,7 @@ Surface {
             onClicked: root.controller.primaryAction()
         }
         AppButton {
+            id: stopButton
             objectName: "stopWorkdayButton"
             colors: root.colors
             tone: "stop"

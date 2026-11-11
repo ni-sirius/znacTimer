@@ -27,7 +27,8 @@ SpinBox {
     background: Rectangle {
         radius: 8
         color: !control.enabled ? control.colors.palette.base_disabled : control.hovered ? control.colors.header.control_hover : control.colors.header.control
-        border.color: control.activeFocus || control.hovered ? control.colors.primary : control.colors.header.border
+        border.width: control.activeFocus || control.contentItem.activeFocus ? 2 : 1
+        border.color: control.activeFocus || control.contentItem.activeFocus || control.hovered ? control.colors.primary : control.colors.header.border
     }
     up.indicator: Rectangle {
         x: control.width - width - 1; y: 1

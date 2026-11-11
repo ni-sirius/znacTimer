@@ -91,6 +91,202 @@ class QuickUITest(unittest.TestCase):
         for char in text:
             QTest.keyClick(self.window.window, ord(char))
 
+    def prepare_navigation_day(self, *, working=True, pauses=""):
+        controller = self.window.controller
+        controller._clock = lambda: datetime(2026, 11, 11, 14, 30, tzinfo=timezone.utc)
+        controller.selectMonth(2026, 11)
+        if working:
+            self.assertTrue(controller.editCell(10, 2, "08:00"))
+        if pauses:
+            self.assertTrue(controller.editCell(10, 4, pauses))
+        self.app.processEvents()
+        return 10
+
+    def focused_control_name(self):
+        item = self.window.window.activeFocusItem()
+        while item is not None:
+            if item.objectName():
+                return item.objectName()
+            item = item.parentItem()
+        return None
+
+    def press_tab(self, *, reverse=False, backtab=False):
+        QTest.keyClick(self.window.window, Qt.Key_Backtab if backtab else Qt.Key_Tab,
+                       Qt.ShiftModifier if reverse else Qt.NoModifier)
+        self.app.processEvents()
+
+    def test_tab_cycle_follows_header_today_badges_and_footer_in_both_directions(self):
+        row = self.prepare_navigation_day(pauses="10:00-10:15;12:00-12:30")
+        stops = ["yearSelector", "monthSelector", "todayButton", "monthActionButton", "monthTable",
+                 f"tableBadge_{row}_1", f"tableBadge_{row}_2", f"tableBadge_{row}_3",
+                 f"pauseBadge_{row}_edit_0", f"pauseBadge_{row}_edit_1", f"pauseBadge_{row}_add_new",
+                 "todayBadge", "primaryWorkdayButton", "stopWorkdayButton"]
+        for _ in range(2):
+            for expected in stops:
+                self.press_tab()
+                self.assertEqual(self.focused_control_name(), expected)
+                if expected == "monthTable":
+                    surface = self.find("monthTableSurface")
+                    self.assertEqual(surface.property("selectedRow"), row)
+                    self.assertEqual(surface.property("selectedColumn"), 0)
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), "yearSelector")
+        for backtab in (False, True):
+            for expected in list(reversed(stops[1:])) + [stops[0]]:
+                self.press_tab(reverse=True, backtab=backtab)
+                self.assertEqual(self.focused_control_name(), expected)
+        self.assertEqual(self.window.controller.cellValue(row, 2), "08:00")
+        self.assertEqual(self.window.controller.cellValue(row, 4), "10:00-10:15;12:00-12:30")
+
+    def test_table_arrows_navigate_badges_and_tab_returns_to_todays_first_badge(self):
+        row = self.prepare_navigation_day(pauses="10:00-10:15;12:00-12:30")
+        surface = self.find("monthTableSurface")
+        self.invoke(surface, "enterTab", False)
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), f"tableBadge_{row}_1")
+        for expected in (f"tableBadge_{row}_2", f"tableBadge_{row}_3", f"pauseBadge_{row}_edit_0",
+                         f"pauseBadge_{row}_edit_1", f"pauseBadge_{row}_add_new", f"pauseBadge_{row}_add_new"):
+            QTest.keyClick(self.window.window, Qt.Key_Right)
+            self.app.processEvents()
+            self.assertEqual(self.focused_control_name(), expected)
+        QTest.keyClick(self.window.window, Qt.Key_Down)
+        self.app.processEvents()
+        self.assertEqual(self.focused_control_name(), f"pauseBadge_{row + 1}_add_new")
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), f"tableBadge_{row}_1")
+        QTest.keyClick(self.window.window, Qt.Key_Up)
+        self.app.processEvents()
+        self.assertEqual(self.focused_control_name(), f"tableBadge_{row - 1}_1")
+        self.press_tab(reverse=True)
+        self.assertEqual(self.focused_control_name(), f"tableBadge_{row}_1")
+        self.press_tab(reverse=True)
+        self.assertEqual(self.focused_control_name(), "monthTable")
+        self.assertEqual(surface.property("selectedColumn"), 0)
+        QTest.keyClick(self.window.window, Qt.Key_Left)
+        self.app.processEvents()
+        self.assertEqual(surface.property("selectedColumn"), 0)
+        # Keep the same badge when navigating far enough to recycle delegates.
+        for _ in range(25):
+            QTest.keyClick(self.window.window, Qt.Key_Down)
+            self.app.processEvents()
+        self.assertEqual(surface.property("selectedRow"), 29)
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), f"tableBadge_{row}_1")
+
+    def test_tab_traverses_pause_fields_then_commits_and_leaves_the_editor(self):
+        row = self.prepare_navigation_day(pauses="10:00-10:15;12:00-12:30")
+        surface = self.find("monthTableSurface")
+        self.invoke(surface, "editInterruption", row, {"action": "edit", "period_index": 0})
+        self.find("pauseStartEditor").setProperty("text", "10:05")
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), "pauseEndEditor")
+        self.press_tab(reverse=True)
+        self.assertEqual(self.focused_control_name(), "pauseStartEditor")
+        self.press_tab()
+        self.find("pauseEndEditor").setProperty("text", "10:20")
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), f"pauseBadge_{row}_edit_1")
+        self.assertEqual(self.window.controller.cellValue(row, 4), "10:05-10:20;12:00-12:30")
+        self.press_tab(reverse=True)
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(self.focused_control_name(), "pauseStartEditor")
+        self.press_tab(reverse=True)
+        self.assertEqual(self.focused_control_name(), f"tableBadge_{row}_3")
+
+    def test_tab_commits_footer_day_edit_before_focusing_workday_action(self):
+        row = self.prepare_navigation_day()
+        self.click(self.find("todayBadge"))
+        self.find("todayBadgeEditor").setProperty("text", "Training")
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), "primaryWorkdayButton")
+        self.assertEqual(self.window.controller.cellValue(row, 1), "Training")
+
+    def test_tab_skips_disabled_footer_controls_and_uses_first_row_outside_current_month(self):
+        row = self.prepare_navigation_day(working=False)
+        self.find("primaryWorkdayButton").forceActiveFocus()
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), "yearSelector")
+        self.press_tab(reverse=True)
+        self.assertEqual(self.focused_control_name(), "primaryWorkdayButton")
+        self.window.controller.selectMonth(2026, 10)
+        self.app.processEvents()
+        self.find("monthActionButton").forceActiveFocus()
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), "monthTable")
+        self.assertEqual(self.find("monthTableSurface").property("selectedRow"), 0)
+        for expected in ("tableBadge_0_1", "tableBadge_0_2", "tableBadge_0_3", "pauseBadge_0_add_new", "yearSelector"):
+            self.press_tab()
+            self.assertEqual(self.focused_control_name(), expected)
+        self.assertIsNone(self.repo.load_month(2026, 10))
+
+    def test_main_tab_cycle_does_not_override_dialog_focus_or_editor_arrows(self):
+        row = self.prepare_navigation_day()
+        self.click(self.find(f"monthCell_{row}_2"))
+        editor = self.window.window.activeFocusItem()
+        editor.setProperty("cursorPosition", 2)
+        QTest.keyClick(self.window.window, Qt.Key_Left)
+        self.app.processEvents()
+        self.assertEqual(editor.property("cursorPosition"), 1)
+        QTest.keyClick(self.window.window, Qt.Key_Down)
+        self.app.processEvents()
+        self.assertEqual(self.focused_control_name(), "timeCellEditor")
+        self.assertEqual(self.find("monthTableSurface").property("selectedRow"), row)
+        QTest.keyClick(self.window.window, Qt.Key_Escape)
+        self.invoke(self.find("settingsDialog"), "showSection", 0)
+        host = self.dialog_window(self.find("settingsDialog"))
+        QTest.keyClick(host, Qt.Key_Tab)
+        self.app.processEvents()
+        self.assertTrue(host.isVisible())
+        self.assertIsNotNone(host.activeFocusItem())
+        self.assertEqual(self.find("monthTableSurface").property("selectedRow"), row)
+
+    def test_tab_focused_workday_and_month_buttons_accept_enter_and_space(self):
+        row = self.prepare_navigation_day(working=False)
+        for _ in range(16):
+            self.press_tab()
+            if self.focused_control_name() == "primaryWorkdayButton":
+                break
+        self.assertEqual(self.focused_control_name(), "primaryWorkdayButton")
+        controller = self.window.controller
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(controller.state["workState"], "working")
+        controller._clock = lambda: datetime(2026, 11, 11, 14, 40, tzinfo=timezone.utc)
+        QTest.keyClick(self.window.window, Qt.Key_Space)
+        self.app.processEvents()
+        self.assertEqual(controller.state["workState"], "paused")
+        controller._clock = lambda: datetime(2026, 11, 11, 14, 45, tzinfo=timezone.utc)
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(controller.state["workState"], "working")
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), "stopWorkdayButton")
+        controller._clock = lambda: datetime(2026, 11, 11, 14, 50, tzinfo=timezone.utc)
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(controller.state["workState"], "complete")
+        self.assertEqual(controller.cellValue(row, 3), "14:50")
+        self.press_tab()
+        self.assertEqual(self.focused_control_name(), "yearSelector")
+        for _ in range(3):
+            self.press_tab()
+        self.assertEqual(self.focused_control_name(), "monthActionButton")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertTrue(self.find("confirmationDialog").property("visible"))
+
+    def test_tab_rejects_invalid_edit_without_moving_focus_behind_warning(self):
+        row = self.prepare_navigation_day()
+        self.window.controller.editCell(row, 3, "17:00")
+        self.click(self.find(f"monthCell_{row}_3"))
+        self.window.window.activeFocusItem().setProperty("text", "07:00")
+        self.press_tab()
+        dialog = self.find("notificationDialog")
+        self.assertTrue(dialog.property("visible"))
+        self.assertTrue(self.dialog_window(dialog).isVisible())
+        self.assertEqual(self.window.controller.cellValue(row, 3), "17:00")
+
     def test_actual_window_loads_table_and_both_color_schemes(self):
         self.assertEqual(self.window.window.objectName(), "mainWindow")
         table = self.find("monthTable")
@@ -236,7 +432,7 @@ class QuickUITest(unittest.TestCase):
 
     def test_menu_popups_fit_their_actions_and_accept_pointer_input(self):
         menus = [item for item in self.window.window.findChildren(QObject)
-                 if item.metaObject().className().startswith("AppMenu_")]
+                 if item.inherits("QQuickMenu")]
         self.assertEqual(len(menus), 4)
         for menu in menus:
             QMetaObject.invokeMethod(menu, "open")
@@ -265,7 +461,7 @@ class QuickUITest(unittest.TestCase):
 
     def test_menu_mnemonics_activate_actions_and_portable_quit(self):
         menus = [item for item in self.window.window.findChildren(QObject)
-                 if item.metaObject().className().startswith("AppMenu_")]
+                 if item.inherits("QQuickMenu")]
         for menu in menus:
             QMetaObject.invokeMethod(menu, "open")
             self.app.processEvents()
@@ -314,7 +510,7 @@ class QuickUITest(unittest.TestCase):
         # Pointer-opened menus must also start without underlines.
         self.click(bar_items[0])
         menu = next(item for item in window.findChildren(QObject)
-                    if item.metaObject().className().startswith("AppMenu_")
+                    if item.inherits("QQuickMenu")
                     and item.property("title") == bar_items[0].property("text"))
         self.assertTrue(menu.property("visible"))
         self.assertFalse(menu.property("showMnemonics"))
@@ -361,7 +557,7 @@ class QuickUITest(unittest.TestCase):
             QTest.keyClick(window, key, Qt.AltModifier)
             self.app.processEvents()
             menu = next(item for item in window.findChildren(QObject)
-                        if item.metaObject().className().startswith("AppMenu_")
+                        if item.inherits("QQuickMenu")
                         and item.property("title") == title)
             self.assertTrue(menu.property("visible"), title)
             pending = [menu.property("contentItem")]
@@ -452,7 +648,7 @@ class QuickUITest(unittest.TestCase):
                 QTest.keyClick(window, Qt.Key_Down)
                 self.app.processEvents()
                 menu = next(item for item in window.findChildren(QObject)
-                            if item.metaObject().className().startswith("AppMenu_")
+                            if item.inherits("QQuickMenu")
                             and item.property("title") == title)
                 self.assertTrue(menu.property("visible"))
                 content = menu.property("contentItem")
@@ -472,10 +668,10 @@ class QuickUITest(unittest.TestCase):
             while pending:
                 item = pending.pop()
                 pending.extend(item.childItems())
-                if (item.property("visible")
-                        and item.metaObject().className().startswith("CellBadge_")):
+                if (item.property("visible") and item.inherits("QQuickRectangle")
+                        and item.property("appearance") is not None):
                     for child in item.childItems():
-                        if child.metaObject().className() == "QQuickText":
+                        if child.inherits("QQuickText"):
                             labels[item.property("text")] = child
             for text in ("08:30", "17:45", "12:00-12:30", "14:00-14:15"):
                 self.assertIn(text, labels)
@@ -513,23 +709,25 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(self.repo.load_month(state["year"], state["month"]).days[0].start_minute, 510)
 
     def test_tab_navigation_keeps_clipboard_and_delete_on_current_cell(self):
-        self.window.controller.editCell(0, 2, "08:00")
-        self.window.controller.editCell(0, 3, "17:00")
-        self.click(self.find("monthCell_0_2"))
+        row = self.prepare_navigation_day()
+        self.window.controller.editCell(row, 3, "17:00")
+        self.click(self.find(f"monthCell_{row}_2"))
+        self.type_text("09:15")
         QTest.keyClick(self.window.window, Qt.Key_Tab)
-        QTest.keyClick(self.window.window, Qt.Key_Return)
         self.app.processEvents()
+        self.assertEqual(self.focused_control_name(), f"tableBadge_{row}_3")
+        self.assertEqual(self.window.controller.cellValue(row, 2), "09:15")
         surface = self.find("monthTableSurface")
         self.assertEqual(surface.property("selectedColumn"), 3)
         QTest.keyClick(self.window.window, Qt.Key_C, Qt.ControlModifier)
         self.assertEqual(self.app.clipboard().text(), "17:00")
         self.app.clipboard().setText("18:00")
         QTest.keyClick(self.window.window, Qt.Key_V, Qt.ControlModifier)
-        self.assertEqual(self.window.controller.cellValue(0, 2), "08:00")
-        self.assertEqual(self.window.controller.cellValue(0, 3), "18:00")
+        self.assertEqual(self.window.controller.cellValue(row, 2), "09:15")
+        self.assertEqual(self.window.controller.cellValue(row, 3), "18:00")
         QTest.keyClick(self.window.window, Qt.Key_Delete)
-        self.assertEqual(self.window.controller.cellValue(0, 2), "08:00")
-        self.assertEqual(self.window.controller.cellValue(0, 3), "--:--")
+        self.assertEqual(self.window.controller.cellValue(row, 2), "09:15")
+        self.assertEqual(self.window.controller.cellValue(row, 3), "--:--")
 
     def test_badge_click_finishes_existing_edit_without_opening_next(self):
         self.window.controller.editCell(0, 2, "08:00")

@@ -82,6 +82,15 @@ are clearly represented. Shift-click selects a range; the standard copy/paste
 shortcuts transfer tab-separated cells. The day badge in the workday bar edits
 today's Special day value.
 
+Tab cycles through Year, Month, Today, This Month, and the table's current-day
+row: Date, Special day, Start, End, each pause, then the pause-add button. It then
+visits the footer's day badge, Start/Pause/Resume, and Stop before returning to
+Year. Shift+Tab reverses that order; unavailable controls are skipped. Arrow keys
+move between table rows and badges without opening editors. After navigating to
+another row, Tab or Shift+Tab returns to today's Special day badge. Other viewed
+months use their first row instead of today. Inside a pause editor, Tab moves
+from start to end, then saves and leaves; Shift+Tab reverses that path.
+
 ![Inline interruption editor](../../docs/images/interruption-editor.png)
 
 ### Review and close a month

@@ -13,6 +13,7 @@ Rectangle {
     property bool hovered: mouse.containsMouse && interactive && !plain
     property bool fullWidth: false
     property var editSession: null
+    property var tableNavigation: null
     property string tooltipText: ""
     readonly property QtObject tooltipPopup: badgeTip
     signal clicked(int modifiers)
@@ -27,14 +28,24 @@ Rectangle {
         if (editSession && editSession.finishActive()) return
         clicked(Qt.NoModifier)
     }
-    Keys.onReturnPressed: activate()
-    Keys.onEnterPressed: activate()
+    Keys.onReturnPressed: function(event) {
+        if (tableNavigation && event.modifiers & Qt.ControlModifier) tableNavigation.handleTableKey(event)
+        else activate()
+    }
+    Keys.onEnterPressed: function(event) {
+        if (tableNavigation && event.modifiers & Qt.ControlModifier) tableNavigation.handleTableKey(event)
+        else activate()
+    }
     Keys.onSpacePressed: activate()
+    Keys.onPressed: function(event) {
+        if (tableNavigation) tableNavigation.handleTableKey(event)
+        else event.accepted = false
+    }
     implicitWidth: Math.max(text === "+" ? 28 : 44, Math.ceil(label.implicitWidth) + 16)
     implicitHeight: metrics.height + 8
     radius: 6
     color: plain ? "transparent" : hovered ? colors.primary : (appearance.fillColor || colors.table.empty_fill)
-    border.width: (outlined || activeFocus) && !plain ? 2 : 0
+    border.width: activeFocus || outlined && !plain ? 2 : 0
     border.color: activeFocus ? colors.primary : (appearance.borderColor || colors.primary)
     HoverHandler { id: tooltipHover }
     AppToolTip {

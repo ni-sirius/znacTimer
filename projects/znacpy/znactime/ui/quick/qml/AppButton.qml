@@ -21,6 +21,8 @@ Button {
     bottomPadding: 6
     font.weight: tone === "primary" || tone === "stop" ? Font.Bold : Font.DemiBold
     hoverEnabled: true
+    Keys.onReturnPressed: control.clicked()
+    Keys.onEnterPressed: control.clicked()
     contentItem: Text {
         id: label
         text: control.text
@@ -40,7 +42,8 @@ Button {
                    ? (control.dark ? Qt.lighter(control.normalFill, 1.12) : Qt.darker(control.normalFill, 1.12))
                    : control.tone === "stop" ? control.colors.player.stop_hover : control.colors.header.control_hover)
                : control.normalFill
-        border.width: control.outlined || control.tone === "neutral" ? 1 : 0
-        border.color: control.outlined || control.activeFocus ? control.colors.primary : control.colors.header.border
+        border.width: control.activeFocus ? 2 : control.outlined || control.tone === "neutral" ? 1 : 0
+        border.color: control.activeFocus && control.tone === "primary" ? control.colors.on_primary
+                      : control.outlined || control.activeFocus ? control.colors.primary : control.colors.header.border
     }
 }

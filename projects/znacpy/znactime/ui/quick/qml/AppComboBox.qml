@@ -25,6 +25,7 @@ ComboBox {
     background: Rectangle {
         radius: 8
         color: !control.enabled ? control.colors.palette.base_disabled : control.hovered ? control.colors.header.control_hover : control.colors.header.control
+        border.width: control.activeFocus ? 2 : 1
         border.color: control.activeFocus || control.hovered ? control.colors.primary : control.colors.header.border
     }
     indicator: Rectangle {

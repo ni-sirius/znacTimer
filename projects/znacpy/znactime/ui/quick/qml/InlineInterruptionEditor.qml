@@ -12,6 +12,11 @@ FocusScope {
     objectName: "inlineInterruptionEditor"
 
     function focusStart() { start.forceActiveFocus(); start.selectAll() }
+    function advanceField(reverse) {
+        if (start.activeFocus && !reverse) { end.forceActiveFocus(); end.selectAll(); return true }
+        if (end.activeFocus && reverse) { start.forceActiveFocus(); start.selectAll(); return true }
+        return false
+    }
     function typeStart(value) { start.typeStart(value) }
     function resolvedValue() {
         if (!removed && start.text.trim() === "" && end.text.trim() === "") return null
