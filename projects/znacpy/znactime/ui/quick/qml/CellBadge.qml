@@ -12,6 +12,7 @@ Rectangle {
     property bool hovered: mouse.containsMouse && interactive && !plain
     property bool fullWidth: false
     property var editSession: null
+    property string tooltipText: ""
     signal clicked(int modifiers)
     signal pointerPressed(int modifiers)
     signal pointerDragged(point scenePosition)
@@ -21,6 +22,9 @@ Rectangle {
     color: plain ? "transparent" : hovered ? colors.primary : (appearance.fillColor || colors.table.empty_fill)
     border.width: outlined && !plain ? 2 : 0
     border.color: appearance.borderColor || colors.primary
+    HoverHandler { id: tooltipHover }
+    ToolTip.visible: tooltipHover.hovered && tooltipText !== ""
+    ToolTip.text: tooltipText
     FontMetrics { id: metrics; font: label.font }
     Text {
         id: label

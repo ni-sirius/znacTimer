@@ -6,6 +6,7 @@ from znactime.core.calculator import recalculate as recalculate_entries
 from znactime.ui.qt.repository_mapper import day_record_to_entry
 from znactime.ui.qt.model import MonthTableModel
 from znactime.ui.qt.color_scheme import badge_colors, is_dark_theme
+from znactime.ui.table_schema import interruption_tooltip
 from znactime.ui.qt.table_contract import (
     BADGE_ROLE, CALENDAR_WEEK_ROLE, CURRENT_ROW_ROLE, DATE_GRADIENT_ROLE,
     DATE_PROBLEM_ROLE, WEEKDAY_ROLE,
@@ -62,7 +63,9 @@ class QuickMonthModel(MonthTableModel):
             if badge:
                 badge.update(self._badge_palette(badge.get("state", "empty")))
                 if "items" in badge:
-                    badge["items"] = [dict(item, **self._badge_palette(item.get("state", "empty"))) for item in badge["items"]]
+                    badge["items"] = [dict(item, **self._badge_palette(item.get("state", "empty")),
+                                           tooltip=interruption_tooltip(item, badge.get("total_pause_time")) or "")
+                                      for item in badge["items"]]
             return badge
         if role == self.TODAY:
             return super().data(index, CURRENT_ROW_ROLE)

@@ -164,6 +164,9 @@ Surface {
                     root.controller.pasteCells(root.selectedRow, root.selectedColumn)
                 } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && event.modifiers & Qt.ControlModifier && root.selectedColumn === 4) {
                     root.editRequested(root.selectedRow, 4)
+                } else if (root.selectedColumn === 0 && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
+                    const dateCell = table.itemAtCell(Qt.point(0, root.selectedRow))
+                    if (dateCell && dateCell.dateInfo && dateCell.dateInfo.visible) dateCell.dateInfo.showInfo()
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_F2) {
                     root.editSelected()
                 } else if (event.key === Qt.Key_Left) {
@@ -210,6 +213,7 @@ Surface {
                 property real dividerGap: Math.round(rowLayout.gap * Screen.devicePixelRatio) / Screen.devicePixelRatio
                 property bool expected: cellBadge.state === "expected"
                 property bool pooled: false
+                property var dateInfo: dateLoader.item ? dateLoader.item.infoButton : null
                 TableView.onPooled: pooled = true
                 TableView.onReused: pooled = false
                 objectName: "monthCell_" + row + "_" + column
@@ -244,11 +248,16 @@ Surface {
                     }
                 }
                 Loader {
+                    id: dateLoader
                     active: cell.column === 0
                     width: cell.width; height: cell.bodyHeight
                     sourceComponent: Component {
                         Item {
+                            property alias infoButton: dayInfo
                             anchors.fill: parent
+                            HoverHandler { id: dateHover }
+                            ToolTip.visible: dateHover.hovered && !dayInfo.hovered
+                            ToolTip.text: cell.editValue
                             Rectangle {
                                 id: dateGlow
                                 visible: cell.dayState !== ""
@@ -291,25 +300,15 @@ Surface {
                                     }
                                 }
                                 Text { anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: cell.dayWeek; color: root.ink; font.pointSize: 10 }
-                                Rectangle {
+                                InfoButton {
+                                    id: dayInfo
                                     objectName: "dateInfoIcon_" + cell.row
                                     visible: cell.dayProblem !== ""
                                     anchors.right: parent.right; anchors.rightMargin: 60; anchors.verticalCenter: parent.verticalCenter
-                                    width: 16; height: 16; radius: 8
-                                    color: "transparent"
-                                    border.width: 1.2
-                                    border.color: root.colors.model.overtime_negative
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "i"
-                                        font.pixelSize: 12; font.bold: true
-                                        color: parent.border.color
-                                    }
+                                    width: 16; height: 16
+                                    colors: root.colors
+                                    message: cell.dayProblem
                                     Accessible.name: "Day information"
-                                    Accessible.description: cell.dayProblem
-                                    HoverHandler { id: problemHover }
-                                    ToolTip.visible: problemHover.hovered
-                                    ToolTip.text: cell.dayProblem
                                 }
                             }
                         }
@@ -355,6 +354,7 @@ Surface {
                                             colors: root.colors
                                             appearance: modelData.item
                                             text: modelData.item.text
+                                            tooltipText: modelData.item.tooltip || ""
                                             width: Math.max(implicitWidth, modelData.width)
                                             height: root.layoutInfo.badgeHeight
                                             plain: root.ui.closed

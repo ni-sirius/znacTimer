@@ -95,7 +95,14 @@ Surface {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                 }
-                Label { visible: root.ui.previousUnclosed; text: "ⓘ"; color: root.colors.model.overtime_negative; font.pixelSize: 18 }
+                InfoButton {
+                    objectName: "carryOverInfo"
+                    visible: root.ui.previousUnclosed
+                    colors: root.colors
+                    message: "Close last month to carry its time balance over to this month."
+                    Accessible.name: "Why last month must be closed"
+                    Layout.preferredWidth: 20; Layout.preferredHeight: 20
+                }
             }
             HoverHandler { id: carryHover }
             ToolTip.visible: carryHover.hovered && root.ui.previousUnclosed

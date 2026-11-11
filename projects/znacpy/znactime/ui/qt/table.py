@@ -17,7 +17,7 @@ from znactime.core.constants import (
     ZERO_DURATION,
 )
 from znactime.core.time_utils import hours_to_hhmm, parse_interruption_input
-from znactime.ui.table_schema import COLUMNS, EDITABLE_COLUMNS, Column
+from znactime.ui.table_schema import COLUMNS, EDITABLE_COLUMNS, Column, interruption_tooltip
 from znactime.ui.qt import (
     QAbstractItemDelegate,
     QAbstractItemView,
@@ -1087,17 +1087,7 @@ class CurrentTimeDelegate(QStyledItemDelegate):
             badge,
         ):
             if rect.contains(position):
-                target = item.get("target") or {}
-                if (
-                    target.get("action") == InterruptionAction.ADD
-                    or not item.get("complete", True)
-                ):
-                    return None
-                period = parse_interruption_input(item.get("text", ""))
-                total = badge.get("total_pause_time")
-                if period is None or not total:
-                    return None
-                return f"{hours_to_hhmm(period.hours)}/{total}"
+                return interruption_tooltip(item, badge.get("total_pause_time"))
         return None
 
     def helpEvent(self, event, view, option, index):

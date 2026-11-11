@@ -384,6 +384,6 @@ The assessment above records the original audit. Subsequent fixes are tracked he
 | F05 | Fixed | Printable-key editing preserves initiating and subsequent characters; FR-076. |
 | F06 | Fixed | Shared lexical clock filter and injected-clock defaults, including packaged component; FR-077. |
 | F07 | Fixed | Action mnemonics and deduplicated native/portable Quit bindings; FR-070/071. |
-| F08 | Pending | |
+| F08 | Fixed | Shared period/total tooltips, full-date hover, and pointer/keyboard/accessibility information controls; FR-078/079. |
 | F09 | Pending | |
 | F10 | Pending | |

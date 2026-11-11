@@ -468,6 +468,58 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(self.find("pauseEndEditor").property("text"), "12:30")
         QTest.keyClick(self.window.window, Qt.Key_Escape)
 
+    def test_information_buttons_support_click_space_enter_and_date_cell_keys(self):
+        self.window.controller.selectMonth(2024, 6)
+        self.window.controller.editCell(0, 2, "08:00")
+        self.app.processEvents()
+        info = self.find("dateInfoIcon_0")
+        self.assertTrue(info.isVisible())
+        tip = info.property("informationPopup")
+        self.click(info)
+        self.assertTrue(tip.property("visible"))
+        self.assertTrue(tip.property("text"))
+        self.invoke(tip, "close")
+        info.forceActiveFocus()
+        QTest.keyClick(self.window.window, Qt.Key_Space)
+        self.assertTrue(tip.property("visible"))
+        self.invoke(tip, "close")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertTrue(tip.property("visible"))
+        self.invoke(tip, "close")
+        self.click(self.find("monthCell_0_0"))
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertTrue(tip.property("visible"))
+        self.invoke(tip, "close")
+        self.window.controller.selectMonth(2024, 7)
+        self.app.processEvents()
+        carry_info = self.find("carryOverInfo")
+        self.assertTrue(carry_info.isVisible())
+        carry_info.forceActiveFocus()
+        QTest.keyClick(self.window.window, Qt.Key_Space)
+        self.assertTrue(carry_info.property("informationPopup").property("visible"))
+
+    def test_interruption_tooltips_include_period_and_total_in_open_and_closed_months(self):
+        controller = self.window.controller
+        controller.selectMonth(2024, 6)
+        controller.editCell(0, 2, "08:00")
+        controller.editCell(0, 3, "17:00")
+        controller.editCell(0, 4, "12:00-12:30;14:00-15:00")
+        for closed in (False, True):
+            if closed:
+                controller.closeMonth()
+                self.app.processEvents()
+                self.invoke(self.find("confirmationDialog"), "accept")
+                self.invoke(self.find("notificationDialog"), "accept")
+            self.app.processEvents()
+            pending = [self.find("monthCell_0_4")]
+            tooltips = []
+            while pending:
+                item = pending.pop()
+                pending.extend(item.childItems())
+                if item.property("tooltipText"):
+                    tooltips.append(item.property("tooltipText"))
+            self.assertCountEqual(tooltips, ["00:30/01:30", "01:00/01:30"])
+
     def test_escape_cancels_time_edit(self):
         self.click(self.find("monthCell_0_2"))
         self.type_text("08:30")
