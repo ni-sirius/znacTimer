@@ -13,10 +13,11 @@ Surface {
     border.color: colors.table.border
     property var layoutInfo: { let refresh = ui; return controller.tableLayout(table.width, table.height, Screen.devicePixelRatio) }
     colors: ui.colors
-    property int selectedRow: 0
-    property int selectedColumn: 2
+    readonly property int selectedRow: selection.currentIndex.valid ? selection.currentIndex.row : 0
+    readonly property int selectedColumn: selection.currentIndex.valid ? selection.currentIndex.column : 2
     property int anchorRow: 0
     property int anchorColumn: 2
+    property bool extendingSelection: false
     property var interruptionTarget: ({action: "add", period_index: null})
     property color ink: colors.model.text
     property color muted: colors.header.muted
@@ -32,13 +33,12 @@ Surface {
         return Math.round((sceneY + viewportY) * ratio) / ratio - sceneY
     }
     function selectCell(row, column, extend) {
-        selectedRow = Math.max(0, Math.min(table.rows - 1, row))
-        selectedColumn = Math.max(0, Math.min(6, column))
-        if (!extend) {
-            anchorRow = selectedRow
-            anchorColumn = selectedColumn
-        }
-        selection.setCurrentIndex(controller.monthModel.index(selectedRow, selectedColumn), ItemSelectionModel.NoUpdate)
+        row = Math.max(0, Math.min(table.rows - 1, row))
+        column = Math.max(0, Math.min(6, column))
+        extendingSelection = extend
+        selection.setCurrentIndex(controller.monthModel.index(row, column), ItemSelectionModel.NoUpdate)
+        extendingSelection = false
+        if (!extend) { anchorRow = row; anchorColumn = column }
         table.positionViewAtCell(Qt.point(selectedColumn, selectedRow), TableView.Contain)
         table.forceActiveFocus()
     }
@@ -106,6 +106,12 @@ Surface {
             selectionModel: ItemSelectionModel {
                 id: selection
                 model: root.controller.monthModel
+                onCurrentChanged: function(current, previous) {
+                    if (current.valid && !root.extendingSelection) {
+                        root.anchorRow = current.row
+                        root.anchorColumn = current.column
+                    }
+                }
             }
             columnWidthProvider: root.columnWidth
             rowHeightProvider: function(row) {
@@ -136,7 +142,6 @@ Surface {
             onWidthChanged: forceLayout()
             onHeightChanged: forceLayout()
             onRowsChanged: {
-                root.selectedRow = Math.min(root.selectedRow, Math.max(0, rows - 1))
                 root.anchorRow = Math.min(root.anchorRow, Math.max(0, rows - 1))
             }
             Keys.onPressed: function(event) {

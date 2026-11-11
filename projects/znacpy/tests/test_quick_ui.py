@@ -312,6 +312,25 @@ class QuickUITest(unittest.TestCase):
         state = self.window.controller.state
         self.assertEqual(self.repo.load_month(state["year"], state["month"]).days[0].start_minute, 510)
 
+    def test_tab_navigation_keeps_clipboard_and_delete_on_current_cell(self):
+        self.window.controller.editCell(0, 2, "08:00")
+        self.window.controller.editCell(0, 3, "17:00")
+        self.click(self.find("monthCell_0_2"))
+        QTest.keyClick(self.window.window, Qt.Key_Tab)
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        surface = self.find("monthTableSurface")
+        self.assertEqual(surface.property("selectedColumn"), 3)
+        QTest.keyClick(self.window.window, Qt.Key_C, Qt.ControlModifier)
+        self.assertEqual(self.app.clipboard().text(), "17:00")
+        self.app.clipboard().setText("18:00")
+        QTest.keyClick(self.window.window, Qt.Key_V, Qt.ControlModifier)
+        self.assertEqual(self.window.controller.cellValue(0, 2), "08:00")
+        self.assertEqual(self.window.controller.cellValue(0, 3), "18:00")
+        QTest.keyClick(self.window.window, Qt.Key_Delete)
+        self.assertEqual(self.window.controller.cellValue(0, 2), "08:00")
+        self.assertEqual(self.window.controller.cellValue(0, 3), "--:--")
+
     def test_escape_cancels_time_edit(self):
         self.click(self.find("monthCell_0_2"))
         self.type_text("08:30")

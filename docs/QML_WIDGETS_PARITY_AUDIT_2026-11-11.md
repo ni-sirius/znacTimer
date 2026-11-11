@@ -378,7 +378,7 @@ The assessment above records the original audit. Subsequent fixes are tracked he
 | Finding | Status | Regression coverage |
 |---|---|---|
 | F01 | Fixed | Modal rollover and reloaded revision rejection; FR-072. |
-| F02 | Pending | |
+| F02 | Fixed | Tab followed by copy, paste, and Delete uses the actual current cell; FR-073. |
 | F03 | Pending | |
 | F04 | Pending | |
 | F05 | Pending | |
