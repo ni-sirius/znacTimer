@@ -21,7 +21,7 @@ Rectangle {
     signal pointerDragged(point scenePosition)
     activeFocusOnTab: interactive && !plain && !editing
     Accessible.role: interactive && !plain ? Accessible.Button : Accessible.StaticText
-    Accessible.name: text
+    Accessible.name: text === "+" ? "Add pause period" : text
     Accessible.onPressAction: activate()
     function activate() {
         if (!interactive || plain || editing) return
@@ -68,22 +68,22 @@ Rectangle {
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
     }
-    Item {
+    ToolButton {
         objectName: "addInterruptionIcon"
         visible: badge.text === "+" && !badge.editing
         x: (badge.width - width) / 2
         y: (badge.height - height) / 2
-        width: 10; height: 10
-        Rectangle {
-            anchors.centerIn: parent
-            width: parent.width; height: 2
-            color: label.color
-        }
-        Rectangle {
-            anchors.centerIn: parent
-            width: 2; height: parent.height
-            color: label.color
-        }
+        width: 16; height: 16
+        padding: 0
+        background: null
+        // The badge handles activation; this child only renders its bundled icon.
+        enabled: false
+        focusPolicy: Qt.NoFocus
+        Accessible.ignored: true
+        display: AbstractButton.IconOnly
+        icon.source: "icons/plus.svg"
+        icon.width: 16; icon.height: 16
+        icon.color: label.color
     }
     MouseArea {
         id: mouse

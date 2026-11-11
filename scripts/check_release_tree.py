@@ -19,6 +19,7 @@ EXACT_FILES = frozenset(
         "projects/znacpy/uv.lock",
         "projects/znacpy/tracker.py",
         "projects/znacpy/znactime/ui/qt/assets/app_icon.png",
+        "projects/znacpy/znactime/ui/quick/qml/icons/plus.svg",
         "projects/znacpy/packaging/macos/znactime.icon/icon.json",
         "projects/znacpy/packaging/macos/znactime.icon/Assets/artwork.png",
     }

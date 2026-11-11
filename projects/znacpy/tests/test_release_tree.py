@@ -40,6 +40,7 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/znactime/storage/sqlite/repository.py",
             "projects/znacpy/znactime/ui/qt/themes/dark.json",
             "projects/znacpy/znactime/ui/quick/qml/Main.qml",
+            "projects/znacpy/znactime/ui/quick/qml/icons/plus.svg",
         )
 
         self.assertTrue(all(is_release_source(path) for path in allowed))
@@ -51,6 +52,7 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/tests/employment-history.csv",
             "docs/private-report.pdf",
             "projects/znacpy/znactime/ui/qt/assets/unreviewed.png",
+            "projects/znacpy/znactime/ui/quick/qml/icons/unreviewed.svg",
             "projects/znacpy/dist/znactime.exe",
             "projects/znacpy/build/output.py",
             "projects/znacpy/.venv/Lib/site-packages/package.py",
