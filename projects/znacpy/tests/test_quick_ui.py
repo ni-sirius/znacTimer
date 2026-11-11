@@ -394,6 +394,26 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(len(self.find("monthTable").property("selectionModel").selectedIndexes()), 4)
         self.assertNotEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
 
+    def test_typing_starts_edit_and_preserves_the_initiating_character(self):
+        self.window.controller.editCell(0, 2, "08:00")
+        self.click(self.find("monthCell_0_2"), modifiers=Qt.ControlModifier)
+        self.type_text("09:30")
+        self.assertEqual(self.window.window.activeFocusItem().objectName(), "timeCellEditor")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertEqual(self.window.controller.cellValue(0, 2), "09:30")
+        self.click(self.find("monthCell_0_1"), modifiers=Qt.ControlModifier)
+        self.type_text("Vacation")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertEqual(self.window.controller.cellValue(0, 1).lower(), "vacation")
+        self.window.controller.selectMonth(2024, 6)
+        self.window.controller.closeMonth()
+        self.app.processEvents()
+        self.invoke(self.find("confirmationDialog"), "accept")
+        self.invoke(self.find("notificationDialog"), "accept")
+        self.click(self.find("monthCell_0_2"))
+        QTest.keyClick(self.window.window, Qt.Key_9)
+        self.assertFalse(self.find("monthCell_0_2").property("editing"))
+
     def test_escape_cancels_time_edit(self):
         self.click(self.find("monthCell_0_2"))
         self.type_text("08:30")

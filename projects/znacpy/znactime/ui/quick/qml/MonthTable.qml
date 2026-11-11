@@ -20,6 +20,7 @@ Surface {
     property int anchorColumn: 2
     property bool changingSelection: false
     property var interruptionTarget: ({action: "add", period_index: null})
+    property string initialEditText: ""
     property color ink: colors.model.text
     property color muted: colors.header.muted
     signal editRequested(int row, int column)
@@ -52,7 +53,7 @@ Surface {
         const target = table.cellAtPosition(Qt.point(point.x + table.contentX, point.y + table.contentY), true)
         if (target.x >= 0 && target.y >= 0) selectCell(target.y, target.x, true)
     }
-    function editSelected() {
+    function editSelected(initialText = "") {
         if (ui.closed || selectedColumn < 1 || selectedColumn > 4)
             return
         if (selectedColumn === 4) {
@@ -60,6 +61,7 @@ Surface {
             interruptionTarget = value.indexOf("-") >= 0 ? {action: "edit", period_index: 0}
                                 : {action: value === "00:00" || value === "" ? "add" : "replace", period_index: null}
         }
+        initialEditText = initialText
         table.edit(controller.monthModel.index(selectedRow, selectedColumn))
     }
     function editInterruption(row, target) {
@@ -131,7 +133,7 @@ Surface {
             boundsBehavior: Flickable.StopAtBounds
             // Logical pixel alignment alone does not align rules at fractional DPI.
             pixelAligned: true
-            editTriggers: TableView.EditKeyPressed
+            editTriggers: TableView.EditKeyPressed | TableView.AnyKeyPressed
             keyNavigationEnabled: false
             activeFocusOnTab: root.selectedColumn !== 4
             ScrollBar.vertical: ScrollBar {
@@ -178,7 +180,11 @@ Surface {
                     root.selectCell(root.selectedRow + 1, root.selectedColumn, event.modifiers & Qt.ShiftModifier)
                 } else if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) {
                     root.controller.editCell(root.selectedRow, root.selectedColumn, "")
+                } else if (event.text.length > 0 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+                           && !root.ui.closed && root.selectedColumn >= 1 && root.selectedColumn <= 4) {
+                    root.editSelected(event.text)
                 } else {
+                    event.accepted = false
                     return
                 }
                 event.accepted = true
@@ -421,7 +427,11 @@ Surface {
                             if (item) item.save()
                             table.closeEditor()
                         })
-                        Qt.callLater(item.focusStart)
+                        item.focusStart()
+                        if (root.initialEditText !== "") {
+                            item.typeStart(root.initialEditText)
+                            root.initialEditText = ""
+                        }
                     }
                     Component.onDestruction: { if (session) session.end(cellEditorLoader) }
                     TableView.onCommit: { if (item) item.save() }
@@ -437,6 +447,7 @@ Surface {
                             background: Rectangle { radius: 6; color: cell.cellBadge.fillColor || root.colors.table.empty_fill; border.color: root.colors.primary; border.width: 2 }
                             Accessible.name: cell.column === 1 ? "Special day" : cell.column === 2 ? "Start time" : "End time"
                             function focusStart() { forceActiveFocus(); selectAll() }
+                            function typeStart(value) { text = value; cursorPosition = text.length }
                             function save() { root.controller.editCell(cell.row, cell.column, text) }
                         }
                     }
