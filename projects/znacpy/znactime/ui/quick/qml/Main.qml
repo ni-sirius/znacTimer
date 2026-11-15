@@ -281,19 +281,19 @@ ApplicationWindow {
         objectName: "taskProgressDialog"
         ownerWindow: window
         width: Math.min(500, window.width - 32)
-        title: window.ui.progress.title
+        title: window.controller.progress.title
         modal: true
         closePolicy: Popup.NoAutoClose
         onNativeCloseRequested: window.controller.cancelTask()
         contentItem: ColumnLayout {
-            Label { text: window.ui.progress.phase; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Label { text: window.controller.progress.phase; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             ProgressBar {
                 Layout.fillWidth: true
-                indeterminate: window.ui.progress.total <= 0
-                from: 0; to: Math.max(1, window.ui.progress.total)
-                value: window.ui.progress.completed
+                indeterminate: window.controller.progress.total <= 0
+                from: 0; to: Math.max(1, window.controller.progress.total)
+                value: window.controller.progress.completed
             }
-            AppButton { colors: window.ui.colors; text: "Cancel"; Layout.alignment: Qt.AlignRight; enabled: window.ui.progress.phase !== "Cancelling…"; onClicked: window.controller.cancelTask() }
+            AppButton { colors: window.ui.colors; text: "Cancel"; Layout.alignment: Qt.AlignRight; enabled: window.controller.progress.phase !== "Cancelling…"; onClicked: window.controller.cancelTask() }
         }
     }
     AppDialog {

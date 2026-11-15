@@ -44,6 +44,7 @@ def _qml_colors(colors):
 
 class ApplicationController(QObject):
     changed = Signal()
+    progressChanged = Signal()
     notification = Signal(str, str)
     confirmation = Signal(str, str, int)
     scrollToToday = Signal(int)
@@ -96,6 +97,11 @@ class ApplicationController(QObject):
         if portable not in bindings:
             bindings.append(portable)
         return [binding.toString(QKeySequence.PortableText) for binding in bindings]
+
+    @Property("QVariantMap", notify=progressChanged)
+    def progress(self):
+        """Publish task counters without invalidating month presentation."""
+        return dict(self._progress)
 
     @Property("QVariantMap", notify=changed)
     def state(self):
@@ -594,13 +600,14 @@ class ApplicationController(QObject):
         worker.failed.connect(self._task_failed)
         worker.succeeded.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
+        self.progressChanged.emit()
         self.changed.emit()
         thread.start()
 
     @Slot(str, int, int)
     def _task_progress(self, phase, completed, total):
         self._progress.update(phase=phase, completed=completed, total=total)
-        self.changed.emit()
+        self.progressChanged.emit()
 
     @Slot(object)
     def _task_done(self, result):
@@ -631,7 +638,7 @@ class ApplicationController(QObject):
         if self._task_worker is not None:
             self._task_worker.cancel()
             self._progress["phase"] = "Cancelling…"
-            self.changed.emit()
+            self.progressChanged.emit()
 
     def shutdown(self):
         self._shutting_down = True
