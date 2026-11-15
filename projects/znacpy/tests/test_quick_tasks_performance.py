@@ -97,6 +97,7 @@ class QuickTaskProgressTest(unittest.TestCase):
         QTest.qWait(20)
 
     def test_worker_progress_updates_dialog_without_refreshing_month(self):
+        self.assertFalse(self.controller._tasks._progress_timer.isActive())
         send_progress, finish = self.event(), self.event()
         worker_threads, delivery_threads = [], []
         successes, changed, data_changes, resets = [], [], [], []
@@ -146,6 +147,7 @@ class QuickTaskProgressTest(unittest.TestCase):
         finish.set()
         self.wait_until(lambda: not self.controller.state["busy"])
         self.assertEqual(successes, ["finished"])
+        self.assertFalse(self.controller._tasks._progress_timer.isActive())
         self.assertFalse(self.dialog.property("visible"))
         self.assertTrue(year.property("enabled"))
         self.assertEqual(changed, [True], "Task completion must still notify busy-state changes")
@@ -230,7 +232,175 @@ class QuickTaskProgressTest(unittest.TestCase):
         self.assertEqual(changed, [True, False])
         self.assertEqual(successes, [])
         self.assertEqual(notices, [("Operation failed", "Expected task failure")])
+        self.assertFalse(self.controller._tasks._progress_timer.isActive())
         self.assertFalse(self.dialog.property("visible"))
         notification = self.owner.window.findChild(QObject, "notificationDialog")
         self.assertTrue(notification.property("visible"))
         self.assertEqual(notification.property("message"), "Expected task failure")
+
+    def test_progress_burst_delivers_only_the_latest_pending_value(self):
+        send, produced, finish = self.event(), self.event(), self.event()
+        updates = []
+
+        def task(*, progress, cancelled):
+            send.wait()
+            for completed in range(1, 1001):
+                progress("Reading burst", completed, 1000)
+            produced.set()
+            finish.wait()
+
+        self.controller._start_task("Burst check", task, lambda _: None)
+        self.settle()
+        self.controller.progressChanged.connect(lambda: updates.append(dict(self.controller.progress)))
+        send.set()
+        # Hold GUI processing until the worker has produced the entire burst.
+        self.assertTrue(produced.wait(2))
+        self.wait_until(lambda: self.bar.property("value") == 1000)
+        self.settle()
+        self.assertEqual([update["completed"] for update in updates], [1000])
+        self.assertEqual(self.phase.property("text"), "Reading burst")
+        finish.set()
+        self.wait_until(lambda: not self.controller.state["busy"])
+
+    def test_pending_progress_cannot_overwrite_cancelling(self):
+        send_late, produced, finish = self.event(), self.event(), self.event()
+
+        def task(*, progress, cancelled):
+            progress("Waiting", 1, 10)
+            send_late.wait()
+            progress("Late queued update", 9, 10)
+            produced.set()
+            finish.wait()
+            if cancelled():
+                raise LegacyImportCancelled()
+
+        self.controller._start_task("Cancel queued progress", task, lambda _: None)
+        self.wait_until(lambda: self.bar.property("value") == 1)
+        send_late.set()
+        self.assertTrue(produced.wait(1))
+        self.controller.cancelTask()
+        self.assertFalse(self.controller._tasks._progress_timer.isActive())
+        expected = dict(self.controller.progress)
+        QTest.qWait(150)
+        self.assertEqual(self.controller.progress, expected)
+        self.assertEqual(self.phase.property("text"), "Cancelling…")
+        self.assertFalse(self.cancel_button.property("enabled"))
+        self.assertEqual(self.bar.property("value"), 1)
+        finish.set()
+        self.wait_until(lambda: not self.controller.state["busy"])
+
+    def test_retired_callback_cannot_update_completed_or_next_task(self):
+        reporters, completed = [], []
+        finish_second = self.event()
+
+        def first(*, progress, cancelled):
+            reporters.append(progress)
+            progress("First final value", 3, 7)
+            return "first"
+
+        def capture(result):
+            completed.append((result, dict(self.controller.progress)))
+
+        self.controller._start_task("First task", first, capture)
+        self.wait_until(lambda: not self.controller.state["busy"])
+        self.assertEqual(completed[0][1]["completed"], 3)
+        first_progress = dict(self.controller.progress)
+        reporters[0]("After completion", 99, 100)
+        self.settle()
+        self.assertEqual(self.controller.progress, first_progress)
+
+        def second(*, progress, cancelled):
+            progress("Second phase", 1, 4)
+            finish_second.wait()
+            return "second"
+
+        self.controller._start_task("Second task", second, capture)
+        self.wait_until(lambda: self.phase.property("text") == "Second phase")
+        second_progress = dict(self.controller.progress)
+        reporters[0]("Retired first task", 100, 100)
+        QTest.qWait(150)
+        self.assertEqual(self.controller.progress, second_progress)
+        self.assertEqual(self.dialog.property("title"), "Second task")
+        finish_second.set()
+        self.wait_until(lambda: not self.controller.state["busy"])
+        self.assertEqual([result for result, _ in completed], ["first", "second"])
+
+    def test_fast_failure_flushes_final_progress_before_notification(self):
+        seen = []
+
+        def task(*, progress, cancelled):
+            progress("Last failure phase", 2, 5)
+            raise RuntimeError("Expected fast failure")
+
+        self.controller.notification.connect(
+            lambda title, text: seen.append((title, text, dict(self.controller.progress)))
+        )
+        self.controller._start_task("Fast failure", task, lambda _: self.fail("Failure succeeded"))
+        self.wait_until(lambda: not self.controller.state["busy"])
+        self.assertEqual(seen[0][:2], ("Operation failed", "Expected fast failure"))
+        self.assertEqual(seen[0][2]["phase"], "Last failure phase")
+        self.assertEqual(seen[0][2]["completed"], 2)
+        self.assertEqual(seen[0][2]["total"], 5)
+
+    def test_success_callback_error_restores_controls_and_reports_notification(self):
+        notices = []
+
+        def task(*, progress, cancelled):
+            progress("Final phase", 4, 4)
+            return "completed"
+
+        def completed(result):
+            self.assertEqual(result, "completed")
+            self.assertFalse(self.controller.state["busy"])
+            raise ValueError("Expected result handling failure")
+
+        self.controller.notification.connect(lambda *values: notices.append(values))
+        self.controller._start_task("Result policy check", task, completed)
+        self.wait_until(lambda: not self.controller.state["busy"])
+        self.assertEqual(notices, [("Operation failed", "Expected result handling failure")])
+        self.assertEqual(self.controller.progress["completed"], 4)
+        self.assertFalse(self.dialog.property("visible"))
+        self.assertTrue(self.owner.window.findChild(QObject, "yearSelector").property("enabled"))
+
+    def test_progress_phases_and_totals_stay_coherent_while_running(self):
+        next_phase, finish = self.event(), self.event()
+
+        def task(*, progress, cancelled):
+            progress("Hashing", 1, 5)
+            next_phase.wait()
+            progress("Parsing", 2, 3)
+            finish.wait()
+
+        self.controller._start_task("Phase check", task, lambda _: None)
+        self.wait_until(lambda: self.phase.property("text") == "Hashing")
+        self.assertEqual(self.bar.property("to"), 5)
+        self.assertEqual(self.bar.property("value"), 1)
+        next_phase.set()
+        self.wait_until(lambda: self.phase.property("text") == "Parsing")
+        self.assertEqual(self.bar.property("to"), 3)
+        self.assertEqual(self.bar.property("value"), 2)
+        finish.set()
+        self.wait_until(lambda: not self.controller.state["busy"])
+
+    def test_shutdown_discards_progress_and_rejects_new_tasks(self):
+        reporters, successes = [], []
+
+        def task(*, progress, cancelled):
+            reporters.append(progress)
+            progress("Working", 1, 10)
+            while not cancelled():
+                threading.Event().wait(0.001)
+            raise LegacyImportCancelled()
+
+        self.controller._start_task("Shutdown check", task, successes.append)
+        self.wait_until(lambda: self.bar.property("value") == 1)
+        self.owner.shutdown()
+        expected = dict(self.controller.progress)
+        reporters[0]("After shutdown", 999, 1000)
+        self.app.processEvents()
+        self.assertEqual(self.controller.progress, expected)
+        self.assertFalse(self.controller._tasks._progress_timer.isActive())
+        self.controller._start_task("Must not restart", lambda **_: "unexpected", successes.append)
+        self.settle()
+        self.assertFalse(self.controller.state["busy"])
+        self.assertEqual(successes, [])

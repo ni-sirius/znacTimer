@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QObject, Property, QThread, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QObject, Property, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeySequence
 
 from znactime.config import APP_NAME, VERSION
@@ -19,7 +19,6 @@ from znactime.storage.atomic_file import reject_protected_destination, sqlite_pr
 from znactime.storage.errors import StorageConflict, StorageError
 from znactime.storage.legacy_csv_import import LegacyImportCancelled, preflight_legacy_data
 from znactime.storage.sqlite.repository import SQLiteRepository
-from znactime.ui.qt.background import _TaskWorker
 from znactime.ui.qt.first_launch import format_preflight_summary
 from znactime.ui.qt.repository_mapper import parse_display_date
 from znactime.ui.qt.settings import (
@@ -29,6 +28,7 @@ from znactime.ui.qt.settings import (
 from znactime.ui.qt.theme import ThemeController
 from znactime.ui.quick.model import QuickMonthModel
 from znactime.ui.quick.layout import month_layout
+from znactime.ui.quick.tasks.runner import TaskRunner
 
 
 def schedule_for_date(schedules, work_date):
@@ -63,14 +63,13 @@ class ApplicationController(QObject):
         self._previous_unclosed = False
         self._confirm_id = 0
         self._pending = {}
-        self._task_thread = None
-        self._task_worker = None
-        self._task_success = None
-        self._busy = False
-        self._progress = {"title": "", "phase": "", "completed": 0, "total": 0}
         self._schedule_snapshot = None
         self._schedule_period = None
         self._shutting_down = False
+        self._tasks = TaskRunner(self)
+        self._tasks.progressChanged.connect(self.progressChanged)
+        self._tasks.busyChanged.connect(self.changed)
+        self._tasks.failed.connect(self._task_failed)
         self._day_hours, self._show_expected_end = load_work_schedule_settings(settings)
         self.theme = ThemeController(settings=settings)
         self._theme_colors = {name: _qml_colors(theme.colors) for name, theme in self.theme.themes.items()}
@@ -101,7 +100,7 @@ class ApplicationController(QObject):
     @Property("QVariantMap", notify=progressChanged)
     def progress(self):
         """Publish task counters without invalidating month presentation."""
-        return dict(self._progress)
+        return self._tasks.progress
 
     @Property("QVariantMap", notify=changed)
     def state(self):
@@ -157,7 +156,7 @@ class ApplicationController(QObject):
             "colors": self._theme_colors["dark" if self.theme.is_dark() else "light"],
             "showExpectedEnd": self._show_expected_end,
             "initialWidth": width, "initialHeight": height, "fitHeight": fit,
-            "busy": self._busy, "progress": dict(self._progress),
+            "busy": self._tasks.busy, "progress": self.progress,
         }
 
     def _theme_changed(self, _mode):
@@ -214,7 +213,7 @@ class ApplicationController(QObject):
 
     @Slot(int, int)
     def selectMonth(self, year, month):
-        if self._busy or not 1 <= year <= 9999 or not 1 <= month <= 12:
+        if self._tasks.busy or not 1 <= year <= 9999 or not 1 <= month <= 12:
             return
         previous = self.year, self.month
         self.year, self.month = year, month
@@ -246,7 +245,7 @@ class ApplicationController(QObject):
 
     @Slot(int, int, str, result=bool)
     def editCell(self, row, column, value):
-        if self._busy or not 0 <= row < self._model.rowCount() or not 0 <= column < self._model.columnCount():
+        if self._tasks.busy or not 0 <= row < self._model.rowCount() or not 0 <= column < self._model.columnCount():
             return False
         return self._model.setData(self._model.index(row, column), value)
 
@@ -313,7 +312,7 @@ class ApplicationController(QObject):
 
     @Slot(int, int, result=bool)
     def pasteCells(self, first_row, first_column):
-        if self._busy or self._model.month_closed:
+        if self._tasks.busy or self._model.month_closed:
             return False
         lines = QGuiApplication.clipboard().text().splitlines()
         if not lines:
@@ -347,7 +346,7 @@ class ApplicationController(QObject):
     def _work_action(self, action, *, replace_duration=False):
         now = self._clock()
         entry = self._today_entry(now)
-        if self._busy or entry is None or self._model.month_closed:
+        if self._tasks.busy or entry is None or self._model.month_closed:
             return
         try:
             minute = now.hour * 60 + now.minute
@@ -362,7 +361,7 @@ class ApplicationController(QObject):
     @Slot()
     def primaryAction(self):
         entry = self._today_entry()
-        if self._busy or entry is None or self._model.month_closed:
+        if self._tasks.busy or entry is None or self._model.month_closed:
             return
         if entry.start == UNSET_TIME:
             if entry.end != UNSET_TIME:
@@ -387,7 +386,7 @@ class ApplicationController(QObject):
 
     @Slot()
     def closeMonth(self):
-        if self._busy or self._model.month_closed:
+        if self._tasks.busy or self._model.month_closed:
             return
         year, month = self.year, self.month
         if date(year, month, 1) > self._clock().date().replace(day=1):
@@ -420,7 +419,7 @@ class ApplicationController(QObject):
 
     @Slot()
     def reopenMonth(self):
-        if self._busy or not self._model.month_closed:
+        if self._tasks.busy or not self._model.month_closed:
             return
         year, month, revision = self.year, self.month, self._record.revision
 
@@ -476,7 +475,7 @@ class ApplicationController(QObject):
 
     @Slot("QVariantList", int, bool, result=bool)
     def saveSchedule(self, days, special, show_expected):
-        if self._busy or self._schedule_period != (self.year, self.month):
+        if self._tasks.busy or self._schedule_period != (self.year, self.month):
             return False
         try:
             days = tuple(int(value) for value in days)
@@ -510,7 +509,7 @@ class ApplicationController(QObject):
 
     @Slot(str, QUrl)
     def exportFile(self, kind, url):
-        if self._busy or kind not in ("csv", "pdf", "backup"):
+        if self._tasks.busy or kind not in ("csv", "pdf", "backup"):
             return
         if not url.isLocalFile():
             self.notification.emit("Export failed", "Choose a local file.")
@@ -553,7 +552,7 @@ class ApplicationController(QObject):
 
     @Slot(QUrl)
     def importFolder(self, url):
-        if self._busy or not url.isLocalFile():
+        if self._tasks.busy or not url.isLocalFile():
             return
         source = url.toLocalFile()
         self._start_task("Inspecting legacy data", lambda **kwargs: preflight_legacy_data(source, **kwargs), self._confirm_import)
@@ -582,69 +581,30 @@ class ApplicationController(QObject):
             self.notification.emit("CSV import complete", f"New months: {result.months_created}\nExisting months examined: {result.months_merged}\nDays imported: {result.days_imported}\nDays kept from SQLite: {result.days_kept_current}\nUnchanged/blank days: {result.days_unchanged}\nMonths imported as closed: {result.months_closed}\nClosures kept open: {result.closures_kept_open}\n\nCSV source preserved at:\n{result.source_root}")
 
     def _start_task(self, title, task, success):
-        if self._busy:
+        if self._shutting_down:
             return
-        # Finish disposing of the previous thread before starting another task.
-        if self._task_thread is not None:
-            self._task_thread.wait()
-            self._task_thread.deleteLater()
-        thread = QThread(self)
-        worker = _TaskWorker(task)
-        worker.moveToThread(thread)
-        self._task_thread, self._task_worker, self._task_success = thread, worker, success
-        self._busy = True
-        self._progress = {"title": title, "phase": "Starting…", "completed": 0, "total": 0}
-        thread.started.connect(worker.run)
-        worker.progress.connect(self._task_progress)
-        worker.succeeded.connect(self._task_done)
-        worker.failed.connect(self._task_failed)
-        worker.succeeded.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
-        self.progressChanged.emit()
-        self.changed.emit()
-        thread.start()
 
-    @Slot(str, int, int)
-    def _task_progress(self, phase, completed, total):
-        self._progress.update(phase=phase, completed=completed, total=total)
-        self.progressChanged.emit()
-
-    @Slot(object)
-    def _task_done(self, result):
-        self._task_thread.quit()
-        self._task_thread.wait()
-        self._busy = False
-        self._task_worker = None
-        success, self._task_success = self._task_success, None
-        self.changed.emit()
-        if success and not self._shutting_down:
+        def completed(result):
+            if self._shutting_down or not success:
+                return
             try:
                 success(result)
             except (StorageError, OSError, ValueError) as error:
                 self.notification.emit("Operation failed", str(error))
 
+        return self._tasks.start(title, task, completed)
+
     @Slot(object)
     def _task_failed(self, error):
-        self._task_thread.quit()
-        self._task_thread.wait()
-        self._busy = False
-        self._task_worker = self._task_success = None
-        self.changed.emit()
         if not self._shutting_down and not isinstance(error, LegacyImportCancelled):
             self.notification.emit("Operation failed", str(error))
 
     @Slot()
     def cancelTask(self):
-        if self._task_worker is not None:
-            self._task_worker.cancel()
-            self._progress["phase"] = "Cancelling…"
-            self.progressChanged.emit()
+        self._tasks.cancel()
 
     def shutdown(self):
         self._shutting_down = True
         self._timer.stop()
         self._pending.clear()
-        self.cancelTask()
-        if self._task_thread is not None:
-            self._task_thread.quit()
-            self._task_thread.wait()
+        self._tasks.shutdown()
