@@ -68,22 +68,28 @@ Rectangle {
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
     }
-    ToolButton {
-        objectName: "addInterruptionIcon"
-        visible: badge.text === "+" && !badge.editing
+    Loader {
+        active: badge.text === "+"
+        visible: !badge.editing
         x: (badge.width - width) / 2
         y: (badge.height - height) / 2
         width: 16; height: 16
-        padding: 0
-        background: null
-        // The badge handles activation; this child only renders its bundled icon.
-        enabled: false
-        focusPolicy: Qt.NoFocus
-        Accessible.ignored: true
-        display: AbstractButton.IconOnly
-        icon.source: "icons/plus.svg"
-        icon.width: 16; icon.height: 16
-        icon.color: label.color
+        sourceComponent: Component {
+            ToolButton {
+                objectName: "addInterruptionIcon"
+                width: 16; height: 16
+                padding: 0
+                background: null
+                // The badge handles activation; this child only renders its bundled icon.
+                enabled: false
+                focusPolicy: Qt.NoFocus
+                Accessible.ignored: true
+                display: AbstractButton.IconOnly
+                icon.source: "icons/plus.svg"
+                icon.width: 16; icon.height: 16
+                icon.color: label.color
+            }
+        }
     }
     MouseArea {
         id: mouse

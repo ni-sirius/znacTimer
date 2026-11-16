@@ -708,6 +708,54 @@ class QuickUITest(unittest.TestCase):
         state = self.window.controller.state
         self.assertEqual(self.repo.load_month(state["year"], state["month"]).days[0].start_minute, 510)
 
+    def test_table_creates_badges_only_for_their_column_and_type(self):
+        self.prepare_navigation_day(pauses="10:00-10:15;12:00-12:30")
+        pending, items = [self.find("monthTable")], []
+        while pending:
+            item = pending.pop()
+            items.append(item)
+            pending.extend(item.childItems())
+        cells = [item for item in items if item.objectName().startswith("monthCell_")]
+        self.assertEqual({cell.property("column") for cell in cells}, set(range(7)))
+        for cell in cells:
+            column, row = cell.property("column"), cell.property("row")
+            badge = cell.findChild(QObject, f"tableBadge_{row}_{column}")
+            self.assertEqual(badge is not None, column in (1, 2, 3), cell.objectName())
+        badges = [item for item in items if item.objectName().startswith(("tableBadge_", "pauseBadge_"))]
+        self.assertTrue(any(badge.property("text") == "+" for badge in badges))
+        for badge in badges:
+            icon = badge.findChild(QObject, "addInterruptionIcon")
+            self.assertEqual(icon is not None, badge.property("text") == "+", badge.objectName())
+
+    def test_recycled_badges_keep_focus_and_accept_edits_on_first_use(self):
+        self.prepare_navigation_day()
+        self.window.window.resize(900, 500)
+        surface = self.find("monthTableSurface")
+        self.invoke(surface, "focusPosition", 0, 2, 0, False, False)
+        for _ in range(29):
+            QTest.keyClick(self.window.window, Qt.Key_Down)
+            self.app.processEvents()
+        self.assertEqual(self.focused_control_name(), "tableBadge_29_2")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        editor = self.window.window.activeFocusItem()
+        self.assertEqual(editor.objectName(), "timeCellEditor")
+        editor.setProperty("text", "09:15")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(self.repo.load_month(2026, 11).days[29].start_minute, 555)
+        QTest.qWait(20)  # Let the committed editor's deferred destruction finish.
+        self.invoke(surface, "showRow", 0)
+        QTest.qWait(20)  # Complete the viewport's polish before pointer hit testing.
+        self.click(self.find("tableBadge_0_2"))
+        editor = self.window.window.activeFocusItem()
+        self.assertEqual(editor.objectName(), "timeCellEditor")
+        editor.setProperty("text", "08:45")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.app.processEvents()
+        self.assertEqual(self.repo.load_month(2026, 11).days[0].start_minute, 525)
+        self.assertEqual(self.window.controller.cellValue(29, 2), "09:15")
+
     def test_tab_navigation_keeps_clipboard_and_delete_on_current_cell(self):
         row = self.prepare_navigation_day()
         self.window.controller.editCell(row, 3, "17:00")
