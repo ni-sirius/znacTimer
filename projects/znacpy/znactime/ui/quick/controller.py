@@ -46,6 +46,7 @@ def _qml_colors(colors):
 class ApplicationController(QObject):
     changed = Signal()
     progressChanged = Signal()
+    workStatusChanged = Signal()
     notification = Signal(str, str)
     confirmation = Signal(str, str, int)
     scrollToToday = Signal(int)
@@ -67,6 +68,7 @@ class ApplicationController(QObject):
         self._schedule_snapshot = None
         self._schedule_period = None
         self._state_cache = None
+        self._work_status_text = ""
         self._shutting_down = False
         self._tasks = TaskRunner(self)
         self._tasks.progressChanged.connect(self.progressChanged)
@@ -125,41 +127,58 @@ class ApplicationController(QObject):
     @Slot()
     def _publish_state(self):
         self._invalidate_state()
+        self._publish_work_status(self._clock())
         self.changed.emit()
 
-    def _build_state(self, now):
-        record = self._record
-        closed = record is not None and record.status == "closed"
-        today_entry = self._today_entry(now)
+    @Property(str, notify=workStatusChanged)
+    def workStatusText(self):
+        return self._work_status_text
+
+    def _publish_work_status(self, now):
+        closed = self._record is not None and self._record.status == "closed"
+        _, _, _, text = self._workday_state(now, self._today_entry(now), closed)
+        if text != self._work_status_text:
+            self._work_status_text = text
+            self.workStatusChanged.emit()
+
+    @staticmethod
+    def _workday_state(now, today_entry, closed):
         work_state, primary, message = "unavailable", "Start work", "Open the current, unlocked month to use workday controls"
         if today_entry is not None and not closed:
+            pause_start = open_interruption_start(today_entry.interruption)
             if today_entry.start == UNSET_TIME:
                 work_state, primary, message = "idle", "Start work", "Ready when you are"
             elif today_entry.end != UNSET_TIME:
                 work_state, primary, message = "complete", "Day complete", f"{today_entry.start} – {today_entry.end}"
-            elif open_interruption_start(today_entry.interruption):
-                work_state, primary, message = "paused", "Resume work", f"Paused since {open_interruption_start(today_entry.interruption)}"
+            elif pause_start:
+                work_state, primary, message = "paused", "Resume work", f"Paused since {pause_start}"
             else:
                 work_state, primary, message = "working", "Pause", f"Working since {today_entry.start}"
             if today_entry.start != UNSET_TIME:
-                end = today_entry.end if today_entry.end != UNSET_TIME else (open_interruption_start(today_entry.interruption) or now.strftime("%H:%M"))
+                end = today_entry.end if today_entry.end != UNSET_TIME else (pause_start or now.strftime("%H:%M"))
                 start_minute = int(today_entry.start[:2]) * 60 + int(today_entry.start[3:])
                 end_minute = int(end[:2]) * 60 + int(end[3:])
                 pauses = parse_interruption_input(today_entry.interruption)
                 worked = max(0, end_minute - start_minute - (round(pauses.hours * 60) if pauses else 0))
                 message += f" · {worked // 60:02d}:{worked % 60:02d} worked"
-        fit, width, height = load_startup_window_settings(self.settings)
         status_text = message
         if work_state == "idle":
             status_text = "Ready to start today's workday"
         elif work_state == "working":
             status_text = f"Working since {today_entry.start} · {worked // 60:02d}:{worked % 60:02d}"
         elif work_state == "paused":
-            pause_start = open_interruption_start(today_entry.interruption)
             minutes = max(0, now.hour * 60 + now.minute - int(pause_start[:2]) * 60 - int(pause_start[3:]))
             status_text = f"Paused since {pause_start} · {minutes // 60:02d}:{minutes % 60:02d}"
         elif work_state == "complete":
             status_text = f"Workday complete · {today_entry.start}–{today_entry.end}"
+        return work_state, primary, message, status_text
+
+    def _build_state(self, now):
+        record = self._record
+        closed = record is not None and record.status == "closed"
+        today_entry = self._today_entry(now)
+        work_state, primary, message, status_text = self._workday_state(now, today_entry, closed)
+        fit, width, height = load_startup_window_settings(self.settings)
         return {
             "title": f"{APP_NAME} v{VERSION}", "version": VERSION,
             "year": self.year, "month": self.month,
@@ -227,7 +246,7 @@ class ApplicationController(QObject):
             self._carry_discontinuity = self._previous_unclosed = False
             self.notification.emit("Balance status unavailable", str(error))
         if notify:
-            self.changed.emit()
+            self._publish_state()
 
     def _edit_committed(self):
         try:
@@ -238,12 +257,14 @@ class ApplicationController(QObject):
     @Slot(int, int)
     def selectMonth(self, year, month):
         if self._tasks.busy or not 1 <= year <= 9999 or not 1 <= month <= 12:
-            return
+            return False
         previous = self.year, self.month
         self.year, self.month = year, month
-        if not self.load_month():
-            self.year, self.month = previous
-            self._publish_state()
+        if self.load_month():
+            return True
+        self.year, self.month = previous
+        self._publish_state()
+        return False
 
     @Slot(int)
     def navigate(self, offset):
@@ -259,13 +280,13 @@ class ApplicationController(QObject):
 
     @Slot()
     def tick(self):
-        today = self._clock().date()
+        now = self._clock()
+        today = now.date()
         if today != self._today:
-            self._today = today
-            self.selectMonth(today.year, today.month)
-        else:
-            self._model.recalculate(today=today, autosave=False)
-            self._publish_state()
+            if self.selectMonth(today.year, today.month):
+                self._today = today
+                return
+        self._publish_work_status(now)
 
     @Slot(int, int, str, result=bool)
     def editCell(self, row, column, value):

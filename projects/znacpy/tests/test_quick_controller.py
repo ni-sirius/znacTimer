@@ -3,7 +3,7 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -253,6 +253,43 @@ class QuickControllerTest(unittest.TestCase):
         self.controller.tick()
         self.assertEqual(self.controller.state["month"], 7)
         self.assertEqual(self.controller.state["workState"], "idle")
+
+    def test_same_day_ticks_only_notify_when_footer_text_changes(self):
+        controller = self.controller
+        table_events = []
+        status_events = []
+        controller.changed.connect(lambda: table_events.append("state"))
+        controller.monthModel.dataChanged.connect(lambda *_: table_events.append("data"))
+        controller.monthModel.modelReset.connect(lambda: table_events.append("reset"))
+        controller.workStatusChanged.connect(lambda: status_events.append(controller.workStatusText))
+
+        def check_tick(clock_changes):
+            table_events.clear()
+            status_events.clear()
+            before = controller.workStatusText
+            self.now += timedelta(minutes=1)
+            entries = controller.monthModel.entries()
+            controller.tick()
+            self.assertEqual(table_events, [])
+            self.assertEqual(controller.monthModel.entries(), entries)
+            self.assertEqual(controller.workStatusText, controller.state["workStatusText"])
+            self.assertEqual(status_events, [controller.workStatusText] if clock_changes else [])
+            self.assertEqual(controller.workStatusText != before, clock_changes)
+
+        check_tick(False)  # idle
+        controller.primaryAction()
+        check_tick(True)  # working
+        controller.primaryAction()
+        check_tick(True)  # paused
+        controller.primaryAction()
+        controller.stopWorkday()
+        check_tick(False)  # complete
+        controller.closeMonth()
+        self.answer()
+        self.assertTrue(controller.state["closed"])
+        check_tick(False)
+        controller.selectMonth(2024, 5)
+        check_tick(False)
 
     def test_schedule_changes_update_expected_time_and_persist_setting(self):
         self.controller.scheduleSettings()

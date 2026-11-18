@@ -3,7 +3,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -429,6 +429,26 @@ class QuickUITest(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(self.window.window.width(), 800)
         self.assertFalse(self.window.window.grabWindow().isNull())
+
+    def test_minute_tick_updates_footer_during_inline_edit(self):
+        row = self.prepare_navigation_day()
+        controller = self.window.controller
+        now = controller._clock()
+        controller.tick()
+        status = self.find("workdayStatus")
+        previous = status.property("text")
+        self.click(self.find(f"monthCell_{row}_2"))
+        editor = self.window.window.activeFocusItem()
+        self.type_text("07:30")
+        controller._clock = lambda: now + timedelta(minutes=1)
+        controller.tick()
+        self.app.processEvents()
+        self.assertNotEqual(status.property("text"), previous)
+        self.assertEqual(status.property("text"), controller.workStatusText)
+        self.assertEqual(self.window.window.activeFocusItem(), editor)
+        self.assertEqual(controller.cellValue(row, 2), "08:00")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertEqual(controller.cellValue(row, 2), "07:30")
 
     def test_menu_popups_fit_their_actions_and_accept_pointer_input(self):
         menus = [item for item in self.window.window.findChildren(QObject)

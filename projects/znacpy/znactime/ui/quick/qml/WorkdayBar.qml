@@ -46,7 +46,7 @@ Surface {
         spacing: 10
         Label {
             objectName: "workdayStatus"
-            text: root.ui.workStatusText
+            text: root.controller.workStatusText
             color: root.colors.player.muted
             font.weight: Font.DemiBold
             Layout.fillWidth: true
