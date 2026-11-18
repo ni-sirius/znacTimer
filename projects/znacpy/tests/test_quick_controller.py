@@ -79,6 +79,42 @@ class QuickControllerTest(unittest.TestCase):
         self.assertTrue(all(entry.cw and entry.row_color for entry in resets[0]))
         self.assertEqual(states[0]["balance"], resets[0][-1].monthly_balance)
 
+    def test_state_cache_reuses_same_minute_and_publishes_fresh_values(self):
+        controller = self.controller
+        controller.primaryAction()
+        with patch.object(controller, "_build_state", wraps=controller._build_state) as build:
+            first = controller.state
+            first["months"].clear()
+            first["todayBadge"]["texts"].append("changed")
+            self.assertEqual(len(controller.state["months"]), 12)
+            self.assertNotIn("changed", controller.state["todayBadge"]["texts"])
+            self.assertEqual(build.call_count, 1)
+            self.now = self.now.replace(minute=15)
+            self.assertIn("00:15 worked", controller.state["workMessage"])
+            self.assertEqual(build.call_count, 2)
+
+            published = []
+            controller.changed.connect(lambda: published.append(controller.state))
+            controller.setTheme("dark")
+            self.assertTrue(published[-1]["dark"])
+            controller.saveWindowSettings(False, 1200, 700)
+            self.assertEqual(published[-1]["initialWidth"], 1200)
+            controller.editCell(16, 2, "07:30")
+            self.assertIn("00:45 worked", published[-1]["workMessage"])
+
+    def test_state_reads_live_progress_before_busy_notification(self):
+        states = []
+        controller = self.controller
+        _ = controller.state
+        controller.progressChanged.connect(lambda: states.append(controller.state))
+        controller._start_task("Cache check", lambda **_: None, None)
+        try:
+            self.assertTrue(states[0]["busy"])
+            self.assertEqual(states[0]["progress"]["title"], "Cache check")
+            self.wait_task()
+        finally:
+            controller.cancelTask()
+
     def test_edit_snapshot_rejects_reloaded_revision_and_allows_unchanged_day(self):
         self.controller.editCell(16, 2, "08:00")
         target = self.controller.beginCellEdit(16, 3)

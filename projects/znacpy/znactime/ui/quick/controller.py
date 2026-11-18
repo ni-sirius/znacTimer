@@ -3,6 +3,7 @@
 import calendar
 import os
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
 
@@ -65,6 +66,7 @@ class ApplicationController(QObject):
         self._pending = {}
         self._schedule_snapshot = None
         self._schedule_period = None
+        self._state_cache = None
         self._shutting_down = False
         self._tasks = TaskRunner(self)
         self._tasks.progressChanged.connect(self.progressChanged)
@@ -78,7 +80,8 @@ class ApplicationController(QObject):
         self._model.entryCommitted.connect(self._edit_committed)
         self._model.entryEdited.connect(self._offer_close)
         self._model.monthReloaded.connect(self._record_reloaded)
-        self._model.overtimeChanged.connect(lambda _: self.changed.emit())
+        self._model.modelReset.connect(self._invalidate_state)
+        self._model.overtimeChanged.connect(self._publish_state)
         self.load_month()
         self._timer = QTimer(self)
         self._timer.setInterval(60_000)
@@ -105,6 +108,26 @@ class ApplicationController(QObject):
     @Property("QVariantMap", notify=changed)
     def state(self):
         now = self._clock()
+        minute = (now.date(), now.hour, now.minute)
+        if self._state_cache is None or self._state_cache[0] != minute:
+            self._state_cache = minute, self._build_state(now)
+        state = self._state_cache[1].copy()
+        state["months"] = list(state["months"])
+        state["todayBadge"] = deepcopy(state["todayBadge"])
+        # Progress can change without a notification on state.
+        state.update(busy=self._tasks.busy, progress=self.progress)
+        return state
+
+    @Slot()
+    def _invalidate_state(self):
+        self._state_cache = None
+
+    @Slot()
+    def _publish_state(self):
+        self._invalidate_state()
+        self.changed.emit()
+
+    def _build_state(self, now):
         record = self._record
         closed = record is not None and record.status == "closed"
         today_entry = self._today_entry(now)
@@ -156,10 +179,10 @@ class ApplicationController(QObject):
             "colors": self._theme_colors["dark" if self.theme.is_dark() else "light"],
             "showExpectedEnd": self._show_expected_end,
             "initialWidth": width, "initialHeight": height, "fitHeight": fit,
-            "busy": self._tasks.busy, "progress": self.progress,
         }
 
     def _theme_changed(self, _mode):
+        self._invalidate_state()
         if hasattr(self, "_model"):
             self._model.refresh_theme()
         self.changed.emit()
@@ -180,7 +203,7 @@ class ApplicationController(QObject):
                 self._day_hours, record.status == "closed", self._show_expected_end,
             )
             self._model.load_calculated_month(record, self._clock().date())
-            self.changed.emit()
+            self._publish_state()
             self.monthLoaded.emit()
             return True
         except StorageError as error:
@@ -190,6 +213,7 @@ class ApplicationController(QObject):
     def _record_reloaded(self, record, *, notify=True):
         if (record.year, record.month) != (self.year, self.month):
             return
+        self._invalidate_state()
         self._record = record
         try:
             self._carry_discontinuity = self.repository.month_has_carry_discontinuity(self.year, self.month)
@@ -219,7 +243,7 @@ class ApplicationController(QObject):
         self.year, self.month = year, month
         if not self.load_month():
             self.year, self.month = previous
-            self.changed.emit()
+            self._publish_state()
 
     @Slot(int)
     def navigate(self, offset):
@@ -241,7 +265,7 @@ class ApplicationController(QObject):
             self.selectMonth(today.year, today.month)
         else:
             self._model.recalculate(today=today, autosave=False)
-            self.changed.emit()
+            self._publish_state()
 
     @Slot(int, int, str, result=bool)
     def editCell(self, row, column, value):
@@ -457,7 +481,7 @@ class ApplicationController(QObject):
         self.settings.setValue(INITIAL_WIDTH_KEY, max(800, min(3840, width)))
         self.settings.setValue(INITIAL_HEIGHT_KEY, max(500, min(2160, height)))
         self.settings.sync()
-        self.changed.emit()
+        self._publish_state()
 
     @Slot(result="QVariantMap")
     def scheduleSettings(self):

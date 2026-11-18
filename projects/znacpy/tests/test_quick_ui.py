@@ -687,7 +687,7 @@ class QuickUITest(unittest.TestCase):
             for unclosed in (False, True):
                 controller._record = replace(controller._record, opening_balance_minutes=-74040)
                 controller._previous_unclosed = unclosed
-                controller.changed.emit()
+                controller._publish_state()
                 QTest.qWait(30)
                 label = self.find("carryOverText")
                 self.assertFalse(label.property("truncated"), (width, unclosed))
