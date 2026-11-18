@@ -1100,6 +1100,8 @@ class QuickUITest(unittest.TestCase):
             self.assertGreaterEqual(top, -1)
             self.assertLessEqual(top + today.height(), table.height() + 1)
         table.setProperty("contentY", 350)
+        # Lay out the delegates after jumping directly to a scroll position.
+        self.invoke(table, "forceLayout")
         QTest.qWait(20)
         before = table.property("contentY")
         self.click(self.find("monthCell_12_2"))
@@ -1397,8 +1399,13 @@ class QuickUITest(unittest.TestCase):
                         self.assertNotEqual(image.pixelColor(x, y + pixels), colors[-1], context)
 
     def test_blank_inline_pause_is_ignored_on_enter_badge_and_button_click(self):
+        controller = self.window.controller
+        # Today must leave row zero visible so the test can inspect its delegate.
+        controller._clock = lambda: datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+        controller.selectMonth(2026, 11)
+        self.app.processEvents()
         notices = []
-        self.window.controller.notification.connect(lambda *args: notices.append(args))
+        controller.notification.connect(lambda *args: notices.append(args))
         for finish in ("enter", "badge", "button"):
             self.click(self.find("monthCell_0_4"))
             self.assertEqual(self.find("pauseStartEditor").property("text"), "")
