@@ -67,8 +67,6 @@ class TaskRunner(QObject):
         thread.started.connect(worker.run)
         worker.succeeded.connect(self._task_done)
         worker.failed.connect(self._task_failed)
-        worker.succeeded.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
         self._progress_timer.start()
         self.progressChanged.emit()
         self.busyChanged.emit()
@@ -84,6 +82,7 @@ class TaskRunner(QObject):
         # Publish the initial UI before starting storage work, as before the
         # extraction. Delaying affinity transfer also makes early shutdown safe.
         worker.moveToThread(thread)
+        thread.finished.connect(worker.deleteLater)
         thread.start()
         return True
 
@@ -109,9 +108,9 @@ class TaskRunner(QObject):
     def _finish_task(self):
         self._thread.quit()
         self._thread.wait()
+        self._worker = None
         self._stop_progress(flush=not self._shutting_down)
         self._busy = False
-        self._worker = None
         # Capture the old callback before observers can start another task.
         success, self._success = self._success, None
         self.busyChanged.emit()
@@ -119,12 +118,16 @@ class TaskRunner(QObject):
 
     @Slot(object)
     def _task_done(self, result):
+        if self._shutting_down:
+            return
         success = self._finish_task()
         if success and not self._shutting_down:
             success(result)
 
     @Slot(object)
     def _task_failed(self, error):
+        if self._shutting_down:
+            return
         self._finish_task()
         if not self._shutting_down:
             self.failed.emit(error)
@@ -139,6 +142,8 @@ class TaskRunner(QObject):
                 self.progressChanged.emit()
 
     def shutdown(self):
+        if self._shutting_down:
+            return
         self._shutting_down = True
         self._stop_progress(flush=False)
         self.cancel()
@@ -146,3 +151,5 @@ class TaskRunner(QObject):
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait()
+        self._worker = None
+        self._busy = False

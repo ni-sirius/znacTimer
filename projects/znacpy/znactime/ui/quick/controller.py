@@ -75,7 +75,7 @@ class ApplicationController(QObject):
         self._tasks.busyChanged.connect(self.changed)
         self._tasks.failed.connect(self._task_failed)
         self._day_hours, self._show_expected_end = load_work_schedule_settings(settings)
-        self.theme = ThemeController(settings=settings)
+        self.theme = ThemeController(settings=settings, parent=self)
         self._theme_colors = {name: _qml_colors(theme.colors) for name, theme in self.theme.themes.items()}
         self.theme.themeChanged.connect(self._theme_changed)
         self._model = QuickMonthModel(self, repository=repository, notify=self.notification.emit)
@@ -649,6 +649,8 @@ class ApplicationController(QObject):
         self._tasks.cancel()
 
     def shutdown(self):
+        if self._shutting_down:
+            return
         self._shutting_down = True
         self._timer.stop()
         self._pending.clear()

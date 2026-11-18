@@ -66,6 +66,7 @@ class TimeTrackerApp:
         if self.menu_access_keys.window is not None:
             self.menu_access_keys.window.removeEventFilter(self.menu_access_keys)
             self.menu_access_keys.window.removeEventFilter(self.focus_navigation)
+            self.menu_access_keys.window = None
         self.controller.shutdown()
         for window in self.engine.rootObjects():
             window.close()
@@ -74,3 +75,5 @@ class TimeTrackerApp:
         # bindings now, while the controller and its model are still alive.
         self.engine.deleteLater()
         QCoreApplication.sendPostedEvents(self.engine, QEvent.Type.DeferredDelete)
+        self.controller.deleteLater()
+        QCoreApplication.sendPostedEvents(self.controller, QEvent.Type.DeferredDelete)

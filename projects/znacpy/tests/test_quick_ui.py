@@ -299,11 +299,17 @@ class QuickUITest(unittest.TestCase):
 
     def test_shutdown_destroys_qml_with_an_open_editor_before_controller(self):
         self.invoke(self.find("cellEditorDialog"), "edit", 0, 4)
+        controller = self.window.controller
+        model, theme = controller.monthModel, controller.theme
+        disposal_order = []
+        self.window.engine.destroyed.connect(lambda: disposal_order.append(isValid(controller)))
         self.window.shutdown()
         self.assertFalse(isValid(self.window.window))
         self.assertFalse(isValid(self.window.engine))
-        self.assertTrue(isValid(self.window.controller))
-        self.assertTrue(isValid(self.window.controller.monthModel))
+        self.assertEqual(disposal_order, [True])
+        self.assertFalse(isValid(controller))
+        self.assertFalse(isValid(model))
+        self.assertFalse(isValid(theme))
         # Explicit shutdown and fixture cleanup can both dispose the same app.
         self.window.shutdown()
 
@@ -325,7 +331,7 @@ class QuickUITest(unittest.TestCase):
         self.assertFalse(isValid(self.window.window))
         self.assertFalse(isValid(self.window.engine))
         self.assertFalse(isValid(host))
-        self.assertTrue(isValid(self.window.controller))
+        self.assertFalse(isValid(self.window.controller))
 
     def test_dialogs_have_separate_movable_modal_windows_with_native_frames(self):
         for name in ("settingsDialog", "cellEditorDialog", "notificationDialog",

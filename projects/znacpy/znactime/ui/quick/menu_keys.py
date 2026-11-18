@@ -28,7 +28,7 @@ class MenuAccessKeys(QObject):
         self._navigation_active = active
         if not active:
             # Switching menus briefly closes one before opening the next.
-            QTimer.singleShot(0, self._navigation_ended)
+            QTimer.singleShot(0, self, self._navigation_ended)
 
     def _navigation_ended(self):
         if not self._navigation_active:
@@ -58,7 +58,7 @@ class MenuAccessKeys(QObject):
         elif event_type == QEvent.KeyRelease:
             if event.key() == Qt.Key_Alt and not event.isAutoRepeat():
                 self._alt_pressed = False
-            QTimer.singleShot(0, self._sync)
+            QTimer.singleShot(0, self, self._sync)
         elif event_type in (QEvent.MouseButtonPress, QEvent.TouchBegin,
                             QEvent.WindowDeactivate, QEvent.Hide):
             self._alt_pressed = False

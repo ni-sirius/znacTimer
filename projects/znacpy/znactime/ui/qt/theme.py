@@ -22,8 +22,8 @@ VALID_THEMES = {SYSTEM_THEME, LIGHT_THEME, DARK_THEME}
 class ThemeController(QObject):
     themeChanged = Signal(str)
 
-    def __init__(self, app=None, settings=None):
-        super().__init__()
+    def __init__(self, app=None, settings=None, *, parent=None):
+        super().__init__(parent)
         self.app = app or QApplication.instance()
         self.settings = settings if settings is not None else QSettings(
             APP_NAME,

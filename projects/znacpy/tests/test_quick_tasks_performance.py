@@ -12,10 +12,11 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QSettings
+from PySide6.QtCore import QObject, QSettings
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
 from znactime.storage.legacy_csv_import import LegacyImportCancelled
 from znactime.storage.sqlite.repository import SQLiteRepository
@@ -73,11 +74,6 @@ class QuickTaskProgressTest(unittest.TestCase):
         self.owner.shutdown()
         self.app.processEvents()
         self.repository.close()
-        # Dispose this fixture's remaining QObjects; production ownership is
-        # deliberately unchanged by the task-notification change.
-        self.controller.theme.deleteLater()
-        self.controller.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         self.temporary.cleanup()
         self.assertEqual(self.owner.errors, [], "QML emitted runtime warnings")
 
@@ -382,7 +378,7 @@ class QuickTaskProgressTest(unittest.TestCase):
         finish.set()
         self.wait_until(lambda: not self.controller.state["busy"])
 
-    def test_shutdown_discards_progress_and_rejects_new_tasks(self):
+    def test_shutdown_discards_progress_and_disposes_running_task(self):
         reporters, successes = [], []
 
         def task(*, progress, cancelled):
@@ -394,13 +390,12 @@ class QuickTaskProgressTest(unittest.TestCase):
 
         self.controller._start_task("Shutdown check", task, successes.append)
         self.wait_until(lambda: self.bar.property("value") == 1)
+        runner = self.controller._tasks
+        timer, thread = runner._progress_timer, runner._thread
         self.owner.shutdown()
-        expected = dict(self.controller.progress)
         reporters[0]("After shutdown", 999, 1000)
         self.app.processEvents()
-        self.assertEqual(self.controller.progress, expected)
-        self.assertFalse(self.controller._tasks._progress_timer.isActive())
-        self.controller._start_task("Must not restart", lambda **_: "unexpected", successes.append)
-        self.settle()
-        self.assertFalse(self.controller.state["busy"])
+        self.assertFalse(isValid(runner))
+        self.assertFalse(isValid(timer))
+        self.assertFalse(isValid(thread))
         self.assertEqual(successes, [])
