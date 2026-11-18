@@ -9,6 +9,11 @@ Dialog {
     signal copyRequested(string text)
     property bool copyMessageEnabled: false
     property string copyMessageText: ""
+    property real preferredWidth: implicitWidth
+    property real preferredHeight: implicitHeight
+    property rect clientArea: Qt.rect(0, 0, 16777215, 16777215)
+    readonly property var screenMetrics: [host.screen, host.Screen.devicePixelRatio,
+                                          host.Screen.desktopAvailableWidth, host.Screen.desktopAvailableHeight]
     property int defaultStandardButton: standardButtons & Dialog.No ? Dialog.No
                                         : standardButtons & Dialog.Ok ? Dialog.Ok
                                         : standardButtons & Dialog.Save ? Dialog.Save
@@ -17,7 +22,8 @@ Dialog {
     parent: host.contentItem
     popupType: Popup.Item
     x: 0; y: 0
-    height: implicitHeight
+    width: Math.min(preferredWidth, clientArea.width)
+    height: Math.min(preferredHeight, clientArea.height)
     modal: true
     focus: true
     closePolicy: Popup.CloseOnEscape
@@ -59,37 +65,41 @@ Dialog {
         }
     }
 
-    function syncHostSize() {
+    function layoutHost(centre) {
+        clientArea = ownerWindow.controller.dialogClientArea(host)
+        const clientWidth = Math.ceil(dialog.width)
+        const clientHeight = Math.ceil(dialog.height)
         // Release the old limits before resizing. Updating live fixed-size
         // bindings separately makes Windows reject intermediate geometries.
-        host.minimumWidth = 0
-        host.minimumHeight = 0
-        host.maximumWidth = 16777215
-        host.maximumHeight = 16777215
-        host.width = Math.ceil(dialog.width)
-        host.height = Math.ceil(dialog.height)
-        host.minimumWidth = host.width
-        host.minimumHeight = host.height
-        host.maximumWidth = host.width
-        host.maximumHeight = host.height
+        if (host.minimumWidth !== clientWidth || host.minimumHeight !== clientHeight) {
+            host.minimumWidth = 0
+            host.minimumHeight = 0
+            host.maximumWidth = 16777215
+            host.maximumHeight = 16777215
+            host.width = clientWidth
+            host.height = clientHeight
+            host.minimumWidth = clientWidth
+            host.minimumHeight = clientHeight
+            host.maximumWidth = clientWidth
+            host.maximumHeight = clientHeight
+        }
+        const x = centre ? ownerWindow.x + (ownerWindow.width - clientWidth) / 2 : host.x
+        const y = centre ? ownerWindow.y + (ownerWindow.height - clientHeight) / 2 : host.y
+        host.x = Math.round(Math.max(clientArea.x, Math.min(x, clientArea.x + clientArea.width - clientWidth)))
+        host.y = Math.round(Math.max(clientArea.y, Math.min(y, clientArea.y + clientArea.height - clientHeight)))
     }
-    onWidthChanged: Qt.callLater(syncHostSize)
-    onHeightChanged: Qt.callLater(syncHostSize)
+    function updateVisibleHost() {
+        if (host.visible) layoutHost(false)
+    }
+    onWidthChanged: Qt.callLater(updateVisibleHost)
+    onHeightChanged: Qt.callLater(updateVisibleHost)
+    onScreenMetricsChanged: Qt.callLater(updateVisibleHost)
 
     onAboutToShow: {
         // Content and footer share this popup item. Focused controls get the
         // first chance to handle a key before it reaches the dialog fallback.
         if (contentItem && contentItem.parent) contentItem.parent.Keys.forwardTo = [keyboardHandler]
-        syncHostSize()
-        // Position once per opening so moving the dialog or its owner does not
-        // snap the dialog back to the centre.
-        let screen = ownerWindow.screen
-        let centredX = ownerWindow.x + (ownerWindow.width - host.width) / 2
-        let centredY = ownerWindow.y + (ownerWindow.height - host.height) / 2
-        host.x = Math.round(Math.max(screen.virtualX + 8,
-                                    Math.min(centredX, screen.virtualX + screen.width - host.width - 8)))
-        host.y = Math.round(Math.max(screen.virtualY + 32,
-                                    Math.min(centredY, screen.virtualY + screen.height - host.height - 32)))
+        layoutHost(true)
     }
 
     ApplicationWindow {
@@ -106,6 +116,12 @@ Dialog {
         palette: dialog.palette
         font: dialog.font
         color: palette.window
+        onVisibleChanged: {
+            if (visible) {
+                requestActivate()
+                Qt.callLater(dialog.updateVisibleHost)
+            }
+        }
         onClosing: function(event) {
             // Keep the reusable host alive and route the native X through the
             // same rejection path as Cancel and Escape.

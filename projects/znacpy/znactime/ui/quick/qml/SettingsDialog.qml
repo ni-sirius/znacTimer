@@ -11,8 +11,8 @@ AppDialog {
     objectName: "settingsDialog"
     title: kind === 0 ? "Appearance" : "Work schedule"
     modal: true
-    width: Math.min(kind === 0 ? 560 : 660, ownerWindow.width - 32)
-    height: Math.min(kind === 0 ? 460 : 640, ownerWindow.height - 32)
+    preferredWidth: Math.min(kind === 0 ? 560 : 660, ownerWindow.width - 32)
+    preferredHeight: Math.min(kind === 0 ? 460 : 640, ownerWindow.height - 32)
     standardButtons: Dialog.Save | Dialog.Cancel
     background: Rectangle { color: dialog.ui.colors.header.surface; border.color: dialog.ui.colors.header.border; radius: 12 }
     footer: DialogButtonBox {

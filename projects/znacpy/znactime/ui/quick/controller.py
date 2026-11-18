@@ -7,8 +7,8 @@ from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QObject, Property, QTimer, QUrl, Qt, Signal, Slot
-from PySide6.QtGui import QGuiApplication, QKeySequence
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QMargins, QObject, Property, QRect, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtGui import QGuiApplication, QKeySequence, QWindow
 
 from znactime.config import APP_NAME, VERSION
 from znactime.core.calendar_utils import build_calendar_week_text
@@ -323,6 +323,15 @@ class ApplicationController(QObject):
     @Slot(int, int, float, result="QVariantMap")
     def tableLayout(self, width, height, pixel_ratio):
         return month_layout(self._model, width, height, pixel_ratio)
+
+    @Slot(QWindow, result=QRect)
+    def dialogClientArea(self, window):
+        screen = window.screen() or QGuiApplication.primaryScreen()
+        margins = window.frameMargins()
+        if margins.isNull():
+            # Reserve room for the frame until the native window is shown.
+            margins = QMargins(8, 40, 8, 8)
+        return screen.availableGeometry().marginsRemoved(margins)
 
     @Slot(int, int, int, int)
     def copyCells(self, first_row, first_column, last_row, last_column):

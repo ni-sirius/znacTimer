@@ -1132,6 +1132,51 @@ class QuickUITest(unittest.TestCase):
         self.invoke(dialog, "accept")
         self.assertEqual(self.window.controller.cellValue(0, 4), "12:00-12:30;14:00-14:15")
 
+    def test_long_interruption_forms_keep_focused_controls_and_footer_reachable(self):
+        controller = self.window.controller
+        window = self.window.window
+        available = window.screen().availableGeometry()
+        window.resize(800, 500)
+        window.setPosition(max(available.x(), available.right() - window.width()),
+                           max(available.y(), available.bottom() - window.height()))
+        self.assertTrue(controller.editCell(0, 2, "08:00"))
+        dialog = self.find("cellEditorDialog")
+        host = self.dialog_window(dialog)
+
+        def time_text(minute):
+            return f"{minute // 60:02d}:{minute % 60:02d}"
+
+        for count in (6, 20, 50):
+            with self.subTest(periods=count):
+                periods = [f"{time_text(540 + 6 * i)}-{time_text(543 + 6 * i)}" for i in range(count)]
+                self.assertTrue(controller.editCell(0, 4, ";".join(periods)))
+                self.invoke(dialog, "edit", 0, 4)
+                self.assertTrue(QTest.qWaitForWindowActive(host))
+                QTest.qWait(60)
+                self.assertTrue(host.screen().availableGeometry().contains(host.frameGeometry()),
+                                (host.frameGeometry(), host.screen().availableGeometry()))
+                viewport = self.find("interruptionViewport")
+                last = self.find(f"pauseStart_{count - 1}")
+                last.forceActiveFocus()
+                self.app.processEvents()
+                y = last.mapToItem(viewport, QPointF()).y()
+                self.assertGreaterEqual(y, -1)
+                self.assertLessEqual(y + last.height(), viewport.height() + 1)
+                if count == 50:
+                    self.assertGreater(viewport.property("contentY"), 0)
+                footer = dialog.property("footer")
+                buttons = {item.property("text"): item for item in footer.findChildren(QObject)
+                           if item.inherits("QQuickAbstractButton")}
+                for name in ("Save", "Cancel"):
+                    button = buttons[name]
+                    top = button.mapToScene(QPointF()).y()
+                    self.assertGreaterEqual(top, 0)
+                    self.assertLessEqual(top + button.height(), host.height())
+                self.invoke(self.find(f"removePausePeriod_{count - 1}"), "clicked")
+                self.click(buttons["Save"], window=host)
+                self.assertFalse(host.isVisible())
+                self.assertEqual(controller.cellValue(0, 4), ";".join(periods[:-1]))
+
     def test_special_day_dialog_and_settings_are_qml(self):
         editor = self.find("cellEditorDialog")
         self.invoke(editor, "edit", 0, 1)

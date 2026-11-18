@@ -226,7 +226,7 @@ ApplicationWindow {
         copyMessageEnabled: true
         copyMessageText: message
         onCopyRequested: function(text) { window.controller.copyText(text) }
-        width: Math.min(590, window.width - 32)
+        preferredWidth: Math.min(590, window.width - 32)
         modal: true
         standardButtons: Dialog.Ok
         footer: DialogButtonBox {
@@ -259,7 +259,7 @@ ApplicationWindow {
         copyMessageEnabled: true
         copyMessageText: message
         onCopyRequested: function(text) { window.controller.copyText(text) }
-        width: Math.min(610, window.width - 32)
+        preferredWidth: Math.min(610, window.width - 32)
         modal: true
         standardButtons: Dialog.Yes | Dialog.No
         footer: DialogButtonBox {
@@ -280,7 +280,7 @@ ApplicationWindow {
         id: taskDialog
         objectName: "taskProgressDialog"
         ownerWindow: window
-        width: Math.min(500, window.width - 32)
+        preferredWidth: Math.min(500, window.width - 32)
         title: window.controller.progress.title
         modal: true
         closePolicy: Popup.NoAutoClose
@@ -305,7 +305,7 @@ ApplicationWindow {
         copyMessageText: "znacTime " + window.ui.version + "\n\nTrack workdays, interruptions, and overtime.\n\nLicense: MIT\nBuilt with PySide6 / Qt Quick — LGPL v3\n\nznac.org\nznacompany@gmail.com"
         onCopyRequested: function(text) { window.controller.copyText(text) }
         onOpened: standardButton(Dialog.Ok).forceActiveFocus()
-        width: Math.min(430, window.width - 32)
+        preferredWidth: Math.min(430, window.width - 32)
         modal: true
         standardButtons: Dialog.Ok
         footer: DialogButtonBox {
