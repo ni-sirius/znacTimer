@@ -18,6 +18,60 @@ from znactime.ui.qt.color_scheme import theme_color
 _asset_directory = None
 
 
+@lru_cache(maxsize=10)
+def themed_workday_icon(action: str, dark: bool):
+    icon = QIcon()
+    for mode in (QIcon.Mode.Normal, QIcon.Mode.Disabled):
+        color_property = (
+            "player.disabled_text" if mode == QIcon.Mode.Disabled
+            else "player.text" if action == "stop"
+            else "on_primary"
+        )
+        color = QColor(theme_color(color_property, dark=dark))
+        pixmap = QPixmap(40, 40)
+        pixmap.setDevicePixelRatio(2)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+
+        if action in ("start", "resume"):
+            triangle = QPainterPath()
+            left = 8 if action == "resume" else 6
+            triangle.moveTo(left, 4)
+            triangle.lineTo(16, 10)
+            triangle.lineTo(left, 16)
+            triangle.closeSubpath()
+            painter.drawPath(triangle)
+            if action == "resume":
+                painter.drawRoundedRect(QRectF(3, 4, 2.5, 12), 0.7, 0.7)
+        elif action == "pause":
+            for left in (5, 12):
+                painter.drawRoundedRect(QRectF(left, 4, 3, 12), 0.7, 0.7)
+        elif action == "stop":
+            painter.drawRoundedRect(QRectF(4.5, 4.5, 11, 11), 1, 1)
+        elif action == "reopen":
+            pen = QPen(color)
+            pen.setWidthF(1.8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            arrow = QPainterPath()
+            arrow.moveTo(4, 8)
+            arrow.cubicTo(5, 1, 17, 2, 17, 10)
+            arrow.cubicTo(17, 18, 7, 19, 4, 14)
+            arrow.moveTo(4, 3)
+            arrow.lineTo(4, 8)
+            arrow.lineTo(9, 8)
+            painter.drawPath(arrow)
+
+        painter.end()
+        icon.addPixmap(pixmap, mode)
+    return icon
+
+
 @lru_cache(maxsize=4)
 def themed_lock_icon(dark: bool, *, closed: bool):
     pixmap = QPixmap(40, 40)

@@ -1,6 +1,8 @@
 import os
+import tempfile
 import unittest
 from datetime import date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -9,7 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from znactime.ui.table_schema import Column
 from znactime.core.models import DayEntry
 from znactime.storage.atomic_file import sqlite_protected_paths
-from znactime.ui.qt import QApplication, QMessageBox, Qt
+from znactime.storage.sqlite.repository import SQLiteRepository
+from znactime.ui.qt import QApplication, QMessageBox, QPalette, QSettings, Qt
 from znactime.ui.qt.app import TimeTrackerApp
 from znactime.ui.qt.player import WorkdayBar, _elapsed_text
 from znactime.ui.qt.table import TableWidget
@@ -36,12 +39,64 @@ class WorkdayBarTest(unittest.TestCase):
         self.assertEqual(bar.primary_button.text(), "Resume")
 
         bar.set_state("complete", start="08:00", end="17:00")
-        self.assertFalse(bar.primary_button.isEnabled())
+        self.assertEqual(bar.primary_button.text(), "Reopen day")
+        self.assertTrue(bar.primary_button.isEnabled())
         self.assertFalse(bar.stop_button.isEnabled())
 
         bar.set_state("unavailable", message="Time data already filled")
         self.assertFalse(bar.primary_button.isEnabled())
         self.assertFalse(bar.stop_button.isEnabled())
+
+    def test_stop_resume_stop_persists_end_and_preserves_start_and_breaks(self):
+        work_date = date(2024, 6, 17)
+        palette = QPalette(self.app.palette())
+        self.addCleanup(self.app.setPalette, palette)
+        for interruption in ("00:45", "12:00-12:30;14:00-14:15"):
+            with self.subTest(interruption=interruption), tempfile.TemporaryDirectory() as directory:
+                now = datetime(2024, 6, 17, 17, 0).astimezone()
+                repository = SQLiteRepository.create(Path(directory) / "app.db")
+                window = None
+                try:
+                    repository.start_workday(work_date, 480, now)
+                    settings = QSettings(
+                        str(Path(directory) / "settings.ini"), QSettings.Format.IniFormat
+                    )
+                    with patch("znactime.ui.qt.app.datetime", wraps=datetime) as clock:
+                        clock.now.return_value = now
+                        clock.today.return_value = now
+                        window = TimeTrackerApp(repository=repository, settings=settings)
+                        window.table.update_entry_for_date(
+                            "17.06.2024", interruption=interruption
+                        )
+                        window.workday_bar.stop_button.click()
+                        stopped = repository.load_month(2024, 6).days[16]
+                        self.assertEqual(stopped.end_minute, 1020)
+                        self.assertTrue(window.workday_bar.primary_button.isEnabled())
+
+                        for _ in range(2):
+                            window.workday_bar.primary_button.click()
+                            resumed = repository.load_month(2024, 6).days[16]
+                            self.assertIsNone(resumed.end_minute)
+                            self.assertEqual(resumed.start_minute, stopped.start_minute)
+                            self.assertEqual(resumed.breaks, stopped.breaks)
+                            self.assertEqual(
+                                resumed.break_duration_minutes, stopped.break_duration_minutes
+                            )
+                            self.assertEqual(window._today_entry().end, "--:--")
+                            self.assertEqual(window.workday_bar.primary_button.text(), "Pause")
+                            self.assertTrue(window.workday_bar.stop_button.isEnabled())
+
+                            now = now.replace(hour=now.hour + 1)
+                            clock.now.return_value = now
+                            clock.today.return_value = now
+                            window.workday_bar.stop_button.click()
+                            stopped = repository.load_month(2024, 6).days[16]
+                            self.assertEqual(stopped.end_minute, now.hour * 60)
+                            self.assertEqual(window._today_entry().end, now.strftime("%H:%M"))
+                finally:
+                    if window is not None:
+                        window.close()
+                    repository.close()
 
     def test_working_timer_subtracts_duration_and_multiple_pause_periods(self):
         now = datetime(2024, 6, 17, 15, 0)
@@ -240,7 +295,7 @@ class WorkdayBarTest(unittest.TestCase):
 
     @patch("znactime.ui.qt.app.QMessageBox.warning")
     @patch("znactime.ui.qt.app.datetime")
-    def test_stop_workday_rejects_same_start_and_end_time(
+    def test_stop_workday_cancels_same_start_and_end_time(
         self,
         mock_datetime,
         warning,
@@ -271,9 +326,70 @@ class WorkdayBarTest(unittest.TestCase):
 
         TimeTrackerApp.stop_workday(fake_app)
 
-        fake_app.table.update_entry_for_date.assert_not_called()
-        fake_app.refresh_workday_bar.assert_not_called()
-        warning.assert_called_once()
+        fake_app.table.update_entry_for_date.assert_called_once_with(
+            "17.06.2024", start="--:--", end="--:--", interruption="00:00"
+        )
+        fake_app.refresh_workday_bar.assert_called_once_with(now)
+        warning.assert_not_called()
+
+    def test_same_minute_stop_cancels_start_and_confirms_pause_deletion(self):
+        now = datetime(2024, 6, 17, 8, 0).astimezone()
+        palette = QPalette(self.app.palette())
+        self.addCleanup(self.app.setPalette, palette)
+        for paused in (False, True):
+            with self.subTest(paused=paused), tempfile.TemporaryDirectory() as directory:
+                repository = SQLiteRepository.create(Path(directory) / "app.db")
+                window = None
+                try:
+                    settings = QSettings(
+                        str(Path(directory) / "settings.ini"), QSettings.Format.IniFormat
+                    )
+                    with (
+                        patch("znactime.ui.qt.app.datetime", wraps=datetime) as clock,
+                        patch.object(QMessageBox, "question") as question,
+                        patch.object(QMessageBox, "warning") as warning,
+                    ):
+                        clock.now.return_value = now
+                        clock.today.return_value = now
+                        window = TimeTrackerApp(repository=repository, settings=settings)
+                        window.workday_bar.primary_button.click()
+                        if paused:
+                            window.workday_bar.primary_button.click()
+                            before = repository.load_month(2024, 6).days[16]
+                            self.assertEqual(len(before.breaks), 1)
+                            self.assertIsNone(before.breaks[0].end_minute)
+                            question.return_value = QMessageBox.StandardButton.No
+                            window.workday_bar.stop_button.click()
+                            self.assertEqual(repository.load_month(2024, 6).days[16], before)
+                            self.assertEqual(window.workday_bar.primary_button.text(), "Resume")
+                            question.assert_called_once()
+                            self.assertEqual(question.call_args.args[-1], QMessageBox.StandardButton.No)
+                            question.return_value = QMessageBox.StandardButton.Yes
+
+                        window.workday_bar.stop_button.click()
+                        cancelled = repository.load_month(2024, 6).days[16]
+                        self.assertIsNone(cancelled.start_minute)
+                        self.assertIsNone(cancelled.end_minute)
+                        self.assertEqual(cancelled.breaks, ())
+                        self.assertEqual(cancelled.break_duration_minutes, 0)
+                        self.assertEqual(cancelled.special_day, "Normal day")
+                        self.assertEqual(window._today_entry().start, "--:--")
+                        self.assertEqual(window._today_entry().interruption, "00:00")
+                        self.assertEqual(window.workday_bar.primary_button.text(), "Start day")
+                        self.assertFalse(window.workday_bar.stop_button.isEnabled())
+                        warning.assert_not_called()
+                        if not paused:
+                            question.assert_not_called()
+
+                        window.workday_bar.primary_button.click()
+                        restarted = repository.load_month(2024, 6).days[16]
+                        self.assertEqual(restarted.start_minute, 480)
+                        self.assertIsNone(restarted.end_minute)
+                        self.assertEqual(restarted.breaks, ())
+                finally:
+                    if window is not None:
+                        window.close()
+                    repository.close()
 
     @patch("znactime.ui.qt.app.datetime")
     @patch("znactime.ui.qt.app.QMessageBox.question")
