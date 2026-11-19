@@ -167,6 +167,7 @@ Rectangle {
         border.color: cell.tableContext.colors.primary
     }
     TableView.editDelegate: CellEditor {
+        controller: cell.tableContext.controller
         session: cell.tableContext.editSession
         colors: cell.tableContext.colors
         appearance: cell.cellBadge

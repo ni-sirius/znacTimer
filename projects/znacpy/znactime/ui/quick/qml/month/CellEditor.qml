@@ -3,6 +3,7 @@ import ".."
 
 Loader {
     id: cellEditorLoader
+    required property var controller
     required property var session
     required property var colors
     required property var appearance
@@ -48,6 +49,7 @@ Loader {
         id: lineEditor
         ClockTextField {
             objectName: cellEditorLoader.columnIndex === 1 ? "specialCellEditor" : "timeCellEditor"
+            controller: cellEditorLoader.controller
             timeOnly: cellEditorLoader.columnIndex !== 1
             Component.onCompleted: text = cellEditorLoader.initialValue
             selectByMouse: true
@@ -58,12 +60,13 @@ Loader {
             background: Rectangle { radius: 6; color: cellEditorLoader.appearance.fillColor || cellEditorLoader.colors.table.empty_fill; border.color: cellEditorLoader.colors.primary; border.width: 2 }
             Accessible.name: cellEditorLoader.columnIndex === 1 ? "Special day" : cellEditorLoader.columnIndex === 2 ? "Start time" : "End time"
             function focusStart() { forceActiveFocus(); selectAll() }
-            function save() { cellEditorLoader.valueCommitted(text) }
+            function save() { cellEditorLoader.valueCommitted(enteredText) }
         }
     }
     Component {
         id: periodEditor
         InlineInterruptionEditor {
+            controller: cellEditorLoader.controller
             colors: cellEditorLoader.colors
             value: cellEditorLoader.editValue
             target: cellEditorLoader.interruptionTarget

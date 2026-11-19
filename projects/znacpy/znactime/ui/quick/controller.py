@@ -364,6 +364,10 @@ class ApplicationController(QObject):
     def copyText(self, text):
         QGuiApplication.clipboard().setText(text)
 
+    @Slot(result=str)
+    def clipboardText(self):
+        return QGuiApplication.clipboard().text()
+
     @Slot(int, int, result=bool)
     def pasteCells(self, first_row, first_column):
         if self._tasks.busy or self._model.month_closed:

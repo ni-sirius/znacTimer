@@ -224,7 +224,7 @@ class QuickUITest(unittest.TestCase):
         row = self.prepare_navigation_day()
         self.click(self.find(f"monthCell_{row}_2"))
         editor = self.window.window.activeFocusItem()
-        editor.setProperty("cursorPosition", 2)
+        editor.setProperty("cursorPosition", 3)
         QTest.keyClick(self.window.window, Qt.Key_Left)
         self.app.processEvents()
         self.assertEqual(editor.property("cursorPosition"), 1)
@@ -893,6 +893,62 @@ class QuickUITest(unittest.TestCase):
         QTest.keyClick(self.window.window, Qt.Key_Return)
         self.assertEqual(self.window.controller.cellValue(0, 2), "09:42")
 
+    def test_inline_clock_mask_protects_separator_and_allows_clearing(self):
+        row = self.prepare_navigation_day()
+        controller = self.window.controller
+        controller.editCell(row, 3, "17:30")
+        badge = self.find(f"tableBadge_{row}_3")
+        for key, position in ((Qt.Key_Delete, 2), (Qt.Key_Backspace, 3)):
+            self.click(badge)
+            field = self.window.window.activeFocusItem()
+            self.assertEqual(field.property("displayText"), "17:30")
+            field.setProperty("cursorPosition", position)
+            QTest.keyClick(self.window.window, key)
+            self.assertEqual(field.property("displayText")[2], ":")
+            QTest.keyClick(self.window.window, Qt.Key_Escape)
+
+        self.click(badge)
+        field = self.window.window.activeFocusItem()
+        QTest.keyClick(self.window.window, Qt.Key_A, Qt.ControlModifier)
+        QTest.keyClick(self.window.window, Qt.Key_Backspace)
+        self.assertEqual(field.property("displayText"), "__:__")
+        self.assertEqual(field.property("enteredText"), "")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertEqual(controller.cellValue(row, 3), "--:--")
+
+    def test_inline_clock_mask_preserves_compact_time_entry(self):
+        row = self.prepare_navigation_day()
+        for keys, display, expected in (
+            ("10", ("__:_1", "__:10"), "00:10"),
+            ("830", ("__:_8", "__:83", "_8:30"), "08:30"),
+            ("1030", ("__:_1", "__:10", "_1:03", "10:30"), "10:30"),
+        ):
+            with self.subTest(keys=keys):
+                self.click(self.find(f"tableBadge_{row}_2"))
+                field = self.window.window.activeFocusItem()
+                for digit, shown in zip(keys, display):
+                    self.type_text(digit)
+                    self.assertEqual(field.property("displayText"), shown)
+                QTest.keyClick(self.window.window, Qt.Key_Return)
+                self.assertEqual(self.window.controller.cellValue(row, 2), expected)
+
+        self.click(self.find(f"tableBadge_{row}_2"))
+        field = self.window.window.activeFocusItem()
+        self.type_text("10")
+        QTest.keyClick(self.window.window, Qt.Key_Backspace)
+        self.assertEqual(field.property("displayText"), "__:_1")
+        QTest.keyClick(self.window.window, Qt.Key_Backspace)
+        self.assertEqual(field.property("displayText"), "__:__")
+        QTest.keyClick(self.window.window, Qt.Key_Escape)
+
+        self.click(self.find(f"tableBadge_{row}_2"))
+        field = self.window.window.activeFocusItem()
+        field.setProperty("cursorPosition", 3)
+        self.type_text("4")
+        self.assertEqual(field.property("displayText"), "10:40")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertEqual(self.window.controller.cellValue(row, 2), "10:40")
+
     def test_time_editors_keep_the_badge_bounds_and_text_color(self):
         row = self.prepare_navigation_day()
         controller = self.window.controller
@@ -917,9 +973,14 @@ class QuickUITest(unittest.TestCase):
                         QTest.keyClick(self.window.window, Qt.Key_Escape)
 
     def test_clock_fields_filter_characters_and_invalid_paste(self):
-        self.click(self.find("monthCell_0_2"))
-        self.type_text("ab08:3x0 -.;/+")
+        row = self.prepare_navigation_day()
+        self.click(self.find(f"monthCell_{row}_2"))
         field = self.window.window.activeFocusItem()
+        previous = field.property("displayText")
+        self.type_text("ab")
+        self.assertEqual(field.property("displayText"), previous)
+        self.assertEqual(field.property("selectedText"), previous)
+        self.type_text("08:3x0 -.;/+")
         self.assertEqual(field.property("text"), "08:30")
         QTest.keyClick(self.window.window, Qt.Key_A, Qt.ControlModifier)
         self.app.clipboard().setText("09:45am")
@@ -929,8 +990,17 @@ class QuickUITest(unittest.TestCase):
         QTest.keyClick(self.window.window, Qt.Key_V, Qt.ControlModifier)
         self.assertEqual(field.property("text"), "09:45")
         QTest.keyClick(self.window.window, Qt.Key_Return)
-        self.window.controller.editCell(0, 4, "12:00-12:30")
-        self.invoke(self.find("monthTableSurface"), "editInterruption", 0, {"action": "edit", "period_index": 0})
+        self.click(self.find(f"monthCell_{row}_2"))
+        field = self.window.window.activeFocusItem()
+        self.app.clipboard().setText("10")
+        QTest.keyClick(self.window.window, Qt.Key_V, Qt.ControlModifier)
+        self.assertEqual(field.property("displayText"), "__:10")
+        QTest.keyClick(self.window.window, Qt.Key_Return)
+        self.assertEqual(self.window.controller.cellValue(row, 2), "00:10")
+        self.window.controller.editCell(row, 4, "12:00-12:30")
+        self.invoke(self.find("monthTableSurface"), "editInterruption", row, {"action": "edit", "period_index": 0})
+        self.assertEqual(self.find("pauseStartEditor").property("displayText"), "12:00")
+        self.assertEqual(self.find("pauseEndEditor").property("displayText"), "12:30")
         self.type_text("a12:1x5")
         self.assertEqual(self.find("pauseStartEditor").property("text"), "12:15")
         QTest.keyClick(self.window.window, Qt.Key_Tab)
@@ -1422,27 +1492,26 @@ class QuickUITest(unittest.TestCase):
                         self.assertNotEqual(image.pixelColor(x, y + pixels), colors[-1], context)
 
     def test_blank_inline_pause_is_ignored_on_enter_badge_and_button_click(self):
+        row = self.prepare_navigation_day(working=False)
         controller = self.window.controller
-        # Today must leave row zero visible so the test can inspect its delegate.
-        controller._clock = lambda: datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
-        controller.selectMonth(2026, 11)
-        self.app.processEvents()
         notices = []
         controller.notification.connect(lambda *args: notices.append(args))
         for finish in ("enter", "badge", "button"):
-            self.click(self.find("monthCell_0_4"))
-            self.assertEqual(self.find("pauseStartEditor").property("text"), "")
-            self.assertEqual(self.find("pauseEndEditor").property("text"), "")
+            self.click(self.find(f"monthCell_{row}_4"))
+            for name in ("pauseStartEditor", "pauseEndEditor"):
+                field = self.find(name)
+                self.assertEqual(field.property("displayText"), "__:__")
+                self.assertEqual(field.property("enteredText"), "")
             if finish == "enter":
                 QTest.keyClick(self.window.window, Qt.Key_Return)
             elif finish == "badge":
-                self.click(self.find("monthCell_0_2"))
-                self.assertFalse(self.find("monthCell_0_2").property("editing"))
+                self.click(self.find(f"monthCell_{row}_2"))
+                self.assertFalse(self.find(f"monthCell_{row}_2").property("editing"))
             else:
                 self.click(self.find("todayButton"))
             self.app.processEvents()
             self.assertEqual(notices, [])
-            self.assertFalse(self.find("monthCell_0_4").property("editing"))
+            self.assertFalse(self.find(f"monthCell_{row}_4").property("editing"))
             state = self.window.controller.state
             self.assertIsNone(self.repo.load_month(state["year"], state["month"]))
 

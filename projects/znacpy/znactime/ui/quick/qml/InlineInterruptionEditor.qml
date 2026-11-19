@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 FocusScope {
     id: editor
+    required property var controller
     required property var colors
     required property string value
     required property var target
@@ -23,14 +24,16 @@ FocusScope {
     }
     function typeStart(value) { start.typeStart(value) }
     function resolvedValue() {
-        if (!removed && start.text.trim() === "" && end.text.trim() === "") return null
+        const startTime = start.enteredText
+        const endTime = end.enteredText
+        if (!removed && startTime === "" && endTime === "") return null
         let parts = value.indexOf("-") >= 0 ? value.split(";") : []
         let index = target.period_index
         if (removed) {
             if (target.action === "edit" && index >= 0 && index < parts.length) parts.splice(index, 1)
             else if (target.action === "replace") parts = []
         } else {
-            let period = start.text.trim() + "-" + (end.text.trim() || "...")
+            let period = startTime + "-" + (endTime || "...")
             if (target.action === "edit" && index >= 0 && index < parts.length) parts[index] = period
             else if (target.action === "add") parts.push(period)
             else parts = [period]
@@ -54,11 +57,11 @@ FocusScope {
         spacing: 2
         ClockTextField {
             id: start
+            controller: editor.controller
             objectName: "pauseStartEditor"
             Layout.fillWidth: true
             Layout.preferredWidth: editor.fieldWidth
             Layout.fillHeight: true
-            placeholderText: "Start"
             selectByMouse: true
             font.pointSize: 10; font.bold: true
             color: editor.colors.table.interval_text
@@ -71,11 +74,11 @@ FocusScope {
         Label { text: "-"; color: editor.colors.table.interval_separator; font.bold: true }
         ClockTextField {
             id: end
+            controller: editor.controller
             objectName: "pauseEndEditor"
             Layout.fillWidth: true
             Layout.preferredWidth: editor.fieldWidth
             Layout.fillHeight: true
-            placeholderText: "End"
             selectByMouse: true
             font.pointSize: 10; font.bold: true
             color: editor.colors.table.interval_text
