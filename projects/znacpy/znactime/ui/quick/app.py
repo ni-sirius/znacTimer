@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent, QUrl
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -28,6 +29,7 @@ class TimeTrackerApp:
         self.focus_navigation = FocusNavigation(self.controller)
         self.engine = QQmlApplicationEngine()
         self._shutdown = False
+        self._first_show = True
         self.errors = []
         self.engine.warnings.connect(self._record_warnings)
         self.engine.setInitialProperties({
@@ -54,6 +56,11 @@ class TimeTrackerApp:
         self.errors.extend(error.toString() for error in errors)
 
     def show(self):
+        if self._first_show and QGuiApplication.platformName() == "windows":
+            from znactime.ui.quick.windows_startup import cloak_until_first_frame
+
+            cloak_until_first_frame(self.window)
+        self._first_show = False
         self.window.show()
 
     def close(self):
