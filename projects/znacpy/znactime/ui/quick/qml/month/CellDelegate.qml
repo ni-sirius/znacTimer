@@ -173,7 +173,9 @@ Rectangle {
         interruptionTarget: cell.tableContext.interruptionTarget
         columnIndex: cell.column
         bodyHeight: cell.bodyHeight
+        badgeWidth: mainBadgeLoader.item ? mainBadgeLoader.item.width : cell.width - 10
         badgeHeight: cell.tableContext.layoutInfo.badgeHeight
+        timeBadgeWidth: cell.tableContext.layoutInfo.timeBadgeWidth
         initialValue: cell.column === 4 ? "" : cell.tableContext.controller.initialCellValue(cell.row, cell.column)
         initialText: cell.tableContext.initialEditText
         editValue: cell.editValue

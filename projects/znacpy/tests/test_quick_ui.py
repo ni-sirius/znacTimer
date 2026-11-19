@@ -893,6 +893,29 @@ class QuickUITest(unittest.TestCase):
         QTest.keyClick(self.window.window, Qt.Key_Return)
         self.assertEqual(self.window.controller.cellValue(0, 2), "09:42")
 
+    def test_time_editors_keep_the_badge_bounds_and_text_color(self):
+        row = self.prepare_navigation_day()
+        controller = self.window.controller
+        model = controller.monthModel
+        for theme in ("light", "dark"):
+            controller.setTheme(theme)
+            self.app.processEvents()
+            for column in (2, 3):
+                with self.subTest(theme=theme, column=column):
+                    badge = self.find(f"tableBadge_{row}_{column}")
+                    size = (badge.width(), badge.height())
+                    origin = badge.mapToScene(QPointF())
+                    ink = model.data(model.index(row, column), model.BADGE)["textColor"]
+                    self.click(badge)
+                    editor = self.window.window.activeFocusItem()
+                    try:
+                        self.assertEqual(editor.objectName(), "timeCellEditor")
+                        self.assertEqual((editor.width(), editor.height()), size)
+                        self.assertEqual(editor.mapToScene(QPointF()), origin)
+                        self.assertEqual(editor.property("color"), QColor(ink))
+                    finally:
+                        QTest.keyClick(self.window.window, Qt.Key_Escape)
+
     def test_clock_fields_filter_characters_and_invalid_paste(self):
         self.click(self.find("monthCell_0_2"))
         self.type_text("ab08:3x0 -.;/+")

@@ -7,9 +7,13 @@ FocusScope {
     required property var colors
     required property string value
     required property var target
+    required property real timeBadgeWidth
+    readonly property real fieldWidth: Math.max(timeBadgeWidth, Math.ceil(clockMetrics.advanceWidth) + 16)
     property bool removed: false
     signal finishRequested()
     objectName: "inlineInterruptionEditor"
+
+    TextMetrics { id: clockMetrics; font: start.font; text: "00:00" }
 
     function focusStart() { start.forceActiveFocus(); start.selectAll() }
     function advanceField(reverse) {
@@ -44,12 +48,15 @@ FocusScope {
         }
     }
     RowLayout {
-        anchors.fill: parent
-        spacing: 4
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(implicitWidth, parent.width)
+        height: parent.height
+        spacing: 2
         ClockTextField {
             id: start
             objectName: "pauseStartEditor"
             Layout.fillWidth: true
+            Layout.preferredWidth: editor.fieldWidth
             Layout.fillHeight: true
             placeholderText: "Start"
             selectByMouse: true
@@ -66,6 +73,7 @@ FocusScope {
             id: end
             objectName: "pauseEndEditor"
             Layout.fillWidth: true
+            Layout.preferredWidth: editor.fieldWidth
             Layout.fillHeight: true
             placeholderText: "End"
             selectByMouse: true
@@ -77,17 +85,28 @@ FocusScope {
             Keys.onBacktabPressed: function(event) { start.forceActiveFocus(); start.selectAll(); event.accepted = true }
             Accessible.name: "Pause end, or blank for active pause"
         }
-        AppButton {
+        ToolButton {
+            id: removeButton
             objectName: "removeInlinePause"
-            colors: editor.colors
             visible: editor.target.action === "edit" || editor.target.action === "replace"
-            text: "−"
-            font.pixelSize: 18
+            hoverEnabled: true
+            display: AbstractButton.IconOnly
+            icon.source: "icons/minus.svg"
+            icon.width: 16; icon.height: 16
+            icon.color: hovered ? editor.colors.on_primary : editor.colors.table.interval_text
+            padding: 0
             Layout.preferredWidth: 28
             Layout.fillHeight: true
             implicitWidth: 28
-            background: Rectangle { radius: 6; color: editor.colors.table.interval_background; border.width: 2; border.color: editor.colors.primary }
+            background: Rectangle {
+                radius: 6
+                color: removeButton.hovered ? editor.colors.primary : editor.colors.table.interval_background
+                border.width: 2
+                border.color: editor.colors.primary
+            }
             Accessible.name: "Remove pause period"
+            Keys.onReturnPressed: removeButton.clicked()
+            Keys.onEnterPressed: removeButton.clicked()
             onClicked: { editor.removed = true; editor.finishRequested() }
         }
     }
