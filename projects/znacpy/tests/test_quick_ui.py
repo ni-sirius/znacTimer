@@ -1176,6 +1176,8 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(self.window.controller.cellValue(self.window.controller.state["todayRow"], 1).lower(), "vacation")
 
     def test_footer_draft_commits_before_workday_button_action(self):
+        # macOS buttons can activate without taking focus from the editor.
+        self.find("primaryWorkdayButton").setProperty("focusPolicy", Qt.NoFocus)
         self.click(self.find("todayBadge"))
         self.type_text("Vacation")
         self.click(self.find("primaryWorkdayButton"))

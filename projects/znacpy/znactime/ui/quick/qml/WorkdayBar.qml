@@ -102,7 +102,10 @@ Surface {
             Layout.preferredWidth: 128
             Layout.preferredHeight: 33
             enabled: !root.ui.busy && ["idle", "working", "paused"].indexOf(root.ui.workState) >= 0
-            onClicked: root.controller.primaryAction()
+            onClicked: {
+                root.editSession.finishActive()
+                root.controller.primaryAction()
+            }
         }
         AppButton {
             id: stopButton
@@ -114,7 +117,10 @@ Surface {
             Layout.preferredWidth: 128
             Layout.preferredHeight: 33
             enabled: !root.ui.busy && ["working", "paused"].indexOf(root.ui.workState) >= 0
-            onClicked: root.controller.stopWorkday()
+            onClicked: {
+                root.editSession.finishActive()
+                root.controller.stopWorkday()
+            }
         }
     }
 }
