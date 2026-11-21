@@ -1128,7 +1128,12 @@ class QuickUITest(unittest.TestCase):
                 self.assertLessEqual(tip.property("width"), 420)
                 self.assertGreaterEqual(content.height(), content.implicitHeight())
                 self.invoke(tip, "close")
-                QTest.qWait(120)
+                # Animation ticks can be delayed on shared CI runners. Wait
+                # for the closed state rather than assuming a frame schedule.
+                for _ in range(100):
+                    if not tip.property("visible"):
+                        break
+                    QTest.qWait(10)
                 self.assertFalse(tip.property("visible"))
 
     def test_interruption_tooltips_include_period_and_total_in_open_and_closed_months(self):
