@@ -10,11 +10,25 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/github/v/release/ni-sirius/znacTimer?display_name=tag&sort=semver">
+  <a href="https://github.com/ni-sirius/znacTimer/actions/runs/44917685545"><img alt="Latest verified build: 0.6.2" src="https://img.shields.io/badge/Latest_verified_build-0.6.2-blue"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white">
   <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6-41cd52?logo=qt&logoColor=white">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-146c43"></a>
 </p>
+
+## Latest executable build
+
+**Version 0.6.2** — built and smoke-tested on Windows x64 and macOS Apple silicon on November 21, 2026.
+
+| Platform | Package |
+| --- | --- |
+| Windows x64 | `znacTime-0.6.2-windows-x64-Setup.exe` |
+| macOS Apple silicon | `znacTime-0.6.2-macos-arm64.dmg` |
+
+[View the successful build and smoke checks](https://github.com/ni-sirius/znacTimer/actions/runs/44917685545).
+Downloads are not currently published: this pull-request build does not upload packages,
+and the repository has no published GitHub release or available CI artifact.
+To run from source, follow [Getting started](#getting-started).
 
 ![znacTime dashboard](docs/images/dashboard.png)
 
