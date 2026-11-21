@@ -70,18 +70,14 @@ class DependencyLockTest(unittest.TestCase):
             all(not (ROOT / name).exists() for name in OBSOLETE_REQUIREMENTS)
         )
 
-    def test_application_version_has_one_literal_source(self):
+    def test_runtime_version_uses_package_metadata(self):
         configured = (ROOT / "znactime" / "config.py").read_text(encoding="utf-8")
-        readmes = (
-            (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8"),
-            (ROOT / "README.md").read_text(encoding="utf-8"),
-        )
 
         self.assertRegex(self.project["project"]["version"], r"^\d+\.\d+\.\d+$")
         self.assertIn('VERSION = version("znactime")', configured)
-        self.assertTrue(
-            all(self.project["project"]["version"] not in text for text in readmes)
-        )
+        # Documentation may name a delivered build independently of the next
+        # development version; runtime code must still use package metadata.
+        self.assertNotIn(self.project["project"]["version"], configured)
 
     def test_gui_entry_point_uses_existing_composition_root(self):
         self.assertEqual(
