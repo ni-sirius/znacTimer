@@ -13,25 +13,20 @@ Button {
     property color ink: !enabled ? colors.player.disabled_text
                         : tone === "primary" ? colors.on_primary
                         : tone === "badge" || outlined ? colors.primary : colors.header.text
-    implicitWidth: Math.max(60, label.implicitWidth + leftPadding + rightPadding)
+    implicitWidth: Math.max(60, implicitContentWidth + leftPadding + rightPadding)
     implicitHeight: 35
     leftPadding: 12
     rightPadding: 12
     topPadding: 6
     bottomPadding: 6
     font.weight: tone === "primary" || tone === "stop" ? Font.Bold : Font.DemiBold
+    palette.buttonText: ink
+    icon.color: ink
+    icon.width: 18
+    icon.height: 18
     hoverEnabled: true
     Keys.onReturnPressed: control.clicked()
     Keys.onEnterPressed: control.clicked()
-    contentItem: Text {
-        id: label
-        text: control.text
-        font: control.font
-        color: control.ink
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
-    }
     background: Rectangle {
         radius: control.tone === "primary" || control.tone === "stop" ? 9 : 8
         color: !control.enabled ? control.colors.player.disabled

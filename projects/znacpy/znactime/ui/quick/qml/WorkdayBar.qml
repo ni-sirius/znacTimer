@@ -93,10 +93,12 @@ Surface {
         AppButton {
             id: primaryButton
             objectName: "primaryWorkdayButton"
+            readonly property string iconName: ({ working: "pause", paused: "resume", complete: "reopen" })[root.ui.workState] || "start"
             colors: root.colors
             dark: root.ui.dark
             tone: "primary"
-            text: root.ui.workState === "paused" ? "Resume" : root.ui.workState === "working" ? "Pause" : "Start day"
+            text: ({ start: "Start day", pause: "Pause", resume: "Resume", reopen: "Reopen day" })[iconName]
+            icon.source: "icons/workday-" + iconName + ".svg"
             Layout.preferredWidth: 128
             Layout.preferredHeight: 33
             enabled: !root.ui.busy && ["idle", "working", "paused"].indexOf(root.ui.workState) >= 0
@@ -108,6 +110,7 @@ Surface {
             colors: root.colors
             tone: "stop"
             text: "Stop day"
+            icon.source: "icons/workday-stop.svg"
             Layout.preferredWidth: 128
             Layout.preferredHeight: 33
             enabled: !root.ui.busy && ["working", "paused"].indexOf(root.ui.workState) >= 0
