@@ -5,12 +5,13 @@ from znactime.config import APP_NAME, ORGANIZATION_NAME
 from znactime.storage.errors import ApplicationAlreadyRunning
 from znactime.storage.sqlite.bootstrap import application_lock
 from znactime.ui.qt import QApplication, QIcon, QMessageBox, QSettings
-from znactime.ui.qt.app import APP_ICON_PATH, TimeTrackerApp
+from znactime.ui.quick.app import APP_ICON_PATH, TimeTrackerApp
 from znactime.ui.qt.first_launch import database_path, open_or_initialize_repository
 from znactime.ui.qt.settings import load_work_schedule_settings
 
 
 APP_USER_MODEL_ID = f"{APP_NAME.casefold()}.desktop"
+STARTUP_SPLASH_OPTION = "--startup-splash"
 
 
 def _set_windows_app_user_model_id():
@@ -57,18 +58,25 @@ def main(argv=None, *, database=None, settings=None):
     if "--smoke-test" in runtime_arguments:
         from znactime.smoke import cli_main
 
-        return cli_main(runtime_arguments)
+        return cli_main([arg for arg in runtime_arguments if arg != STARTUP_SPLASH_OPTION])
 
     _set_windows_app_user_model_id()
-    app = QApplication(sys.argv)
+    app = QApplication([arg for arg in sys.argv if arg != STARTUP_SPLASH_OPTION])
     app.setOrganizationName(ORGANIZATION_NAME)
     app.setApplicationName(APP_NAME)
     if not _macos_bundle_supplies_icon():
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     target = database_path() if database is None else database
     runtime_settings = application_settings() if settings is None else settings
+    splash = None
     try:
         with application_lock(target):
+            if STARTUP_SPLASH_OPTION in runtime_arguments:
+                from znactime.ui.quick.startup_splash import StartupSplash
+
+                splash = StartupSplash(APP_ICON_PATH, runtime_settings)
+                splash.show()
+                app.processEvents()
             legacy_day_hours, _show_expected_end = load_work_schedule_settings(
                 runtime_settings
             )
@@ -78,15 +86,23 @@ def main(argv=None, *, database=None, settings=None):
             )
             if repository is None:
                 return 0
-            window = TimeTrackerApp(repository=repository, settings=runtime_settings)
-            window.show()
+            window = None
             try:
+                window = TimeTrackerApp(repository=repository, settings=runtime_settings)
+                if splash is not None:
+                    splash.wait_for_frame(window.window)
+                window.show()
                 return app.exec()
             finally:
+                if window is not None:
+                    window.shutdown()
                 repository.close()
     except ApplicationAlreadyRunning:
         _show_already_running_dialog()
         return 0
+    finally:
+        if splash is not None:
+            splash.finish_startup()
 
 
 if __name__ == "__main__":

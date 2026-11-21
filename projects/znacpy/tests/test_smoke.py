@@ -24,7 +24,7 @@ class SmokeModeTest(unittest.TestCase):
         self.assertTrue(report["success"])
         self.assertEqual(
             set(report["checks"]),
-            {"isolation", "qt", "sqlite", "themes", "pdf"},
+            {"isolation", "qt", "sqlite", "themes", "qml", "pdf"},
         )
         self.assertTrue(
             all(check["status"] == "passed" for check in report["checks"].values())

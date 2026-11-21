@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 
 from znactime.core.constants import (
     INTERRUPTION_SEPARATOR,
@@ -66,6 +67,18 @@ def parse_interruption_input(value):
     if not value:
         value = ZERO_DURATION
 
+    # Preserve long-input support without retaining large keys in the cache.
+    if len(value) > 1024:
+        return _parse_interruption_text(value)
+    return _cached_parse_interruption_text(value)
+
+
+@lru_cache(maxsize=512)
+def _cached_parse_interruption_text(value):
+    return _parse_interruption_text(value)
+
+
+def _parse_interruption_text(value):
     if PERIOD_SEPARATOR not in value:
         normalized = coerce_time_input(value)
         if normalized is None:

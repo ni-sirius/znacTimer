@@ -21,6 +21,7 @@ MACOS_ICON_SOURCE = PACKAGING_DIR / "macos" / "znactime.icon"
 MACOS_ICON_NAME = MACOS_ICON_SOURCE.stem
 MACOS_ENTITLEMENTS = PACKAGING_DIR / "macos" / "entitlements.plist"
 THEMES_DIR = PROJECT_ROOT / "znactime" / "ui" / "qt" / "themes"
+QML_DIR = PROJECT_ROOT / "znactime" / "ui" / "quick" / "qml"
 
 
 def compile_macos_icon():
@@ -64,6 +65,7 @@ datas = [
     (str(Path(metadata_source) / "METADATA"), metadata_destination),
     (str(APP_ICON), "znactime/ui/qt/assets"),
     (str(THEMES_DIR), "znactime/ui/qt/themes"),
+    (str(QML_DIR), "znactime/ui/quick/qml"),
     (str(PROJECT_ROOT / "THIRD_PARTY_NOTICES.md"), "."),
 ]
 if TARGET == "macos-arm64":
@@ -74,7 +76,7 @@ analysis = Analysis(
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=["PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickControls2", "PySide6.QtSvg"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -1,141 +1,115 @@
-"""Generate deterministic screenshots used by the GitHub README."""
+"""Render the real QML frontend with synthetic data and isolated preferences."""
 
+import argparse
 import os
 import sys
-from dataclasses import replace
-from datetime import date
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
 
-os.environ.setdefault(
-    "QT_QPA_PLATFORM",
-    "windows" if sys.platform == "win32" else "offscreen",
-)
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_SCALE_FACTOR", "1")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from znactime.config import DEFAULT_DAY_HOURS, DEFAULT_SHOW_EXPECTED_END
-from znactime.core.calendar_utils import build_calendar_week_text
-from znactime.core.constants import UNSET_TIME
-from znactime.storage import csv_store
-from znactime.ui.table_schema import Column
-from znactime.ui.qt import QApplication
-from znactime.ui.qt.app import TimeTrackerApp
-from znactime.ui.qt.player import WorkdayState
-from znactime.ui.qt.table_contract import InterruptionAction
-from znactime.ui.qt.theme import LIGHT_THEME
+from PySide6.QtCore import QObject, QSettings, QMetaObject, Q_ARG, Qt
+from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+
+from znactime.storage.sqlite.repository import SQLiteRepository
+from znactime.ui.quick.app import TimeTrackerApp
 
 
-OUTPUT_DIR = ROOT.parents[1] / "docs" / "images"
-DEMO_YEAR = 2026
-DEMO_MONTH = 8
-DEMO_TODAY = date(2026, 8, 5)
+def _offscreen_font(app):
+    # The Windows offscreen plugin has no system font database. Use a locally
+    # installed font for the render; no font files are copied into the project.
+    if QFontDatabase.families():
+        return
+    for candidate in (
+        Path("C:/Windows/Fonts/segoeui.ttf"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/System/Library/Fonts/SFNS.ttf"),
+    ):
+        if candidate.is_file():
+            font_id = QFontDatabase.addApplicationFont(str(candidate))
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                app.setFont(QFont(families[0], 10))
+                return
+    raise RuntimeError("No installed font is available for offscreen screenshots.")
 
 
-def _demo_entries():
-    changes = {
-        "03.08.2026": {
-            "start": "08:02",
-            "end": "17:10",
-            "interruption": "12:10-12:45",
-        },
-        "04.08.2026": {
-            "special": "Vacation",
-        },
-        "05.08.2026": {
-            "start": "08:15",
-            "end": UNSET_TIME,
-            "interruption": "12:30-13:00;15:10-15:20",
-        },
-    }
-    return [
-        replace(entry, **changes.get(entry.date, {}))
-        for entry in csv_store._default_entries(DEMO_YEAR, DEMO_MONTH)
-    ]
-
-
-def _configure_demo(window, closed=False):
-    window._initial_size_fitted = True
-    window.month_closed = closed
-    window.carry_over = 2.25
-    window.header.set_period(DEMO_YEAR, DEMO_MONTH)
-    window.header.set_carry_over_text("Last Month: 02:15")
-    window.header.set_calendar_week_text(
-        build_calendar_week_text(DEMO_YEAR, DEMO_MONTH, today=DEMO_TODAY)
-    )
-    window.table.set_context(
-        year=DEMO_YEAR,
-        month=DEMO_MONTH,
-        carry_over=window.carry_over,
-        day_hours=DEFAULT_DAY_HOURS,
-        month_closed=closed,
-        show_expected_end=DEFAULT_SHOW_EXPECTED_END,
-    )
-    window.table.set_entries(_demo_entries())
-    window.table.recalculate(today=DEMO_TODAY, autosave=False)
-    window.table.set_month_closed(closed)
-    window.menu.set_month_closed(closed)
-    window.set_current_overtime(window.table.final_balance_hours())
-    window.workday_bar.clock.stop()
-    if closed:
-        window.workday_bar.set_state(
-            WorkdayState.UNAVAILABLE,
-            message="This month is closed and available for review",
-        )
-    else:
-        window.workday_bar.set_state(
-            WorkdayState.PAUSED,
-            start="08:15",
-            pause_start="15:10",
-            message="Paused since 15:10 · 00:20",
-        )
-
-
-def _save(widget, name):
-    QApplication.processEvents()
-    path = OUTPUT_DIR / name
-    if not widget.grab().save(str(path), "PNG"):
+def _save(window, directory, name):
+    QTest.qWait(80)
+    if window.errors:
+        raise RuntimeError("\n".join(window.errors))
+    path = directory / name
+    if not window.window.grabWindow().save(str(path), "PNG"):
         raise RuntimeError(f"Could not save {path}")
-    return path
+    print(path)
 
 
-def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, default=ROOT.parents[1] / "docs" / "images")
+    parser.add_argument("--theme", choices=("light", "dark"), default="light")
+    arguments = parser.parse_args(argv)
+    output = arguments.output_dir
+    output.mkdir(parents=True, exist_ok=True)
     app = QApplication.instance() or QApplication([])
+    _offscreen_font(app)
 
-    with patch.object(TimeTrackerApp, "_finalize_stale_session", return_value=False):
-        window = TimeTrackerApp()
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        repository = SQLiteRepository.create(directory / "demo.db")
+        window = None
+        try:
+            # A closed previous month provides the visible 02:15 carry-over.
+            previous = repository.view_month(2026, 7)
+            repository.update_day(previous.days[0].work_date, expected_revision=0,
+                                  fields=frozenset({"start_minute", "end_minute"}),
+                                  start_minute=480, end_minute=1095)
+            previous = repository.view_month(2026, 7)
+            repository.close_month(2026, 7, expected_revision=previous.revision,
+                                   mark_unresolved_no_data=True)
+            settings = QSettings(str(directory / "settings.ini"), QSettings.IniFormat)
+            settings.setValue("appearance/color_scheme", arguments.theme)
+            settings.setValue("window/fit_height_to_rows", False)
+            settings.setValue("window/initial_width", 1400)
+            settings.setValue("window/initial_height", 900)
+            now = datetime(2026, 8, 5, 15, 30, tzinfo=timezone.utc)
+            window = TimeTrackerApp(repository, settings, clock=lambda: now)
+            for row, column, value in (
+                (2, 2, "08:02"), (2, 3, "17:10"), (2, 4, "12:10-12:45"),
+                (3, 1, "Vacation"), (4, 2, "08:15"),
+                (4, 4, "12:30-13:00;15:10-..."),
+            ):
+                if not window.controller.editCell(row, column, value):
+                    raise RuntimeError("Could not seed the demo month.")
+            window.show()
+            _save(window, output, "dashboard.png")
 
-    window.theme_controller.set_mode(LIGHT_THEME, persist=False)
-    window.resize(1400, 820)
-    _configure_demo(window)
-    window.show()
-    app.processEvents()
-    window.table.view.scrollToTop()
-    _save(window, "dashboard.png")
+            table = window.window.findChild(QObject, "monthTableSurface")
+            QMetaObject.invokeMethod(table, "editInterruption", Q_ARG("QVariant", 4), Q_ARG("QVariant", {"action": "edit", "period_index": 0}))
+            _save(window, output, "interruption-editor.png")
+            QTest.keyClick(window.window, Qt.Key_Escape)
 
-    interruption_index = window.table.model.index(4, Column.INTERRUPTION)
-    delegate = window.table.view.itemDelegateForIndex(interruption_index)
-    delegate.set_interruption_edit_target(
-        interruption_index,
-        {"action": InterruptionAction.EDIT, "period_index": 0},
-    )
-    window.table.view.setCurrentIndex(interruption_index)
-    window.table.view.edit(interruption_index)
-    app.processEvents()
-    _save(window.table, "interruption-editor.png")
-    window.table.view.closePersistentEditor(interruption_index)
-    window.table.view.setFocus()
-
-    _configure_demo(window, closed=True)
-    app.processEvents()
-    window.table.view.scrollToTop()
-    _save(window, "closed-month.png")
-
-    window.close()
+            window.controller.editCell(4, 4, "12:30-13:00;15:10-15:20")
+            window.controller.editCell(4, 3, "17:00")
+            month = repository.view_month(2026, 8)
+            repository.close_month(2026, 8, expected_revision=month.revision,
+                                   mark_unresolved_no_data=True)
+            window.controller.load_month()
+            _save(window, output, "closed-month.png")
+        finally:
+            if window is not None:
+                window.shutdown()
+                app.processEvents()
+            repository.close()
     return 0
 
 

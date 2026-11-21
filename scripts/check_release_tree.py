@@ -19,6 +19,13 @@ EXACT_FILES = frozenset(
         "projects/znacpy/uv.lock",
         "projects/znacpy/tracker.py",
         "projects/znacpy/znactime/ui/qt/assets/app_icon.png",
+        "projects/znacpy/znactime/ui/quick/qml/icons/minus.svg",
+        "projects/znacpy/znactime/ui/quick/qml/icons/plus.svg",
+        "projects/znacpy/znactime/ui/quick/qml/icons/workday-pause.svg",
+        "projects/znacpy/znactime/ui/quick/qml/icons/workday-reopen.svg",
+        "projects/znacpy/znactime/ui/quick/qml/icons/workday-resume.svg",
+        "projects/znacpy/znactime/ui/quick/qml/icons/workday-start.svg",
+        "projects/znacpy/znactime/ui/quick/qml/icons/workday-stop.svg",
         "projects/znacpy/packaging/macos/znactime.icon/icon.json",
         "projects/znacpy/packaging/macos/znactime.icon/Assets/artwork.png",
     }
@@ -46,6 +53,8 @@ def is_release_source(relative_path: str) -> bool:
             return path.suffix in {".icns", ".plist"}
         return path.suffix in {".py", ".spec"}
     if normalized.startswith("projects/znacpy/znactime/"):
+        if normalized.startswith("projects/znacpy/znactime/ui/quick/qml/"):
+            return path.suffix == ".qml"
         return path.suffix in {".py", ".json"}
     return False
 

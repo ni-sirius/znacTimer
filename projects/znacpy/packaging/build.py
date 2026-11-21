@@ -150,6 +150,12 @@ def _required_inputs() -> tuple[Path, ...]:
         PROJECT_ROOT / "znactime" / "ui" / "qt" / "assets" / "app_icon.png",
         PROJECT_ROOT / "znactime" / "ui" / "qt" / "themes" / "light.json",
         PROJECT_ROOT / "znactime" / "ui" / "qt" / "themes" / "dark.json",
+        *(PROJECT_ROOT / "znactime" / "ui" / "quick" / "qml" / filename for filename in (
+            "Main.qml", "MonthTable.qml", "Surface.qml", "SettingsDialog.qml", "InterruptionEditor.qml",
+            "AppButton.qml", "AppComboBox.qml", "AppSpinBox.qml", "AppTextField.qml", "AppMenu.qml", "MenuMnemonicLabel.qml", "AppToolTip.qml",
+            "CellBadge.qml", "icons/plus.svg", "icons/minus.svg", "Chevron.qml", "LockIcon.qml", "MonthHeader.qml",
+            "WorkdayBar.qml", "InlineInterruptionEditor.qml", "ClockTextField.qml", "InfoButton.qml",
+        )),
     )
 
 

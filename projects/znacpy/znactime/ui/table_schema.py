@@ -2,6 +2,16 @@
 
 from enum import IntEnum
 
+from znactime.core.time_utils import hours_to_hhmm, parse_interruption_input
+
+
+def interruption_tooltip(item, total):
+    """Shared period/total explanation for interruption chips in either UI."""
+    if not item.get("complete", True) or (item.get("target") or {}).get("action") == "add":
+        return None
+    period = parse_interruption_input(item.get("text", ""))
+    return f"{hours_to_hhmm(period.hours)}/{total}" if period is not None and total else None
+
 
 class Column(IntEnum):
     DATE = 0

@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Version" src="https://img.shields.io/github/v/release/ni-sirius/znacTimer?display_name=tag&sort=semver">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white">
-  <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6-41cd52?logo=qt&logoColor=white">
+  <img alt="PySide6 and QML" src="https://img.shields.io/badge/UI-PySide6%20%2F%20QML-41cd52?logo=qt&logoColor=white">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-146c43"></a>
 </p>
 
@@ -21,6 +21,22 @@
 This is `znacpy`, the Python implementation in the [znacTime repository](../../README.md).
 Run the commands below from `projects/znacpy` unless stated otherwise. In VS Code,
 open this directory as the project folder to use its interpreter and test settings.
+
+The desktop interface now uses **Qt Quick/QML** on both Windows and macOS.
+Python continues to own time calculations, validation, and SQLite persistence;
+existing databases and preferences use the same locations and need no conversion.
+The screenshots use synthetic data in the QML interface.
+
+The migration plan and acceptance checks are in
+[QML migration plan](../../docs/qml-migration-plan.md). Main-window components live
+in `znactime/ui/quick/qml`, application actions in `ui/quick/controller.py`, and
+QML model roles in `ui/quick/model.py`. The model reuses the established editing
+and concurrency logic in `ui/qt/model.py`. Startup database setup and recovery
+still use the existing native Qt dialogs. The previous Widgets frontend remains
+in the source tree for regression comparison; normal launches use QML.
+
+`Surface.qml` centralizes shared translucent surfaces. These are QML surfaces;
+Apple's native Liquid Glass requires a separately tested macOS integration.
 
 ## Why znacTime?
 
@@ -55,12 +71,25 @@ written to the table immediately, so the UI and stored record stay aligned.
 The End column can show a purple outlined expected finish time until the real end is
 entered.
 
-### Edit interruptions inline
+### Edit time and interruptions
 
-Click an interruption to edit its start and end directly. Clicking another badge
-finishes the current edit; click that badge again to edit it. Multiple
-intervals remain separate, their durations are totaled automatically, and
-incomplete pauses are clearly represented.
+Click a Special day, Start, or End badge to edit it; Enter saves and Escape cancels.
+Click an interruption period to edit its start and end inline, or click its plus
+button to add a period. Tab switches between the two time fields. Ctrl+Enter in
+the Interruption column opens the duration and full-text editor. Multiple intervals
+remain separate, their durations are totaled automatically, and incomplete pauses
+are clearly represented. Shift-click selects a range; the standard copy/paste
+shortcuts transfer tab-separated cells. The day badge in the workday bar edits
+today's Special day value.
+
+Tab cycles through Year, Month, Today, This Month, and the table's current-day
+row: Date, Special day, Start, End, each pause, then the pause-add button. It then
+visits the footer's day badge, Start/Pause/Resume, and Stop before returning to
+Year. Shift+Tab reverses that order; unavailable controls are skipped. Arrow keys
+move between table rows and badges without opening editors. After navigating to
+another row, Tab or Shift+Tab returns to today's Special day badge. Other viewed
+months use their first row instead of today. Inside a pause editor, Tab moves
+from start to end, then saves and leaves; Shift+Tab reverses that path.
 
 ![Inline interruption editor](../../docs/images/interruption-editor.png)
 
@@ -77,8 +106,8 @@ workday. Accepting this suggestion opens the usual close confirmation, which
 explains how any remaining empty days are handled.
 
 Closed months are intentionally non-editable. Badge-like inputs become plain
-colored text, the whole month receives a subtle gray archive pattern, the
-header shows a red closed-lock icon, and the month remains available for review.
+colored text, the table uses an archive background, the header shows a closed
+indicator, and the month remains available for review.
 
 ![Closed month in read-only mode](../../docs/images/closed-month.png)
 
@@ -264,7 +293,8 @@ The application separates its calculation, storage, and UI layers:
 znactime/
 ├── core/        # time calculations, calendar logic, and semantic models
 ├── storage/     # SQLite repository, legacy import, and explicit exports
-└── ui/qt/       # PySide6 desktop interface
+├── ui/quick/    # QML desktop interface, controller, and model adapter
+└── ui/qt/       # shared model/theme, startup recovery, and legacy Widgets UI
 ```
 
 See the [SQLite database dictionary](../../docs/DATABASE_SCHEMA.md) for the purpose of every
@@ -308,8 +338,8 @@ Regenerate the README screenshots with:
 .\.venv\Scripts\python.exe scripts\generate_readme_screenshots.py
 ```
 
-On Windows, using the native Qt platform backend produces the clearest text
-rendering for screenshots.
+The screenshot generator uses a temporary database, isolated settings, and the
+offscreen software renderer. It never loads or changes personal time records.
 
 ## License
 

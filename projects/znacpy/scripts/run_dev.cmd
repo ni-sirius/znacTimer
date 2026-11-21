@@ -11,7 +11,7 @@ if not exist "%PROJECT_PYTHON%" (
 )
 
 pushd "%PROJECT_ROOT%"
-"%PROJECT_PYTHON%" -m znactime %*
+"%PROJECT_PYTHON%" -m znactime --startup-splash %*
 set "APP_EXIT_CODE=%ERRORLEVEL%"
 popd
 

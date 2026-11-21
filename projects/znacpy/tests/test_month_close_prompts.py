@@ -140,8 +140,12 @@ class MonthClosePromptTest(unittest.TestCase):
             editor.setText("17:00")
             self.question.side_effect = check_suggestion
             QTest.keyClick(editor, Qt.Key.Key_Return)
-            QTest.qWait(20)
-            self.app.processEvents()
+            # Closing the editor may defer the prompt to its 100 ms retry.
+            # Wait for that observable event, including on slower CI runners.
+            for _ in range(100):
+                if self.question.called:
+                    break
+                QTest.qWait(10)
             self.assertEqual(index.data(), "17:00", str(self.warning.call_args_list))
             self.question.assert_called_once()
             self.assertEqual(self.question.call_args.args[1], "Ready to close the month?")

@@ -257,6 +257,32 @@ def row_color_hex(row_color, dark=False):
         return ""
 
 
+def badge_text_color(fill, dark=False):
+    """Shared badge contrast calculation for Widgets and Qt Quick."""
+    hue, saturation, _lightness, alpha = fill.getHsl()
+    if hue < 0:
+        return fill.lighter(230) if dark else fill.darker(240)
+    color = QColor()
+    saturation = min(max(saturation, 100), 175) if dark else min(max(saturation, 120), 190)
+    color.setHsl(hue, saturation, 195 if dark else 72, alpha)
+    return color
+
+
+def badge_colors(state, dark=False, hovered=False):
+    if hovered:
+        return {"fill": QColor(theme_color("primary", dark)), "text": QColor(theme_color("on_primary", dark))}
+    if state == "expected":
+        accent = QColor(theme_color("table.expected_text", dark))
+        return {"fill": QColor(theme_color("table.expected_background", dark)), "text": accent, "border": accent}
+    row_color = row_color_hex(state, dark=dark)
+    if row_color:
+        fill = QColor(row_color)
+        return {"fill": fill, "text": badge_text_color(fill, dark=dark)}
+    prefix = state if state in ("success", "info", "empty", "action") else "empty"
+    return {"fill": QColor(theme_color(f"table.{prefix}_fill", dark)),
+            "text": QColor(theme_color(f"table.{prefix}_text", dark))}
+
+
 def current_row_accent_hex(dark=False):
     return theme_color("primary", dark=dark)
 
