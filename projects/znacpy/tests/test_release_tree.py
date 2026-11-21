@@ -41,6 +41,8 @@ class ReleaseTreeTest(unittest.TestCase):
             "projects/znacpy/znactime/ui/qt/themes/dark.json",
             "projects/znacpy/znactime/ui/quick/qml/Main.qml",
             "projects/znacpy/znactime/ui/quick/qml/icons/plus.svg",
+            *(f"projects/znacpy/znactime/ui/quick/qml/icons/workday-{name}.svg"
+              for name in ("pause", "reopen", "resume", "start", "stop")),
         )
 
         self.assertTrue(all(is_release_source(path) for path in allowed))

@@ -46,7 +46,12 @@ class QuickUITest(unittest.TestCase):
         self.repo = SQLiteRepository.create(self.root / "test.db")
         self.settings = QSettings(str(self.root / "settings.ini"), QSettings.IniFormat)
         self._dialog_windows = []
-        self.window = TimeTrackerApp(self.repo, self.settings)
+        # Start at the first weekday so initial scrolling and footer actions
+        # do not depend on the runner's date.
+        self.window = TimeTrackerApp(
+            self.repo, self.settings,
+            clock=lambda: datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+        )
         self.window.show()
         QTest.qWait(60)
 
@@ -500,7 +505,13 @@ class QuickUITest(unittest.TestCase):
             QMetaObject.invokeMethod(menu, "close")
         help_menu = next(menu for menu in menus if menu.property("title") == "&Help")
         QMetaObject.invokeMethod(help_menu, "open")
-        QTest.keyClick(self.window.window, Qt.Key_A)
+        self.app.processEvents()
+        if sys.platform == "darwin":
+            # Qt disables letter mnemonics on macOS; use menu navigation.
+            QTest.keyClick(self.window.window, Qt.Key_Down)
+            QTest.keyClick(self.window.window, Qt.Key_Return)
+        else:
+            QTest.keyClick(self.window.window, Qt.Key_A)
         self.app.processEvents()
         self.assertTrue(self.find("aboutDialog").property("visible"))
         self.invoke(self.find("aboutDialog"), "accept")
@@ -627,6 +638,7 @@ class QuickUITest(unittest.TestCase):
             mnemonic_label(item, False)
         QTest.keyRelease(window, Qt.Key_Alt)
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows Alt access-key hints")
     def test_menu_underlines_render_solid_pixels_in_the_text_color(self):
         window = self.window.window
 
