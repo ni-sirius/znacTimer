@@ -1099,8 +1099,14 @@ class QuickUITest(unittest.TestCase):
             QTest.qWait(500)
             self.assertTrue(tip.property("visible"))
             QTest.mouseMove(self.window.window, away)
-            QTest.qWait(120)
-            self.assertFalse(tip.property("visible"))
+            # The popup stays visible until its exit animation finishes.
+            # Shared macOS runners can delay animation ticks past 120 ms.
+            for _ in range(100):
+                if not tip.property("visible"):
+                    break
+                QTest.qWait(10)
+            self.assertFalse(tip.property("hoverRequested"), source.objectName())
+            self.assertFalse(tip.property("visible"), source.objectName())
         self.click(info)
         self.assertTrue(info.property("informationPopup").property("visible"))
 
