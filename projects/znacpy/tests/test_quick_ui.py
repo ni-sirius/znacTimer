@@ -784,7 +784,22 @@ class QuickUITest(unittest.TestCase):
         self.assertEqual(self.repo.load_month(2026, 11).days[29].start_minute, 555)
         QTest.qWait(20)  # Let the committed editor's deferred destruction finish.
         self.invoke(surface, "showRow", 0)
-        QTest.qWait(20)  # Complete the viewport's polish before pointer hit testing.
+        table = self.find("monthTable")
+        # Scrolling creates recycled delegates during layout. A single frame
+        # delay is insufficient on shared runners; wait for the target badge.
+        for _ in range(100):
+            self.invoke(table, "forceLayout")
+            pending = [self.window.window.contentItem()]
+            found = False
+            while pending:
+                item = pending.pop()
+                if item.objectName() == "tableBadge_0_2":
+                    found = True
+                    break
+                pending.extend(item.childItems())
+            if found:
+                break
+            QTest.qWait(10)
         self.click(self.find("tableBadge_0_2"))
         editor = self.window.window.activeFocusItem()
         self.assertEqual(editor.objectName(), "timeCellEditor")
@@ -1084,8 +1099,14 @@ class QuickUITest(unittest.TestCase):
             QTest.qWait(500)
             self.assertTrue(tip.property("visible"))
             QTest.mouseMove(self.window.window, away)
-            QTest.qWait(120)
-            self.assertFalse(tip.property("visible"))
+            # The popup stays visible until its exit animation finishes.
+            # Shared macOS runners can delay animation ticks past 120 ms.
+            for _ in range(100):
+                if not tip.property("visible"):
+                    break
+                QTest.qWait(10)
+            self.assertFalse(tip.property("hoverRequested"), source.objectName())
+            self.assertFalse(tip.property("visible"), source.objectName())
         self.click(info)
         self.assertTrue(info.property("informationPopup").property("visible"))
 
